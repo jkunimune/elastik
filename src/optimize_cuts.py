@@ -13,16 +13,40 @@ import os
 import tifffile
 
 
-AMOUNT_TO_PLOT = 0#1e-2
+# what fraction of the found paths should be plotted
+AMOUNT_TO_PLOT = 5e-4
+# how many pixels per degree
+RESOLUTION = 4
+# how to determine the value of a pixel that contains multiple data points
+REDUCTION = np.mean
 
 
 class Path:
 	def __init__(self, i: list[int], j: list[int], hitemap: np.ndarray):
+		""" a class that keeps track of a path thru a grid in a manner that can be easily
+			sorted.
+		"""
 		self.i = i # the x indices that define this path
 		self.j = j # the y indices that define this path
 		self.z_sorted = sorted(hitemap[i, j]) # the sorted z values that rate this path
 		self.start = (i[0], j[0])
 		self.end = (i[-1], j[-1])
+
+
+	def prune(self, hitemap: np.ndarray) -> None:
+		""" edit this path in place to remove any node that is hier than both of its
+		    neibors if its neibors are adjacent to each other.
+		"""
+		for k in range(len(self.i) - 2, 0, -1):
+			di = abs(self.i[k + 1] - self.i[k - 1])
+			dj = abs(self.j[k + 1] - self.j[k - 1])
+			a = hitemap[self.i[k - 1], self.j[k - 1]]
+			b = hitemap[self.i[k], self.j[k]]
+			c = hitemap[self.i[k + 1], self.j[k + 1]]
+			if di <= 1 and dj <= 1 and b > a and b > c:
+				self.i.pop(k)
+				self.j.pop(k)
+				self.z_sorted.remove(b)
 
 
 def bin(x: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
@@ -43,7 +67,7 @@ def round_index(x: float, arr: np.ndarray) -> int:
 def load_elevation_data(ф_nodes: np.ndarray, λ_nodes: np.ndarray) -> np.array:
 	""" look for tiff files in the data/elevation/ folder and tile them together
 	    to form a single global map, with its resolution set by ф_nodes and λ_nodes.
-	    each pixel will correspond to one node and have value equal to the minimum
+	    each pixel will correspond to one node and have value equal to the average
 	    elevation in the region that is closer to it than to any other node, accounting
 	    for λ periodicity
 	"""
@@ -52,7 +76,7 @@ def load_elevation_data(ф_nodes: np.ndarray, λ_nodes: np.ndarray) -> np.array:
 	λ_bins = np.concatenate([[-np.inf], bin_centers(λ_nodes), [(λ_nodes[0] + λ_nodes[-1])/2 + 180, np.inf]])
 
 	# then begin bilding the map
-	z_nodes = np.full((ф_nodes.size, λ_nodes.size), np.inf)
+	z_nodes = np.full((ф_nodes.size, λ_nodes.size), np.nan)
 
 	# look at each data file (they may not achieve full coverage)
 	for filename in os.listdir("../data/elevation"):
@@ -71,9 +95,11 @@ def load_elevation_data(ф_nodes: np.ndarray, λ_nodes: np.ndarray) -> np.array:
 		for i in np.unique(i_data):
 			for j in np.unique(j_data):
 				j = j%z_nodes.shape[1]
-				z_pixel = z_data[i_data==i][:, j_data==j]
-				if np.any(z_pixel > 0):
-					z_nodes[i, j] = min(z_nodes[i, j], np.amin(z_pixel[z_pixel > 0]))
+				z_pixel = np.maximum(0, z_data[i_data==i][:, j_data==j])
+				if np.isnan(z_nodes[i, j]):
+					z_nodes[i, j] = REDUCTION(z_pixel)
+				else:
+					z_nodes[i, j] = REDUCTION([z_nodes[i, j], REDUCTION(z_pixel)])
 
 	z_nodes[(~np.isfinite(z_nodes)) | (z_nodes < 0)] = 0
 	return z_nodes
@@ -110,6 +136,8 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float],
 		path = candidates.pop()
 		# if it reached the goal, we're all done here
 		if path.end[0] == i_end and path.end[1] == j_end:
+			path.prune(z_nodes)
+			plt.close("all")
 			return np.stack([x_nodes[path.i], y_nodes[path.j]], axis=-1)
 		# otherwise, check that no one has beat it here
 		i, j = path.end
@@ -126,12 +154,12 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float],
 						j_next = (j + dj + y_nodes.size)%y_nodes.size
 						if i_next > 0 and i_next < x_nodes.size:
 							if not visited[i_next, j_next]:
-								new_path = Path(path.i.copy() + [i_next],
-								                path.j.copy() + [j_next], z_nodes)
+								new_path = Path(path.i + [i_next],
+								                path.j + [j_next], z_nodes)
 								bisect.insort(candidates, new_path,
 								              key=lambda path: path.z_sorted)
 		if len(paths_to_plot) == 6:
-			plt.figure()
+			plt.clf()
 			for path in paths_to_plot:
 				plt.plot(path.j, path.i, "--")
 				plt.scatter([path.start[1], path.end[1]], [path.start[0], path.end[0]])
@@ -141,17 +169,17 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float],
 			plt.pcolormesh(j_edges, i_edges, z_nodes, norm=colors.LogNorm(), zorder=-2)
 			plt.contour(bin_centers(j_edges), bin_centers(i_edges), np.where(visited, 0, 1), levels=[0.5], colors="C6", linewidths=1, zorder=-1)
 			plt.tight_layout()
-			plt.show()
+			plt.pause(.01)
 			paths_to_plot = []
 
 
 if __name__ == "__main__":
 	# define the start and end locations of the cuts
-	endpoints = [(-36.46, 148.26), (-29.47, 29.27), (-47.59, -72.31)]
+	endpoints = [(-36.46, 148.26), (-29.47, 29.27), (-46.60, -73.35)]
 
 	# define the allowd nodes of the path
-	ф_map = np.arange(-90, 91, 1/2)
-	λ_map = np.arange(-180, 180, 1/2)
+	ф_map = np.linspace(-90, 90, int(180*RESOLUTION + 1))
+	λ_map = np.linspace(-180, 180, int(360*RESOLUTION + 1))[:-1]
 
 	z_map = load_elevation_data(ф_map, λ_map)
 
@@ -162,9 +190,10 @@ if __name__ == "__main__":
 		paths.append(find_hiest_path(endpoints[i], endpoints[(i + 1)%len(endpoints)], ф_map, λ_map, z_map))
 
 	# save and plot them
-	np.savetxt("../spec/continental_divides.txt", np.concatenate(paths), fmt="%.3f")
+	np.savetxt("../spec/continental_divides.txt", np.concatenate(paths), fmt="%.1f")
 	plt.figure()
-	plt.contourf(λ_map, ф_map, z_map, levels=[.5, 2, 500, 1000, 1500, 2000, 2500, 10000], vmax=3000)
+	plt.contourf(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 21), vmax=3000)
+	plt.contour(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 21), colors="k", linewidths=0.2)
 	for path in paths:
 		plt.plot(path[:, 1], path[:, 0])
 	plt.scatter([λ for ф, λ in endpoints], [ф for ф, λ in endpoints], c=f"C{len(paths)}")
