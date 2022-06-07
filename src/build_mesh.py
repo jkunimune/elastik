@@ -5,6 +5,8 @@ take an interruption file, and use it to generate and save a basic interrupted m
 projection mesh that can be further optimized.
 all angles are in radians. indexing is z[i,j] = z(ф[i], λ[j])
 """
+import queue
+
 import numpy as np
 from matplotlib import pyplot as plt
 
@@ -42,11 +44,18 @@ class Cell:
 		    :param: se the southeastern Node to use or None if we need to create one
 		    :param: ne the northeastern Node to use or None if we need to create one
 		    :param: nw the northwestern Node to use or None if we need to create one
+		    :param: top the length of the northern border (forgive my north-up terminology)
+		    :param: bottom the length of the southern border
+		    :param hite the lengths of the eastern and western borders
 		"""
 		# calculate the positions of the Nodes
 		nodes = [sw, se, ne, nw]
 		if all(node is None for node in nodes):
-			raise ValueError("at least two nodes must be specified")
+			nodes[0] = Node(i_sw, j_sw, 0, 0)
+			nodes[1] = Node(i_sw, (j_sw + 1)%max_j, bottom, 0)
+		elif sum(node is not None for node in nodes) < 2:
+			raise ValueError(f"either 0, 2, 3, or 4 nodes may be specified. {nodes} is no good.")
+
 		lengths = [bottom, hite, top, hite]
 		# start by replacing any unspecified Nodes with lists
 		for k in range(4):
@@ -101,26 +110,40 @@ if __name__ == "__main__":
 	include = np.full(cells.shape, True)
 	include[:, 6] = False
 
-	# set a seed
-	nodes[0, 0] = Node(0, 0, 0, 0)
-	nodes[0, 1] = Node(0, 1, EARTH_RADIUS*dф, 0)
+	# start at an arbitrary point
+	cue = queue.Queue()
+	cue.put((12, 0))
 	# then bild out from there
-	cue = [(0, 0)]
-	while len(cue) > 0:
-		i, j = cue.pop()
+	while not cue.empty():
+		# take the next cell that needs to be added
+		i, j = cue.get()
 		if cells[i, j] is None and include[i, j]:
+			# supply it with the nodes we know and let it fill out the rest
 			cells[i, j] = Cell(i, j, num_λ,
 			                   nodes[i, j], nodes[i, (j + 1)%num_λ],
 			                   nodes[i + 1, (j + 1)%num_λ], nodes[i + 1, j],
-			                   EARTH_RADIUS*dλ * (1 + np.cos(ф[i + 1])),
-			                   EARTH_RADIUS*dλ * (1 + np.cos(ф[i])),
+			                   EARTH_RADIUS*dλ * np.cos(ф[i + 1]), # TODO: account for eccentricity
+			                   EARTH_RADIUS*dλ * np.cos(ф[i]),
 			                   EARTH_RADIUS*dф)
+
+			# update the node grid
 			for node in cells[i, j].all_nodes:
 				nodes[node.i, node.j] = node
+			# and enforce the identities of the poles
+			for k in range(1, num_λ):
+				if nodes[0, k] is not None:
+					nodes[0, :] = nodes[0, k]
+					break
+			for k in range(1, num_λ):
+				if nodes[num_ф, k] is not None:
+					nodes[num_ф, :] = nodes[num_ф, k]
+					break
+
+			# then check each of its neibors in a breadth-first manner
 			for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
 				if i + di >= 0 and i + di < num_ф:
-					if cells[i + di, (j + dj)%num_λ] is None:
-						cue.append((i + di, (j + dj + cells.shape[1])%num_λ))
+					if cells[i + di, (j + dj + num_λ)%num_λ] is None:
+						cue.put((i + di, (j + dj + num_λ)%num_λ))
 
 			plt.clf()
 			plt.scatter([node.x for node in nodes.ravel() if node is not None], [node.y for node in nodes.ravel() if node is not None])
