@@ -1,8 +1,9 @@
 """
 optimize_cuts.py
 
-use simulated annealing to locate continental divides and save them in a way that can be
-used as optimal cuts for the oceanic map
+locate continental divides and save them in a way that can be used as optimal cuts for
+the oceanic elastic map
+all angles are in degrees. indexing is z[i,j] = z(ф[i], λ[j])
 """
 import bisect
 
@@ -127,7 +128,7 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] or np.n
 	    :return: a l×2 array of the x and y coordinate at each point on the hiest path;
 	             the 0th element will be start and the l-1th element will be end.
 	"""
-	if type(end[0]) == float:
+	if type(end[0]) is float:
 		end = np.atleast_2d(end)
 	i_start = round_index(start[0], x_nodes)
 	j_start = round_index(start[1], y_nodes)
