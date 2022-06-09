@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 build_mesh.py
 

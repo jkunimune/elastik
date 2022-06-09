@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 optimize_cuts.py
 
@@ -163,7 +164,7 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] or np.n
 							if not visited[i_next, j_next]: # not cross any existing paths
 								if path.len < 2 or not adjacent((i_next, j_next), (path.i[-2], path.j[-2])): # and it must not form an unnecessary detour
 									new_path = Path(path.i + [i_next],
-								                    path.j + [j_next], z_nodes)
+									                path.j + [j_next], z_nodes)
 									bisect.insort(candidates, new_path,
 									              key=lambda path: path.z_sorted)
 		if len(paths_to_plot) == 6:
@@ -213,14 +214,14 @@ if __name__ == "__main__":
 
 	# adjust the first path to make it go to the tripoint like the others
 	split_index = index_of(tripoint, paths[0][:, 0], paths[0][:, 1])
-	paths.append(paths[0][split_index:, :])
+	paths.append(paths[0][split_index:, ::-1])
 	paths[0] = paths[0][:split_index + 1, :]
 	# then flip everything so that they all go away from the tripoint
 	for i in range(len(paths)):
 		paths[i] = paths[i][::-1, :]
 
 	# save and plot them
-	np.savetxt("../spec/continental_divides.txt", np.concatenate(paths), fmt="%.1f")
+	np.savetxt("../spec/cuts_mountains.txt", np.concatenate(paths), fmt="%.1f")
 	plt.figure()
 	plt.contourf(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 21), vmax=3000, cmap="cividis")
 	plt.contour(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 21), colors="k", linewidths=0.2)
