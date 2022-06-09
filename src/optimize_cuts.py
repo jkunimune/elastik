@@ -14,6 +14,7 @@ import numpy as np
 import os
 import tifffile
 
+from util import bin_centers, bin_index
 
 # how many pixels per degree
 RESOLUTION = 5
@@ -35,16 +36,6 @@ class Path:
 		assert self.len >= 1
 		self.start = (i[0], j[0])
 		self.end = (i[-1], j[-1])
-
-
-def bin_centers(bin_edges: np.ndarray) -> np.ndarray:
-	""" calculate the center of each bin """
-	return (bin_edges[1:] + bin_edges[:-1])/2
-
-
-def bin_index(x: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
-	""" I dislike the way numpy defines this function """
-	return np.digitize(x, bin_edges) - 1
 
 
 def round_index(x: float or np.ndarray, arr: np.ndarray) -> int or np.ndarray:

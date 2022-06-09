@@ -11,9 +11,12 @@ import queue
 import numpy as np
 from matplotlib import pyplot as plt
 
+from util import bin_index, bin_centers
 
-# how many cells per degree
-RESOLUTION = 0.1
+# filename of the borders to use
+SECTIONS_FILE = "../spec/cuts_mountains.txt"
+# how many cells per 90°
+RESOLUTION = 7
 # radius of earth in km
 EARTH_RADIUS = 6370
 
@@ -49,13 +52,15 @@ class Cell:
 		    :param: bottom the length of the southern border
 		    :param hite the lengths of the eastern and western borders
 		"""
-		# calculate the positions of the Nodes
+		# take stock
 		nodes = [sw, se, ne, nw]
-		if all(node is None for node in nodes):
+		# add constraints as needed to fully define this problem
+		num_specified_nodes = sum(node is not None for node in nodes)
+		if num_specified_nodes < 1:
 			nodes[0] = Node(i_sw, j_sw, 0, 0)
-			nodes[1] = Node(i_sw, (j_sw + 1)%max_j, bottom, 0)
-		elif sum(node is not None for node in nodes) < 2:
-			raise ValueError(f"either 0, 2, 3, or 4 nodes may be specified. {nodes} is no good.")
+		if num_specified_nodes < 2:
+			assert nodes[1] is None, "I haven't fully generalized this line of code"
+			nodes[1] = Node(i_sw, j_sw + 1, bottom, 0)
 
 		lengths = [bottom, hite, top, hite]
 		# start by replacing any unspecified Nodes with lists
@@ -67,7 +72,7 @@ class Cell:
 			a = nodes[k]
 			b = nodes[(k + 1)%4]
 			# if the edge is fully defined
-			if type(a) is Node and type(b) is Node:
+			if type(a) is Node and type(b) is Node and a is not b:
 				# use it to guess the best place for the opposite edge
 				ab = np.hypot(a.x - b.x, a.y - b.y)
 				if type(nodes[(k + 2)%4]) is list:
@@ -96,58 +101,232 @@ class Cell:
 		self.hite = hite
 
 
+class Section:
+	def __init__(self, left_border: np.ndarray, rite_border: np.ndarray, glue_on_north: bool):
+		""" a polygon that selects a portion of the globe bounded by two cuts originating
+		    from the same point (the "cut_tripoint") and two continuous seams from those
+		    cuts to a different point (the "glue_tripoint")
+		    :param: glue_on_north whether the glue_tripoint should be the north pole (if
+		                          not, it will be the south pole)
+		"""
+		if not (left_border[0, 0] == rite_border[0, 0] and left_border[0, 1] == rite_border[0, 1]):
+			raise ValueError("the borders are supposed to start at the same point")
+
+		self.cut_border = np.concatenate([left_border[::-1, :], rite_border])
+
+		y_bridge = (self.cut_border[-1, 1] + self.cut_border[0, 1])/2
+		if glue_on_north:
+			x_pole = np.pi/2
+			if self.cut_border[-1, 1] < self.cut_border[0, 1]:
+				y_bridge = (y_bridge + 2*np.pi)%(2*np.pi) - np.pi
+		else:
+			x_pole = -np.pi/2
+			if self.cut_border[-1, 1] > self.cut_border[0, 1]:
+				y_bridge = (y_bridge + 2*np.pi)%(2*np.pi) - np.pi
+		self.glue_border = np.array([rite_border[-1, :],
+		                             [x_pole, self.cut_border[-1, 1]],
+		                             [x_pole, y_bridge],
+		                             [x_pole, self.cut_border[0, 1]],
+		                             left_border[-1, :]])
+
+		self.border = np.concatenate([self.cut_border, self.glue_border])
+
+
+	def inside(self, x_edges: np.ndarray, y_edges: np.ndarray) -> np.ndarray:
+		""" find the locus of tiles binned by x and y that are inside this section. count
+		    tiles that intersect the boundary as in
+		    :param: x_edges the bin edges for axis 0
+		    :param: y_edges the bin edges for axis 1
+		    :return: a boolean grid of True for in and False for out
+		"""
+		# start by including anything on the border
+		included = Section.cells_touched(x_edges, y_edges, self.border)
+
+		# then do a simple polygon inclusion test
+		x_centers = bin_centers(x_edges)
+		for j in range(y_edges.size - 1):
+			y = (y_edges[j] + y_edges[j + 1])/2
+			x_crossings = []
+			for k in range(self.border.shape[0] - 1): # check each segment
+				x0, y0 = self.border[k, :]
+				x1, y1 = self.border[k + 1, :]
+				crosses = (y0 >= y) != (y1 >= y) # to see if it crosses this ray
+				if abs(y1 - y0) > np.pi:
+					crosses = not crosses # remember to account for wrapping
+				if crosses:
+					x_crossings.append(np.interp(y, [y0, y1], [x0, x1]))
+			x_crossings = np.sort(x_crossings)
+			num_crossings = np.sum(x_crossings[None, :] < x_centers[:, None], axis=1) # and apply the even/odd rule
+			included[:, j] |= num_crossings%2 == 1
+
+		return included
+
+
+	def shared(self, x_edges: np.ndarray, y_edges: np.ndarray) -> np.ndarray:
+		""" find the locus of tiles binned by x_edges and λ that span a soft glue border
+		    between this section and another
+		    :param: x_edges the bin edges for axis 0
+		    :param: y_edges the bin edges for axis 1
+		    :return: a boolean grid of True for shared and False for not shared
+		"""
+		return Section.cells_touched(x_edges, y_edges, self.glue_border)
+
+
+	@staticmethod
+	def cells_touched(x_edges: np.ndarray, y_edges: np.ndarray, path: np.ndarray) -> np.ndarray:
+		""" find and mark each tile binned by x_edges and y_edges that is touched by this
+		    polygon path
+		    :param: x_edges the bin edges for axis 0
+		    :param: y_edges the bin edges for axis 1
+		    :param: path a n×2 array of ordered x and y coordinates
+		    :return: a boolean grid of True for in and False for out
+		"""
+		touched = np.full((x_edges.size - 1, y_edges.size - 1), False)
+		for i in range(path.shape[0] - 1):
+			x0, y0 = path[i, :]
+			x1, y1 = path[i + 1, :]
+			i0, j0 = bin_index(x0, x_edges), bin_index(y0, y_edges)
+			i1, j1 = bin_index(x1, x_edges), bin_index(y1, y_edges)
+			touched[i0, j0] = True
+			if i0 != i1:
+				i_crossings, j_crossings = Section.grid_intersections(x_edges, y_edges[:-1], x0, y0, x1, y1, False, True)
+				touched[i_crossings, j_crossings] = True
+				touched[i_crossings - 1, j_crossings] = True
+			if j0 != j1:
+				j_crossings, i_crossings = Section.grid_intersections(y_edges, x_edges[:-1], y0, x0, y1, x1, True, False)
+				touched[i_crossings, j_crossings] = True
+				touched[i_crossings, j_crossings - 1] = True
+		return touched
+
+
+	@staticmethod
+	def grid_intersections(x_values: np.ndarray, y_edges: np.ndarray,
+	                       x0: float, y0: float, x1: float, y1: float,
+	                       periodic_x: bool, periodic_y: bool
+	                       ) -> tuple[np.ndarray, np.ndarray]:
+		""" bin the y value at each point where this single line segment crosses one of
+		    the x_values.
+		    :param: x_values the values at which we should detect and bin positions (must
+		                     be evenly spaced if periodic)
+		    :param: y_edges the edges of the bins in which to place y values (must be
+		                    evenly spaced if periodic)
+		    :return: the array of x value indices and the array of y bin indices
+		"""
+		# make sure we don't haff to worry about periodicity issues
+		if periodic_x and abs(x1 - x0) > np.pi:
+			shift = bin_index(max(x0, x1), x_values)
+			x_step = x_values[1] - x_values[0]
+			i_crossings, j_crossings = Section.grid_intersections(
+				x_values, y_edges,
+				(x0 - x_step*shift + 2*np.pi)%(2*np.pi), y0,
+				(x1 - x_step*shift + 2*np.pi)%(2*np.pi), y1,
+				periodic_x, periodic_y)
+			return (i_crossings + shift)%x_values.size, j_crossings
+		elif periodic_y and abs(y0 - y1) > np.pi:
+			shift = bin_index(max(y0, y1), y_edges)
+			y_step = y_edges[1] - y_edges[0]
+			i_crossings, j_crossings = Section.grid_intersections(
+				x_values, y_edges,
+				x0, (y0 - y_step*shift + 2*np.pi)%(2*np.pi),
+				x1, (y1 - y_step*shift + 2*np.pi)%(2*np.pi),
+				periodic_x, periodic_y)
+			return i_crossings, (j_crossings + shift)%y_edges.size
+		# and we want to be able to assume they go left to rite
+		elif x1 < x0:
+			return Section.grid_intersections(x_values, y_edges, x1, y1, x0, y0, periodic_x, periodic_y)
+		elif x1 > x0:
+			i0 = bin_index(x0, x_values) + 1
+			i1 = bin_index(x1, x_values)
+			i_crossings = np.arange(i0, i1 + 1)
+			x_crossings = x_values[i_crossings]
+			y_crossings = np.interp(x_crossings, [x0, x1], [y0, y1])
+			j_crossings = bin_index(y_crossings, y_edges)
+			return i_crossings, j_crossings
+		else:
+			raise ValueError("this won't work for vertical lines, I don't think.")
+
+
+def load_sections(filename: str) -> list[Section]:
+	data = np.radians(np.loadtxt(filename))
+	cut_tripoint = data[0, :]
+	starts = np.nonzero((data[:, 0] == cut_tripoint[0]) & (data[:, 1] == cut_tripoint[1]))[0]
+	cuts = []
+	for l in range(starts.size):
+		try:
+			cuts.append(data[starts[l]:starts[l + 1]])
+		except IndexError:
+			cuts.append(data[starts[l]:])
+	sections = []
+	for l in range(len(cuts)):
+		sections.append(Section(cuts[l], cuts[(l + 1)%3], cut_tripoint[0] < 0))
+	return sections
+
+
 if __name__ == "__main__":
+	# print(Section.grid_intersections(
+	# 	np.array([0, np.pi/2, np.pi, np.pi*3/2]),
+	# 	np.array([0, 1, 2, 3, 4, 5, 6]),
+	# 	0.9, 0.5, 5.3, 5.5,
+	# 	True, False,
+	# ))
 	# start by defining a grid of Cells
-	ф = np.linspace(-np.pi/2, np.pi/2, int(180*RESOLUTION) + 1)
+	ф = np.linspace(-np.pi/2, np.pi/2, 2*RESOLUTION + 1)
 	dф = ф[1] - ф[0]
 	num_ф = ф.size - 1
-	λ = np.linspace(-np.pi, np.pi, int(360*RESOLUTION) + 1)
+	λ = np.linspace(-np.pi, np.pi, 4*RESOLUTION + 1)
 	dλ = λ[1] - λ[0]
 	num_λ = λ.size - 1
-	nodes = np.empty((num_ф + 1, num_λ), dtype=Node)
-	cells = np.empty((num_ф, num_λ), dtype=Cell)
+
+	# load the interruptions
+	sections = load_sections(SECTIONS_FILE)
+	nodes = np.empty((len(sections), num_ф + 1, num_λ), dtype=Node)
+	cells = np.empty((len(sections), num_ф, num_λ), dtype=Cell)
 
 	# determine which of these cells belong in this section
-	include = np.full(cells.shape, True)
-	include[:, 6] = False
+	for l, section in enumerate(sections):
+		include = section.inside(ф, λ)
+		plt.pcolormesh(λ, ф, include)
+		plt.plot(section.border[:, 1], section.border[:, 0])
+		plt.show()
 
-	# start at an arbitrary point
-	cue = queue.Queue()
-	cue.put((12, 0))
-	# then bild out from there
-	while not cue.empty():
-		# take the next cell that needs to be added
-		i, j = cue.get()
-		if cells[i, j] is None and include[i, j]:
-			# supply it with the nodes we know and let it fill out the rest
-			cells[i, j] = Cell(i, j, num_λ,
-			                   nodes[i, j], nodes[i, (j + 1)%num_λ],
-			                   nodes[i + 1, (j + 1)%num_λ], nodes[i + 1, j],
-			                   EARTH_RADIUS*dλ * np.cos(ф[i + 1]), # TODO: account for eccentricity
-			                   EARTH_RADIUS*dλ * np.cos(ф[i]),
-			                   EARTH_RADIUS*dф)
+		# start at an arbitrary point
+		cue = queue.Queue()
+		cue.put((bin_index(section.border[0, 0], ф),
+		         bin_index(section.border[0, 1], λ)))
+		# then bild out from there
+		while not cue.empty():
+			# take the next cell that needs to be added
+			i, j = cue.get()
+			if cells[l, i, j] is None and include[i, j]:
+				# supply it with the nodes we know and let it fill out the rest
+				cells[l, i, j] = Cell(i, j, num_λ,
+				                   nodes[l, i, j], nodes[l, i, (j + 1)%num_λ],
+				                   nodes[l, i + 1, (j + 1)%num_λ], nodes[l, i + 1, j],
+				                   EARTH_RADIUS*dλ * np.cos(ф[i + 1]), # TODO: account for eccentricity
+				                   EARTH_RADIUS*dλ * np.cos(ф[i]),
+				                   EARTH_RADIUS*dф)
 
-			# update the node grid
-			for node in cells[i, j].all_nodes:
-				nodes[node.i, node.j] = node
-			# and enforce the identities of the poles
-			for k in range(1, num_λ):
-				if nodes[0, k] is not None:
-					nodes[0, :] = nodes[0, k]
-					break
-			for k in range(1, num_λ):
-				if nodes[num_ф, k] is not None:
-					nodes[num_ф, :] = nodes[num_ф, k]
-					break
+				# update the node grid
+				for node in cells[l, i, j].all_nodes:
+					nodes[l, node.i, node.j] = node
+				# and enforce the identities of the poles
+				for k in range(1, num_λ):
+					if nodes[l, 0, k] is not None:
+						nodes[l, 0, :] = nodes[l, 0, k]
+						break
+				for k in range(1, num_λ):
+					if nodes[l, num_ф, k] is not None:
+						nodes[l, num_ф, :] = nodes[l, num_ф, k]
+						break
 
-			# then check each of its neibors in a breadth-first manner
-			for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-				if i + di >= 0 and i + di < num_ф:
-					if cells[i + di, (j + dj + num_λ)%num_λ] is None:
-						cue.put((i + di, (j + dj + num_λ)%num_λ))
+				# then check each of its neibors in a breadth-first manner
+				for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+					if i + di >= 0 and i + di < num_ф:
+						if cells[l, i + di, (j + dj + num_λ)%num_λ] is None:
+							cue.put((i + di, (j + dj + num_λ)%num_λ))
 
-			plt.clf()
-			plt.scatter([node.x for node in nodes.ravel() if node is not None], [node.y for node in nodes.ravel() if node is not None])
-			plt.axis("equal")
-			plt.pause(.01)
-	plt.show()
+				plt.clf()
+				plt.scatter([node.x for node in nodes[l].ravel() if node is not None], [node.y for node in nodes[l].ravel() if node is not None])
+				plt.axis("equal")
+				plt.pause(.01)
+		plt.show()
