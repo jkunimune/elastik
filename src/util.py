@@ -17,3 +17,7 @@ def bin_index(x: float or np.ndarray, bin_edges: np.ndarray) -> float or np.ndar
 	    :param: coerce whether to force everything into the bins (useful when there's roundoff)
 	"""
 	return np.where(x < bin_edges[-1], np.digitize(x, bin_edges) - 1, bin_edges.size - 2)
+
+def wrap_angle(x: float or np.ndarray) -> float or np.ndarray: # TODO: come up with a better name
+	""" wrap an angular value into the range [-np.pi, np.pi) """
+	return x - np.floor((x + np.pi)/(2*np.pi))*2*np.pi

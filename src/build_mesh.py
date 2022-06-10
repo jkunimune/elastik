@@ -11,7 +11,7 @@ import queue
 import numpy as np
 from matplotlib import pyplot as plt
 
-from util import bin_index, bin_centers
+from util import bin_index, bin_centers, wrap_angle
 
 # filename of the borders to use
 SECTIONS_FILE = "../spec/cuts_mountains.txt"
@@ -75,6 +75,7 @@ class Cell:
 			if type(a) is Node and type(b) is Node and a is not b:
 				# use it to guess the best place for the opposite edge
 				ab = np.hypot(a.x - b.x, a.y - b.y)
+				scale = (ab/lengths[k])**0.5
 				if type(nodes[(k + 2)%4]) is list:
 					bc = lengths[(k + 1)%4]
 					c = (b.x + (a.y - b.y)/ab*bc, b.y - (a.x - b.x)/ab*bc)
@@ -118,18 +119,18 @@ class Section:
 		if glue_on_north:
 			x_pole = np.pi/2
 			if self.cut_border[-1, 1] < self.cut_border[0, 1]:
-				y_bridge = (y_bridge + 2*np.pi)%(2*np.pi) - np.pi
+				y_bridge = wrap_angle(y_bridge + np.pi)
 		else:
 			x_pole = -np.pi/2
 			if self.cut_border[-1, 1] > self.cut_border[0, 1]:
-				y_bridge = (y_bridge + 2*np.pi)%(2*np.pi) - np.pi
-		self.glue_border = np.array([rite_border[-1, :],
+				y_bridge = wrap_angle(y_bridge + np.pi)
+		self.glue_border = np.array([self.cut_border[-1, :],
 		                             [x_pole, self.cut_border[-1, 1]],
 		                             [x_pole, y_bridge],
 		                             [x_pole, self.cut_border[0, 1]],
-		                             left_border[-1, :]])
+		                             self.cut_border[0, :]])
 
-		self.border = np.concatenate([self.cut_border, self.glue_border])
+		self.border = np.concatenate([self.cut_border[:-1, :], self.glue_border])
 
 
 	def inside(self, x_edges: np.ndarray, y_edges: np.ndarray) -> np.ndarray:
@@ -193,7 +194,7 @@ class Section:
 				touched[i_crossings, j_crossings] = True
 				touched[i_crossings - 1, j_crossings] = True
 			if j0 != j1:
-				j_crossings, i_crossings = Section.grid_intersections(y_edges, x_edges[:-1], y0, x0, y1, x1, True, False)
+				j_crossings, i_crossings = Section.grid_intersections(y_edges[:-1], x_edges, y0, x0, y1, x1, True, False)
 				touched[i_crossings, j_crossings] = True
 				touched[i_crossings, j_crossings - 1] = True
 		return touched
@@ -218,8 +219,8 @@ class Section:
 			x_step = x_values[1] - x_values[0]
 			i_crossings, j_crossings = Section.grid_intersections(
 				x_values, y_edges,
-				(x0 - x_step*shift + 2*np.pi)%(2*np.pi), y0,
-				(x1 - x_step*shift + 2*np.pi)%(2*np.pi), y1,
+				wrap_angle(x0 - x_step*shift), y0,
+				wrap_angle(x1 - x_step*shift), y1,
 				periodic_x, periodic_y)
 			return (i_crossings + shift)%x_values.size, j_crossings
 		elif periodic_y and abs(y0 - y1) > np.pi:
@@ -227,8 +228,8 @@ class Section:
 			y_step = y_edges[1] - y_edges[0]
 			i_crossings, j_crossings = Section.grid_intersections(
 				x_values, y_edges,
-				x0, (y0 - y_step*shift + 2*np.pi)%(2*np.pi),
-				x1, (y1 - y_step*shift + 2*np.pi)%(2*np.pi),
+				x0, wrap_angle(y0 - y_step*shift),
+				x1, wrap_angle(y1 - y_step*shift),
 				periodic_x, periodic_y)
 			return i_crossings, (j_crossings + shift)%y_edges.size
 		# and we want to be able to assume they go left to rite
@@ -263,12 +264,6 @@ def load_sections(filename: str) -> list[Section]:
 
 
 if __name__ == "__main__":
-	# print(Section.grid_intersections(
-	# 	np.array([0, np.pi/2, np.pi, np.pi*3/2]),
-	# 	np.array([0, 1, 2, 3, 4, 5, 6]),
-	# 	0.9, 0.5, 5.3, 5.5,
-	# 	True, False,
-	# ))
 	# start by defining a grid of Cells
 	ф = np.linspace(-np.pi/2, np.pi/2, 2*RESOLUTION + 1)
 	dф = ф[1] - ф[0]
@@ -282,12 +277,23 @@ if __name__ == "__main__":
 	nodes = np.empty((len(sections), num_ф + 1, num_λ), dtype=Node)
 	cells = np.empty((len(sections), num_ф, num_λ), dtype=Cell)
 
-	# determine which of these cells belong in this section
+	# then bild the mesh one section at a time
+	main_fig, main_ax = plt.subplots()
 	for l, section in enumerate(sections):
+		# determine which of these cells belong in this section
 		include = section.inside(ф, λ)
-		plt.pcolormesh(λ, ф, include)
-		plt.plot(section.border[:, 1], section.border[:, 0])
-		plt.show()
+		share = section.shared(ф, λ)
+		here_fig, here_ax = plt.subplots()
+		here_ax.pcolormesh(λ, ф, np.where(include, np.where(share, 2, 1), 0))
+		here_ax.plot(section.border[:, 1], section.border[:, 0], "k")
+		plt.pause(.01)
+
+		# bring in any nodes from connected layers
+		for i, j in zip(*np.nonzero(share)):
+			for l2 in range(cells.shape[0]): # this method of scanning l2 is kind of janky, and mite fail for more complicated section topologies
+				if cells[l2, i, j] is not None:
+					for node in cells[l2, i, j].all_nodes:
+						nodes[l, node.i, node.j] = node
 
 		# start at an arbitrary point
 		cue = queue.Queue()
@@ -297,7 +303,7 @@ if __name__ == "__main__":
 		while not cue.empty():
 			# take the next cell that needs to be added
 			i, j = cue.get()
-			if cells[l, i, j] is None and include[i, j]:
+			if include[i, j] and cells[l, i, j] is None:
 				# supply it with the nodes we know and let it fill out the rest
 				cells[l, i, j] = Cell(i, j, num_λ,
 				                   nodes[l, i, j], nodes[l, i, (j + 1)%num_λ],
@@ -325,8 +331,15 @@ if __name__ == "__main__":
 						if cells[l, i + di, (j + dj + num_λ)%num_λ] is None:
 							cue.put((i + di, (j + dj + num_λ)%num_λ))
 
-				plt.clf()
-				plt.scatter([node.x for node in nodes[l].ravel() if node is not None], [node.y for node in nodes[l].ravel() if node is not None])
-				plt.axis("equal")
-				plt.pause(.01)
-		plt.show()
+		points = np.full((nodes.shape[1], nodes.shape[2], 2), np.nan)
+		for i in range(nodes.shape[1]):
+			for j in range(nodes.shape[2]):
+				if nodes[l, i, j] is not None:
+					points[i, j, :] = [nodes[l, i, j].x, nodes[l, i, j].y]
+
+		main_ax.plot(points[:, :, 0], points[:, :, 1], f"C{l}")
+		main_ax.plot(points[:, :, 0].T, points[:, :, 1].T, f"C{l}")
+		main_ax.axis("equal")
+		plt.pause(.01)
+
+	plt.show()
