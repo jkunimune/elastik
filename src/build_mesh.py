@@ -8,6 +8,7 @@ all angles are in radians. indexing is z[i,j] = z(ф[i], λ[j])
 """
 import bisect
 
+import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 
@@ -16,7 +17,7 @@ from util import bin_index, bin_centers, wrap_angle
 # filename of the borders to use
 SECTIONS_FILE = "../spec/cuts_mountains.txt"
 # how many cells per 90°
-RESOLUTION = 17
+RESOLUTION = 10
 # radius of earth in km
 EARTH_RADIUS = 6370
 # filename of mesh at which to save it
@@ -133,7 +134,8 @@ class Section:
 		                             [x_pole, self.cut_border[0, 1]],
 		                             self.cut_border[0, :]])
 
-		self.border = np.concatenate([self.cut_border[:-1, :], self.glue_border])
+		self.border = np.concatenate([
+			self.glue_border[2:-1, :], self.cut_border[:-1, :], self.glue_border[:3, :]])
 
 
 	def inside(self, x_edges: np.ndarray, y_edges: np.ndarray) -> np.ndarray:
@@ -214,6 +216,12 @@ class Section:
 		                     be evenly spaced if periodic)
 		    :param y_edges: the edges of the bins in which to place y values (must be
 		                    evenly spaced if periodic)
+	        :param x0: the x coordinate of the start of the line segment
+	        :param y0: the y coordinate of the start of the line segment
+	        :param x1: the x coordinate of the end of the line segment
+	        :param y1: the y coordinate of the end of the line segment
+	        :param periodic_x: whether the x axis must be treated as periodic
+	        :param periodic_y: whether the y axis must be treated as periodic
 		    :return: the array of x value indices and the array of y bin indices
 		"""
 		# make sure we don't haff to worry about periodicity issues
@@ -264,6 +272,40 @@ def load_sections(filename: str) -> list[Section]:
 	for l in range(len(cuts)):
 		sections.append(Section(cuts[l], cuts[(l + 1)%3], cut_tripoint[0] < 0))
 	return sections
+
+
+def save_mesh(filename: str, ф: np.ndarray, λ: np.ndarray, cells: np.ndarray, nodes: np.ndarray, sections: list[Section]) -> None:
+	""" save the mesh for future use in a map projection HDF5
+	    :param filename: the name of the file at which to save it
+	    :param ф: the (m+1) array of latitudes positions at which there are nodes
+	    :param λ: the (l+1) array of longitudes at which there are nodes
+	    :param cells: the (n × m × l) array of Cells (n is the number of sections)
+	    :param nodes: the (n × m+1 × l+1) array of Nodes (n is the number of sections)
+	    :param sections: list of Sections, each corresponding to a layer of Cells and Nodes
+	"""
+	num_sections = len(sections)
+	num_ф = ф.size - 1
+	num_λ = λ.size - 1
+	assert cells.shape[0] == num_sections and nodes.shape[0] == num_sections
+	assert cells.shape[1] == num_ф and nodes.shape[1] == num_ф + 1
+	assert cells.shape[2] == num_λ and nodes.shape[2] == num_λ + 1
+
+	with h5py.File(filename, "w") as file:
+		file.attrs["num_sections"] = num_sections
+		for h in range(num_sections):
+			dset = file.create_dataset(f"section{h}/latitude", shape=(num_ф + 1))
+			dset[:] = np.degrees(ф)
+			dset = file.create_dataset(f"section{h}/longitude", shape=(num_λ + 1))
+			dset[:] = np.degrees(λ)
+			dset = file.create_dataset(f"section{h}/projection", shape=(num_ф + 1, num_λ + 1, 2))
+			for i in range(num_ф + 1):
+				for j in range(num_λ + 1):
+					if nodes[h, i, j] is None:
+						dset[i, j, :] = np.nan
+					else:
+						dset[i, j, :] = [nodes[h, i, j].x, nodes[h, i, j].y]
+			dset = file.create_dataset(f"section{h}/border", shape=sections[h].border.shape)
+			dset[:, :] = np.degrees(sections[h].border)
 
 
 if __name__ == "__main__":
@@ -331,7 +373,7 @@ if __name__ == "__main__":
 					if nodes[h, num_ф, k] is not None:
 						nodes[h, num_ф, :] = nodes[h, num_ф, k]
 						break
-				for k in range(num_ф):
+				for k in range(1, num_ф - 1):
 					if nodes[h, k, 0] is not None:
 						nodes[h, k, num_λ] = nodes[h, k, 0]
 					elif nodes[h, k, num_λ] is not None:
@@ -355,6 +397,9 @@ if __name__ == "__main__":
 				            [node.j for node in nodes.ravel() if node is not None])
 				plt.axis("equal")
 				plt.pause(.01)
+
+	# save it to HDF5
+	save_mesh(MESH_FILE, ф, λ, cells, nodes, sections)
 
 	# now plot it
 	plt.close()
