@@ -67,6 +67,8 @@ def load_elevation_data(ф_nodes: np.ndarray, λ_nodes: np.ndarray) -> np.array:
 	    each pixel will correspond to one node and have value equal to the average
 	    elevation in the region that is closer to it than to any other node, accounting
 	    for λ periodicity
+	    :param ф_nodes: the latitudes that our path is allowd to use for vertices
+	    :param λ_nodes: the longitudes that our path is allowd to use for vertices
 	"""
 	# first establish the bin edges that will determine which pixel goes to which node
 	ф_bins = np.concatenate([[-np.inf], bin_centers(ф_nodes), [np.inf]])
@@ -111,12 +113,12 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] or np.n
 	    the same endpoints if its lowest point that it does not have in common with the
 	    other is hier than the corresponding point on the other.  this means that such
 	    paths will define watershed divides.
-	    :param: start the start point of the search (must be in the node arrays)
-	    :param: end the stop point or possible stop points of the search (each must be in
+	    :param start: the start point of the search (must be in the node arrays)
+	    :param end: the stop point or possible stop points of the search (each must be in
 	                the node arrays)
-	    :param: x_nodes a n-long array of allowed x positions
-	    :param: y_nodes a m-long array of allowed y positions
-	    :param: z_nodes a n×m array of the hite value at each pair of x and y
+	    :param x_nodes: a n-long array of allowed x positions
+	    :param y_nodes: a m-long array of allowed y positions
+	    :param z_nodes: a n×m array of the hite value at each pair of x and y
 	    :return: a l×2 array of the x and y coordinate at each point on the hiest path;
 	             the 0th element will be start and the l-1th element will be end.
 	"""

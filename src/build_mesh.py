@@ -6,7 +6,7 @@ take an interruption file, and use it to generate and save a basic interrupted m
 projection mesh that can be further optimized.
 all angles are in radians. indexing is z[i,j] = z(ф[i], λ[j])
 """
-import queue
+import bisect
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -16,9 +16,11 @@ from util import bin_index, bin_centers, wrap_angle
 # filename of the borders to use
 SECTIONS_FILE = "../spec/cuts_mountains.txt"
 # how many cells per 90°
-RESOLUTION = 7
+RESOLUTION = 17
 # radius of earth in km
 EARTH_RADIUS = 6370
+# filename of mesh at which to save it
+MESH_FILE = "../spec/mesh_oceans.h5"
 
 
 class Node:
@@ -42,15 +44,15 @@ class Cell:
 		""" a trapezoidal region formed by four adjacent Nodes. it keeps track of the
 		    canonical lengths of each of its sides so that it can calculate its own
 		    derivatives. the constructor will create and place new Nodes if some are None.
-		    :param: i_sw the ф index of the southwestern Node
-		    :param: j_sw the λ index of the southwestern Node
-		    :param: sw the southwestern Node to use or None if we need to create one
-		    :param: se the southeastern Node to use or None if we need to create one
-		    :param: ne the northeastern Node to use or None if we need to create one
-		    :param: nw the northwestern Node to use or None if we need to create one
-		    :param: top the length of the northern border (forgive my north-up terminology)
-		    :param: bottom the length of the southern border
-		    :param hite the lengths of the eastern and western borders
+		    :param i_sw: the ф index of the southwestern Node
+		    :param j_sw: the λ index of the southwestern Node
+		    :param sw: the southwestern Node to use or None if we need to create one
+		    :param se: the southeastern Node to use or None if we need to create one
+		    :param ne: the northeastern Node to use or None if we need to create one
+		    :param nw: the northwestern Node to use or None if we need to create one
+		    :param top: the length of the northern border (forgive my north-up terminology)
+		    :param bottom: the length of the southern border
+		    :param hite: the lengths of the eastern and western borders
 		"""
 		# take stock
 		nodes = [sw, se, ne, nw]
@@ -59,8 +61,8 @@ class Cell:
 		if num_specified_nodes < 1:
 			nodes[0] = Node(i_sw, j_sw, 0, 0)
 		if num_specified_nodes < 2:
-			assert nodes[1] is None, "I haven't fully generalized this line of code"
-			nodes[1] = Node(i_sw, j_sw + 1, bottom, 0)
+			assert nodes[3] is None, "I haven't fully generalized this line of code"
+			nodes[3] = Node(i_sw + 1, j_sw, 0, hite)
 
 		lengths = [bottom, hite, top, hite]
 		# start by replacing any unspecified Nodes with lists
@@ -75,21 +77,22 @@ class Cell:
 			if type(a) is Node and type(b) is Node and a is not b:
 				# use it to guess the best place for the opposite edge
 				ab = np.hypot(a.x - b.x, a.y - b.y)
-				scale = (ab/lengths[k])**0.5
 				if type(nodes[(k + 2)%4]) is list:
 					bc = lengths[(k + 1)%4]
 					c = (b.x + (a.y - b.y)/ab*bc, b.y - (a.x - b.x)/ab*bc)
-					nodes[(k + 2)%4].append(c)
+					nodes[(k + 2)%4].append((c, 1/bc))
 				if type(nodes[(k + 3)%4]) is list:
 					da = lengths[(k + 3)%4]
 					d = (a.x + (a.y - b.y)/ab*da, a.y - (a.x - b.x)/ab*da)
-					nodes[(k + 3)%4].append(d)
+					nodes[(k + 3)%4].append((d, 1/da))
 		# finally, average the new coordinates together to place the new Nodes
 		for k in range(4):
 			if type(nodes[k]) is list:
 				assert len(nodes[k]) > 0, nodes
+				potential_places, weights = zip(*nodes[k])
+				mean_place = np.average(potential_places, weights=weights, axis=0)
 				nodes[k] = Node(i_sw + k//2, (j_sw + [0, 1, 1, 0][k])%max_j,
-				                *np.mean(nodes[k], axis=0))
+				                *mean_place)
 
 		self.sw: Node = nodes[0]
 		self.se: Node = nodes[1]
@@ -107,7 +110,7 @@ class Section:
 		""" a polygon that selects a portion of the globe bounded by two cuts originating
 		    from the same point (the "cut_tripoint") and two continuous seams from those
 		    cuts to a different point (the "glue_tripoint")
-		    :param: glue_on_north whether the glue_tripoint should be the north pole (if
+		    :param glue_on_north: whether the glue_tripoint should be the north pole (if
 		                          not, it will be the south pole)
 		"""
 		if not (left_border[0, 0] == rite_border[0, 0] and left_border[0, 1] == rite_border[0, 1]):
@@ -136,8 +139,8 @@ class Section:
 	def inside(self, x_edges: np.ndarray, y_edges: np.ndarray) -> np.ndarray:
 		""" find the locus of tiles binned by x and y that are inside this section. count
 		    tiles that intersect the boundary as in
-		    :param: x_edges the bin edges for axis 0
-		    :param: y_edges the bin edges for axis 1
+		    :param x_edges: the bin edges for axis 0
+		    :param y_edges: the bin edges for axis 1
 		    :return: a boolean grid of True for in and False for out
 		"""
 		# start by including anything on the border
@@ -166,8 +169,8 @@ class Section:
 	def shared(self, x_edges: np.ndarray, y_edges: np.ndarray) -> np.ndarray:
 		""" find the locus of tiles binned by x_edges and λ that span a soft glue border
 		    between this section and another
-		    :param: x_edges the bin edges for axis 0
-		    :param: y_edges the bin edges for axis 1
+		    :param x_edges: the bin edges for axis 0
+		    :param y_edges: the bin edges for axis 1
 		    :return: a boolean grid of True for shared and False for not shared
 		"""
 		return Section.cells_touched(x_edges, y_edges, self.glue_border)
@@ -176,11 +179,11 @@ class Section:
 	@staticmethod
 	def cells_touched(x_edges: np.ndarray, y_edges: np.ndarray, path: np.ndarray) -> np.ndarray:
 		""" find and mark each tile binned by x_edges and y_edges that is touched by this
-		    polygon path
-		    :param: x_edges the bin edges for axis 0
-		    :param: y_edges the bin edges for axis 1
-		    :param: path a n×2 array of ordered x and y coordinates
-		    :return: a boolean grid of True for in and False for out
+	        polygon path
+	        :param x_edges: the bin edges for axis 0
+	        :param y_edges: the bin edges for axis 1
+	        :param path: a n×2 array of ordered x and y coordinates
+	        :return: a boolean grid of True for in and False for out
 		"""
 		touched = np.full((x_edges.size - 1, y_edges.size - 1), False)
 		for i in range(path.shape[0] - 1):
@@ -207,9 +210,9 @@ class Section:
 	                       ) -> tuple[np.ndarray, np.ndarray]:
 		""" bin the y value at each point where this single line segment crosses one of
 		    the x_values.
-		    :param: x_values the values at which we should detect and bin positions (must
+	        :param x_values: the values at which we should detect and bin positions (must
 		                     be evenly spaced if periodic)
-		    :param: y_edges the edges of the bins in which to place y values (must be
+		    :param y_edges: the edges of the bins in which to place y values (must be
 		                    evenly spaced if periodic)
 		    :return: the array of x value indices and the array of y bin indices
 		"""
@@ -274,72 +277,95 @@ if __name__ == "__main__":
 
 	# load the interruptions
 	sections = load_sections(SECTIONS_FILE)
-	nodes = np.empty((len(sections), num_ф + 1, num_λ), dtype=Node)
+	include = np.empty((len(sections), num_ф, num_λ))
+	share = np.full((num_ф, num_λ), False)
+	for h, section in enumerate(sections):
+		include[h, :, :] = section.inside(ф, λ)
+		share[:, :] |= section.shared(ф, λ)
+		plt.figure()
+		plt.pcolormesh(λ, ф, np.where(include[h, :, :], np.where(share, 2, 1), 0))
+		plt.plot(section.border[:, 1], section.border[:, 0], "k")
+	plt.show()
+
+	# then bild it all up
+	nodes = np.empty((len(sections), num_ф + 1, num_λ + 1), dtype=Node)
 	cells = np.empty((len(sections), num_ф, num_λ), dtype=Cell)
 
-	# then bild the mesh one section at a time
-	main_fig, main_ax = plt.subplots()
-	for l, section in enumerate(sections):
-		# determine which of these cells belong in this section
-		include = section.inside(ф, λ)
-		share = section.shared(ф, λ)
-		here_fig, here_ax = plt.subplots()
-		here_ax.pcolormesh(λ, ф, np.where(include, np.where(share, 2, 1), 0))
-		here_ax.plot(section.border[:, 1], section.border[:, 0], "k")
-		plt.pause(.01)
+	# start at an arbitrary point
+	i_init = 0 # TODO: this needs to be properly generalized
+	j_init = num_λ//2
+	h_init = np.nonzero(include[:, i_init, j_init])[0][0]
+	cue = [(0, h_init, i_init, j_init)]
+	# then bild out from there
+	plt.figure()
+	while len(cue) > 0:
+		# take the next cell that needs to be added
+		_, h0, i, j = cue.pop()
+		if include[h0, i, j] and cells[h0, i, j] is None:
+			# supply it with the nodes we know and let it fill out the rest
+			cell = Cell(i, j, num_λ,
+			            nodes[h0, i, j], nodes[h0, i, j + 1],
+			            nodes[h0, i + 1, j + 1], nodes[h0, i + 1, j],
+			            EARTH_RADIUS*dλ*np.cos(ф[i + 1]),  # TODO: account for eccentricity
+			            EARTH_RADIUS*dλ*np.cos(ф[i]),
+			            EARTH_RADIUS*dф)
 
-		# bring in any nodes from connected layers
-		for i, j in zip(*np.nonzero(share)):
-			for l2 in range(cells.shape[0]): # this method of scanning l2 is kind of janky, and mite fail for more complicated section topologies
-				if cells[l2, i, j] is not None:
-					for node in cells[l2, i, j].all_nodes:
-						nodes[l, node.i, node.j] = node
+			# decide in how many layers it exists
+			if share[i, j]:
+				all_hs = np.nonzero(include[:, i, j])[0] # this method of assining it to all hs is kind of janky, and mite fail for more complicated section topologies
+			else:
+				all_hs = [h0]
 
-		# start at an arbitrary point
-		cue = queue.Queue()
-		cue.put((bin_index(section.border[0, 0], ф),
-		         bin_index(section.border[0, 1], λ)))
-		# then bild out from there
-		while not cue.empty():
-			# take the next cell that needs to be added
-			i, j = cue.get()
-			if include[i, j] and cells[l, i, j] is None:
-				# supply it with the nodes we know and let it fill out the rest
-				cells[l, i, j] = Cell(i, j, num_λ,
-				                   nodes[l, i, j], nodes[l, i, (j + 1)%num_λ],
-				                   nodes[l, i + 1, (j + 1)%num_λ], nodes[l, i + 1, j],
-				                   EARTH_RADIUS*dλ * np.cos(ф[i + 1]), # TODO: account for eccentricity
-				                   EARTH_RADIUS*dλ * np.cos(ф[i]),
-				                   EARTH_RADIUS*dф)
+			for h in all_hs:
+				# update the cell and node grids
+				cells[h, i, j] = cell
+				for node in cell.all_nodes:
+					nodes[h, node.i, node.j] = node
 
-				# update the node grid
-				for node in cells[l, i, j].all_nodes:
-					nodes[l, node.i, node.j] = node
-				# and enforce the identities of the poles
-				for k in range(1, num_λ):
-					if nodes[l, 0, k] is not None:
-						nodes[l, 0, :] = nodes[l, 0, k]
+				# then, enforce the identities of the poles on any layer that has changed
+				for k in range(num_λ):
+					if nodes[h, 0, k] is not None:
+						nodes[h, 0, :] = nodes[h, 0, k]
 						break
-				for k in range(1, num_λ):
-					if nodes[l, num_ф, k] is not None:
-						nodes[l, num_ф, :] = nodes[l, num_ф, k]
+				for k in range(num_λ):
+					if nodes[h, num_ф, k] is not None:
+						nodes[h, num_ф, :] = nodes[h, num_ф, k]
 						break
+				for k in range(num_ф):
+					if nodes[h, k, 0] is not None:
+						nodes[h, k, num_λ] = nodes[h, k, 0]
+					elif nodes[h, k, num_λ] is not None:
+						nodes[h, k, 0] = nodes[k, k, num_λ]
 
-				# then check each of its neibors in a breadth-first manner
+				# now check each of the cell's neibors in a breadth-first manner
 				for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-					if i + di >= 0 and i + di < num_ф:
-						if cells[l, i + di, (j + dj + num_λ)%num_λ] is None:
-							cue.put((i + di, (j + dj + num_λ)%num_λ))
+					i_next = i + di
+					j_next = (j + dj + num_λ)%num_λ
+					if i_next >= 0 and i_next < num_ф:
+						if include[h, i_next, j_next] and cells[h, i_next, j_next] is None:
+							rank = -np.hypot(i_next, (j_next - j_init)*np.cos(ф[i_next]))
+							bisect.insort(cue, (rank, h, i_next, j_next))
 
+			# show a status update
+			if np.random.random() < 1e-1:
+				plt.clf()
+				plt.scatter([node.x for node in nodes.ravel() if node is not None],
+				            [node.y for node in nodes.ravel() if node is not None],
+				            [1 + node.j for node in nodes.ravel() if node is not None],
+				            [node.j for node in nodes.ravel() if node is not None])
+				plt.axis("equal")
+				plt.pause(.01)
+
+	# now plot it
+	plt.close()
+	plt.figure()
+	for h0 in range(nodes.shape[0]):
 		points = np.full((nodes.shape[1], nodes.shape[2], 2), np.nan)
 		for i in range(nodes.shape[1]):
 			for j in range(nodes.shape[2]):
-				if nodes[l, i, j] is not None:
-					points[i, j, :] = [nodes[l, i, j].x, nodes[l, i, j].y]
-
-		main_ax.plot(points[:, :, 0], points[:, :, 1], f"C{l}")
-		main_ax.plot(points[:, :, 0].T, points[:, :, 1].T, f"C{l}")
-		main_ax.axis("equal")
-		plt.pause(.01)
-
+				if nodes[h0, i, j] is not None:
+					points[i, j, :] = [nodes[h0, i, j].x, nodes[h0, i, j].y]
+		plt.plot(points[:, :, 0], points[:, :, 1], f"C{h0}")
+		plt.plot(points[:, :, 0].T, points[:, :, 1].T, f"C{h0}")
+	plt.axis("equal")
 	plt.show()
