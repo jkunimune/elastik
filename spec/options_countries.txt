@@ -1,0 +1,6 @@
+name: desa
+descript: ...
+cuts: basic
+weights: continents
+scale: continents
+section_names: veste,dong

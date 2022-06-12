@@ -21,3 +21,12 @@ def bin_index(x: float or np.ndarray, bin_edges: np.ndarray) -> float or np.ndar
 def wrap_angle(x: float or np.ndarray) -> float or np.ndarray: # TODO: come up with a better name
 	""" wrap an angular value into the range [-np.pi, np.pi) """
 	return x - np.floor((x + np.pi)/(2*np.pi))*2*np.pi
+
+def dilate(x: np.ndarray, distance: int) -> np.ndarray:
+	""" take a 1D boolean array and make it so that any Falses near Trues become True.
+	    then return the modified array.
+	"""
+	for i in range(distance):
+		x[:-1] |= x[1:]
+		x[1:] |= x[:-1]
+	return x
