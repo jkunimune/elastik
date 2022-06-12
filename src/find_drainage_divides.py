@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-optimize_cuts.py
+find_drainage_divides.py
 
 locate continental divides and save them in a way that can be used as optimal cuts for
 the oceanic elastic map

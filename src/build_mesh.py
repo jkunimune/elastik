@@ -21,7 +21,7 @@ RESOLUTION = 10
 # radius of earth in km
 EARTH_RADIUS = 6370
 # filename of mesh at which to save it
-MESH_FILE = "../spec/mesh_oceans.h5"
+MESH_FILE = "../spec/mesh_mountains.h5"
 
 
 class Section:
