@@ -176,13 +176,13 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] or np.n
 		if len(paths_to_plot) == 6:
 			plt.clf()
 			for path in paths_to_plot:
-				plt.plot(path.j, path.i, "C2--")
+				plt.plot(path.j, path.i, "k--")
 			plt.scatter([path.end[1] for path in paths_to_plot],
-			            [path.end[0] for path in paths_to_plot], color="C2")
+			            [path.end[0] for path in paths_to_plot], color="k")
 			i_edges = np.arange(-0.5, x_nodes.size)
 			j_edges = np.arange(-0.5, y_nodes.size)
 			plt.pcolormesh(j_edges, i_edges, z_nodes, norm=colors.SymLogNorm(1, 1/np.log(10)), zorder=-2)
-			plt.contour(bin_centers(j_edges), bin_centers(i_edges), np.where(visited, 0, 1), levels=[0.5], colors="C6", linewidths=1, zorder=-1)
+			plt.contour(bin_centers(j_edges), bin_centers(i_edges), np.where(visited, 0, 1), levels=[0.5], colors="w", linewidths=1, zorder=-1)
 			plt.axis([np.min(j_edges[:-1][np.any(visited, axis=0)]),
 			          np.max(j_edges[1:][np.any(visited, axis=0)]),
 			          np.min(i_edges[:-1][np.any(visited, axis=1)]),
@@ -194,7 +194,7 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] or np.n
 
 if __name__ == "__main__":
 	# define the start and end locations of the cuts
-	endpoints = [(-29.47, 29.27), (-46.60, -73.35), (-36.46, 148.26)]
+	endpoints = [(-29.47, 29.27), (-49.02, -73.50), (-36.46, 148.26)]
 
 	# define the allowd nodes of the path
 	ф_map = np.linspace(-90, 90, int(180*RESOLUTION + 1))
