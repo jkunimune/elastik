@@ -21,7 +21,7 @@ RESOLUTION = 5
 # how to determine the value of a pixel that contains multiple data points
 REDUCTION = np.mean
 # what fraction of the found paths should be plotted
-AMOUNT_TO_PLOT = 2e-2/RESOLUTION**2
+AMOUNT_TO_PLOT = 5e-2/RESOLUTION**2
 
 
 class Path:
@@ -59,6 +59,19 @@ def index_of(pair: tuple, x: np.ndarray, y: np.ndarray) -> int:
 		return np.nonzero((pair[0] == x) & (pair[1] == y))[0][0]
 	else:
 		return -1
+
+
+def check_wrapping(points: np.ndarray) -> np.ndarray:
+	""" find any segments that look like they wrap periodically and make them more
+	    explicit, assuming that any such crossing will have one point at y=-180 """
+	points = list(points)
+	for k in range(len(points) - 1, -1, -1):
+		if points[k][1] == -180:
+			if k + 1 < len(points) and points[k + 1][1] > 0:
+				points.insert(k + 1, [points[k][0], 180])
+			elif k - 1 >= 0 and points[k - 1][1] > 0:
+				points.insert(k, [points[k][0], 180])
+	return np.array(points)
 
 
 def load_elevation_data(ф_nodes: np.ndarray, λ_nodes: np.ndarray) -> np.array:
@@ -163,13 +176,17 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] or np.n
 		if len(paths_to_plot) == 6:
 			plt.clf()
 			for path in paths_to_plot:
-				plt.plot(path.j, path.i, "--")
-				plt.scatter([path.start[1], path.end[1]], [path.start[0], path.end[0]])
-			plt.autoscale(False)
+				plt.plot(path.j, path.i, "C2--")
+			plt.scatter([path.end[1] for path in paths_to_plot],
+			            [path.end[0] for path in paths_to_plot], color="C2")
 			i_edges = np.arange(-0.5, x_nodes.size)
 			j_edges = np.arange(-0.5, y_nodes.size)
-			plt.pcolormesh(j_edges, i_edges, z_nodes, norm=colors.LogNorm(), zorder=-2)
+			plt.pcolormesh(j_edges, i_edges, z_nodes, norm=colors.SymLogNorm(1, 1/np.log(10)), zorder=-2)
 			plt.contour(bin_centers(j_edges), bin_centers(i_edges), np.where(visited, 0, 1), levels=[0.5], colors="C6", linewidths=1, zorder=-1)
+			plt.axis([np.min(j_edges[:-1][np.any(visited, axis=0)]),
+			          np.max(j_edges[1:][np.any(visited, axis=0)]),
+			          np.min(i_edges[:-1][np.any(visited, axis=1)]),
+			          np.max(i_edges[1:][np.any(visited, axis=1)])])
 			plt.tight_layout()
 			plt.pause(.01)
 			paths_to_plot = []
@@ -200,15 +217,17 @@ if __name__ == "__main__":
 		else:
 			end = tripoint
 		print(f"finding path from {start} to {end}")
-		paths.append(find_hiest_path(start, end, ф_map, λ_map, z_map))
+		paths.append(check_wrapping(
+			find_hiest_path(start, end, ф_map, λ_map, z_map)))
 		# remember to define the tripoint after the second path is drawn
 		if len(paths) == 2:
 			tripoint = paths[-1][-1, :]
 
 	# adjust the first path to make it go to the tripoint like the others
 	split_index = index_of(tripoint, paths[0][:, 0], paths[0][:, 1])
-	paths.append(paths[0][split_index:, ::-1])
-	paths[0] = paths[0][:split_index + 1, :]
+	last_index = paths[0].shape[0] - 1
+	paths.append(paths[0][last_index:split_index-1:-1, :])
+	paths[0] = paths[0][0:split_index + 1, :]
 	# then flip everything so that they all go away from the tripoint
 	for i in range(len(paths)):
 		paths[i] = paths[i][::-1, :]

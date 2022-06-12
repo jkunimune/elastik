@@ -4,8 +4,11 @@ util.py
 
 some handy utility functions that are used in multiple places
 """
-
+import h5py
 import numpy as np
+
+
+h5_str = h5py.string_dtype(encoding='utf-8')
 
 
 def bin_centers(bin_edges: np.ndarray) -> np.ndarray:

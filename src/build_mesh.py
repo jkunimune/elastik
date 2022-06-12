@@ -37,23 +37,37 @@ class Section:
 
 		self.cut_border = np.concatenate([left_border[::-1, :], rite_border])
 
-		y_bridge = (self.cut_border[-1, 1] + self.cut_border[0, 1])/2
-		if glue_on_north:
-			x_pole = np.pi/2
-			if self.cut_border[-1, 1] < self.cut_border[0, 1]:
-				y_bridge = wrap_angle(y_bridge + np.pi)
-		else:
-			x_pole = -np.pi/2
-			if self.cut_border[-1, 1] > self.cut_border[0, 1]:
-				y_bridge = wrap_angle(y_bridge + np.pi)
-		self.glue_border = np.array([self.cut_border[-1, :],
-		                             [x_pole, self.cut_border[-1, 1]],
-		                             [x_pole, y_bridge],
-		                             [x_pole, self.cut_border[0, 1]],
-		                             self.cut_border[0, :]])
+		self.glue_border = Section.path_through_pole(self.cut_border[-1, :],
+		                                             self.cut_border[0, :],
+		                                             glue_on_north)
 
-		self.border = np.concatenate([
-			self.glue_border[2:-1, :], self.cut_border[:-1, :], self.glue_border[:3, :]])
+		self.border = np.concatenate([self.cut_border[:-1, :], self.glue_border])
+
+
+	@staticmethod
+	def path_through_pole(start: np.ndarray, end: np.ndarray, north: bool) -> np.ndarray:
+		""" find a simple path that goes to the nearest pole, circles around it clockwise,
+		    and then goes to the endpoint. assume the y axis to be periodic, and break the
+		    path up at the antimeridian if necessary. the poles are at x = ±pi/2.
+			:param start: the 2-vector at which to start
+			:param end: the 2-vector at which to finish
+			:param north: whether the nearest pole is north (vs south)
+			:return: the n×2 path array
+		"""
+		sign = 1 if north else -1
+		# start with some strait lines
+		path = [start, [sign*np.pi/2, start[1]], [sign*np.pi/2, end[1]], end]
+		# if it looks like it's circling the rong way
+		if np.sign(start[1] - end[1]) != sign:
+			path.insert(2, [sign*np.pi/2, -sign*np.pi])
+			path.insert(3, [sign*np.pi/2,  sign*np.pi])
+		# if the direction could still be considerd ambiguous
+		for k in range(1, len(path)):
+			dy = abs(path[k][1] - path[k - 1][1])
+			if dy > np.pi and dy != 2*np.pi:
+				path.insert(k, [sign*np.pi/2, 0])
+				break
+		return np.array(path)
 
 
 	def inside(self, x_edges: np.ndarray, y_edges: np.ndarray) -> np.ndarray:
@@ -138,7 +152,7 @@ class Section:
 	        :param y1: the y coordinate of the end of the line segment
 	        :param periodic_x: whether the x axis must be treated as periodic
 	        :param periodic_y: whether the y axis must be treated as periodic
-		    :return: the array of x value indices and the array of y bin indices
+		    :return: the 1D array of x value indices and the 1D array of y bin indices
 		"""
 		# make sure we don't have to worry about periodicity issues
 		if periodic_x and abs(x1 - x0) > np.pi:
@@ -171,7 +185,7 @@ class Section:
 			j_crossings = bin_index(y_crossings, y_edges)
 			return i_crossings, j_crossings
 		else:
-			raise ValueError("this won't work for vertical lines, I don't think.")
+			return np.empty((0,), dtype=int), np.empty((0,), dtype=int)
 
 
 def expand_bool_array(arr: np.ndarray) -> np.ndarray:
