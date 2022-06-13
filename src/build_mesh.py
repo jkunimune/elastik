@@ -17,11 +17,22 @@ from util import bin_index, bin_centers, wrap_angle
 # filename of the borders to use
 SECTIONS_FILE = "../spec/cuts_mountains.txt"
 # how many cells per 90°
-RESOLUTION = 10
+RESOLUTION = 20
 # radius of earth in km
 EARTH_RADIUS = 6370
 # filename of mesh at which to save it
 MESH_FILE = "../spec/mesh_mountains.h5"
+# locations of various straits that should be shown continuously
+STRAITS = np.radians([(66.5, -169.0), # Bering
+                      (9.1, -79.7), # Panama canal
+                      (30.7, 32.3), # Suez Canal
+                      (1.8, 102.4), # Malacca
+                      (-9, 102.4), # Sunda (offset to make it aline with adjacent ones)
+                      (-9, 114.4), # various indonesian straits
+                      (-9, 142.4), # Torres (offset to make it aline with adjacent ones)
+                      ])
+# the distance around a strait that should be duplicated for clarity
+STRAIT_RADIUS = 1800
 
 
 class Section:
@@ -262,6 +273,14 @@ if __name__ == "__main__":
 	for h, section in enumerate(sections):
 		include_cells[h, :, :] = section.inside(ф, λ)
 		share_cells[:, :] |= section.shared(ф, λ)
+
+	for ф_strait, λ_strait in STRAITS:
+		within_ф = abs(bin_centers(ф) - ф_strait) < STRAIT_RADIUS/EARTH_RADIUS
+		within_λ = abs(wrap_angle(bin_centers(λ) - λ_strait)) < STRAIT_RADIUS/EARTH_RADIUS/np.cos(ф_strait)
+		within = np.all(np.meshgrid(within_ф, within_λ, indexing="ij"), axis=0)
+		include_cells[:, within] = True
+
+	for h, section in enumerate(sections):
 		plt.figure()
 		plt.pcolormesh(λ, ф, np.where(include_cells[h, :, :], np.where(share_cells, 2, 1), 0))
 		plt.plot(section.border[:, 1], section.border[:, 0], "k")
