@@ -311,18 +311,18 @@ if __name__ == "__main__":
 		# take the next node that needs to be added
 		h0, i, j0 = cue.get()
 		if include[h0, i, j0] and np.isnan(nodes[h0, i, j0, 0]):
-			# decide in how many layers it exists
-			if share[i, j0]:
-				all_hs = np.nonzero(include[:, i, j0])[0] # this method of assining it to all hs is kind of janky, and may fail for more complicated section topologies
-			else:
-				all_hs = [h0]
-			# and how many longitudes it spans
+			# decide how many longitudes it spans
 			if i == 0 or i == num_ф:
 				all_js = np.arange(num_λ + 1)
 			elif j0 == 0 or j0 == num_λ:
 				all_js = [0, num_λ]
 			else:
 				all_js = [j0]
+			# and in how many layers it exists
+			if np.any(share[i, all_js]):
+				all_hs = np.nonzero(np.any(include[:, i, all_js], axis=-1))[0] # this method of assining it to all hs is kind of janky, and may fail for more complicated section topologies
+			else:
+				all_hs = [h0]
 
 			# now to determine its location!
 			if h0 == h_seed and j0 == j_seed:
