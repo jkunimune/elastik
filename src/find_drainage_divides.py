@@ -225,9 +225,8 @@ if __name__ == "__main__":
 
 	# adjust the first path to make it go to the tripoint like the others
 	split_index = index_of(tripoint, paths[0][:, 0], paths[0][:, 1])
-	last_index = paths[0].shape[0] - 1
-	paths.append(paths[0][last_index:split_index-1:-1, :])
-	paths[0] = paths[0][0:split_index + 1, :]
+	paths.append(paths[0][:split_index - 1:-1, :])
+	paths[0] = paths[0][:split_index + 1, :]
 	# then flip everything so that they all go away from the tripoint
 	for i in range(len(paths)):
 		paths[i] = paths[i][::-1, :]

@@ -7,9 +7,10 @@ create a new Elastic Projection.
 """
 import h5py
 import numpy as np
+from matplotlib import pyplot as plt
 
 from optimize import minimize
-from util import dilate, h5_str
+from util import dilate, h5_str, EARTH
 
 CONFIGURATION_FILE = "oceans" # "continents"; "countries"
 
@@ -58,7 +59,6 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 	""" load the ф values, λ values, node locations, and section borders from a HDF5
 	    file, in that order.
 	"""
-	print(f"../spec/mesh_{filename}.h5")
 	with h5py.File(f"../spec/mesh_{filename}.h5", "r") as file: # TODO: I should look into reducing the precision on some of these numbers
 		ф = np.radians(file["section0/latitude"])
 		λ = np.radians(file["section0/longitude"])
@@ -126,33 +126,117 @@ def save_mesh(name: str, ф: np.ndarray, λ: np.ndarray, mesh: np.ndarray,
 
 if __name__ == "__main__":
 	configure = load_options(CONFIGURATION_FILE)
-	ф, λ, mesh, section_borders = load_mesh(configure["cuts"])
+	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
 	weights = load_pixel_values(configure["weights"])
 	scale = load_pixel_values(configure["scale"])
 
-	node_indices = np.empty((len(section_borders), ф.size, λ.size), dtype=int)
+	# assume the coordinates are more or less evenly spaced
+	dλ = λ_mesh[1] - λ_mesh[0]
+	dф = ф_mesh[1] - ф_mesh[0]
+
+	# reformat the nodes into a list without gaps or duplicates
+	node_indices = np.empty((len(section_borders), ф_mesh.size, λ_mesh.size),
+	                        dtype=int)
 	node_positions = []
 	for h in range(len(section_borders)):
-		for i in range(ф.size):
-			for j in range(λ.size):
-				node_indices[h, i, j] = find_or_add(mesh[h, i, j, :], node_positions)
+		for i in range(ф_mesh.size):
+			for j in range(λ_mesh.size):
+				if not np.any(np.isnan(mesh[h, i, j, :])):
+					node_indices[h, i, j] = find_or_add(mesh[h, i, j, :], node_positions)
+				else:
+					node_indices[h, i, j] = -1
 
-	def compute_energy(positions: np.ndarray, arrangement=node_indices) -> float:
-		return 0
+	# and then do the same thing for cells, defining each by the indices of its nodes
+	cell_indices = np.empty((len(section_borders), ф_mesh.size - 1, λ_mesh.size - 1, 2, 2),
+	                        dtype=int)
+	cell_definitions = []
+	for h in range(len(section_borders)):
+		for i in range(ф_mesh.size - 1):
+			for j in range(λ_mesh.size - 1):
+				for di in range(0, 2): # each corner of each cell should be represented separately
+					for dj in range(0, 2):
+						i_primary = i + di
+						i_secondary = i + 1 - di
+						west_node = node_indices[h, i + di, j]
+						east_node = node_indices[h, i + di, j + 1]
+						south_node = node_indices[h, i,     j + dj]
+						north_node = node_indices[h, i + 1, j + dj]
+						cell_definition = np.array([i + di, i + 1 - di,
+						                            west_node, east_node,
+						                            south_node, north_node])
+						if not np.any(cell_definition == -1):
+							cell_indices[h, i, j, di, dj] = find_or_add(
+								cell_definition, cell_definitions)
+						else:
+							cell_indices[h, i, j, di, dj] = -1
 
-	def compute_gradient(positions: np.ndarray, arrangement=node_indices) -> np.ndarray:
-		return np.zeros_like(positions)
+	cell_areas = []
+	for k in range(len(cell_definitions)):
+		i_prim, i_second = cell_definitions[k][:2]
+		ф_prim, ф_second = ф_mesh[i_prim], ф_mesh[i_second]
+		cell_areas.append(EARTH.R**2*dф*dλ*(3*np.cos(ф_prim) + np.cos(ф_second))/16)
 
-	def plot_status(positions: np.ndarray) -> None:
-		pass
+	# now we're all set to do this calculation in numpy
+	node_positions = np.array(node_positions)
+	cell_definitions = np.array(cell_definitions)
+	cell_areas = np.array(cell_areas)
 
-	node_positions = minimize(compute_energy,
-	                          compute_gradient,
+	def compute_principal_strains(positions: np.ndarray) -> tuple[float, float]:
+		i = cell_definitions[:, 0]
+		dΛ = EARTH.R*dλ/np.cos(ф_mesh[i]) # TODO: account for eccentricity
+		dΦ = EARTH.R*dф
+
+		west = positions[cell_definitions[:, 2], :]
+		east = positions[cell_definitions[:, 3], :]
+		dxdΛ = ((east - west)/dΛ[:, None])[:, 0]
+		dydΛ = ((east - west)/dΛ[:, None])[:, 1]
+
+		south = positions[cell_definitions[:, 4], :]
+		north = positions[cell_definitions[:, 5], :]
+		dxdΦ = ((north - south)/dΦ)[:, 0]
+		dydΦ = ((north - south)/dΦ)[:, 1]
+
+		trace = np.sqrt((dxdΛ + dydΦ)**2 + (dxdΦ - dydΛ)**2)
+		antitrace = np.sqrt((dxdΛ - dydΦ)**2 + (dxdΦ + dydΛ)**2)
+		return trace + antitrace, trace - antitrace
+
+	def compute_energy_loose(positions: np.ndarray) -> float:
+		a, b = compute_principal_strains(positions)
+		scale_term = (a*b - 1)**2
+		shape_term = (a - b)**2
+		return ((3*scale_term + shape_term)*cell_areas).sum()
+
+	def compute_energy_strict(positions: np.ndarray, arrangement=node_indices) -> float:
+		a, b = compute_principal_strains(positions)
+		ab = a*b
+		scale_term = ab**2/2 - np.log(ab)
+		shape_term = ((a/b + b/a)/2)**2
+		return ((3*scale_term + shape_term)*cell_areas).sum()
+
+	def plot_status(positions: np.ndarray, value: float) -> None:
+		print(value)
+		if np.random.random() < 3e-1:
+			plt.clf()
+			plt.scatter(positions[:, 1], -positions[:, 0]) # TODO: zoom in and rotate automatically
+			plt.axis("equal")
+			plt.pause(.01)
+
+	node_positions = minimize(compute_energy_loose,
 	                          np.array(node_positions),
-	                          scale=None,
 	                          bounds=None,
 	                          report=plot_status)
 
-	save_mesh(configure["name"], ф, λ, mesh,
+	mesh = node_positions[node_indices, :]
+	mesh[node_indices == -1, :] = np.nan
+
+	save_mesh(configure["name"], ф_mesh, λ_mesh, mesh,
 	          section_borders, configure["section_names"].split(","),
 	          configure["descript"])
+
+	plt.close("all")
+	plt.figure()
+	for h in range(mesh.shape[0]):
+		plt.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], f"C{h}") # TODO: zoom in and stuff?
+		plt.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"C{h}")
+		plt.axis("equal")
+	plt.show()

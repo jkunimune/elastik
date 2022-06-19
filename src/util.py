@@ -8,7 +8,28 @@ import h5py
 import numpy as np
 
 
+class Ellipsoid:
+	def __init__(self, a, f):
+		""" a collection of values defining a spheroid """
+		self.a = a
+		""" major semiaxis """
+		self.f = f
+		""" flattening """
+		self.b = a*(1 - f)
+		""" minor semiaxis """
+		self.R = a
+		""" equatorial radius """
+		self.e2 = 1 - (self.b/self.a)**2
+		""" square of eccentricity """
+		self.e = np.sqrt(self.e2)
+		""" eccentricity """
+
+
 h5_str = h5py.string_dtype(encoding='utf-8')
+""" a str typ compatible with h5py """
+
+EARTH = Ellipsoid(6378.137, 1/298.2572)
+""" the figure of the earth as given by WGS 84 """
 
 
 def bin_centers(bin_edges: np.ndarray) -> np.ndarray:

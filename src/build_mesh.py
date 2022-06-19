@@ -12,14 +12,12 @@ import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 
-from util import bin_index, bin_centers, wrap_angle
+from util import bin_index, bin_centers, wrap_angle, EARTH
 
 # filename of the borders to use
 SECTIONS_FILE = "../spec/cuts_mountains.txt"
 # how many cells per 90°
-RESOLUTION = 20
-# radius of earth in km
-EARTH_RADIUS = 6370
+RESOLUTION = 5#20
 # filename of mesh at which to save it
 MESH_FILE = "../spec/mesh_mountains.h5"
 # locations of various straits that should be shown continuously
@@ -275,8 +273,8 @@ if __name__ == "__main__":
 		share_cells[:, :] |= section.shared(ф, λ)
 
 	for ф_strait, λ_strait in STRAITS:
-		within_ф = abs(bin_centers(ф) - ф_strait) < STRAIT_RADIUS/EARTH_RADIUS
-		within_λ = abs(wrap_angle(bin_centers(λ) - λ_strait)) < STRAIT_RADIUS/EARTH_RADIUS/np.cos(ф_strait)
+		within_ф = abs(bin_centers(ф) - ф_strait) < STRAIT_RADIUS/EARTH.R
+		within_λ = abs(wrap_angle(bin_centers(λ) - λ_strait)) < STRAIT_RADIUS/EARTH.R/np.cos(ф_strait)
 		within = np.all(np.meshgrid(within_ф, within_λ, indexing="ij"), axis=0)
 		include_cells[:, within] = True
 
@@ -329,14 +327,14 @@ if __name__ == "__main__":
 			# now to determine its location!
 			if h0 == h_seed and j0 == j_seed:
 				# place the seed along the y axis
-				node = [0, EARTH_RADIUS*ф[i]]
+				node = [0, EARTH.R*ф[i]]
 			else:
 				# elsewhere, scan the surrounding nodes to get different suggestions for where it should go
 				positions = []
 				for h in all_hs:
 					for j in all_js:
 						for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-							ac = EARTH_RADIUS*dф if di != 0 else EARTH_RADIUS*dλ*np.cos(ф[i])
+							ac = EARTH.R*dф if di != 0 else EARTH.R*dλ*np.cos(ф[i])
 							for sign in [-1, 1]:
 								i_a, j_a = i + di, j + dj
 								i_b, j_b = i + di + sign*dj, j + dj - sign*di
@@ -373,7 +371,7 @@ if __name__ == "__main__":
 								cue.put((h, i_next, j_next))
 
 			# show a status update
-			if np.random.random() < 1e-1 or cue.empty():
+			if np.random.random() < 2e-2 or cue.empty():
 				plt.clf()
 				plt.scatter(*nodes.reshape((-1, 2)).T, s=5, color="k")
 				for h in range(nodes.shape[0]):
