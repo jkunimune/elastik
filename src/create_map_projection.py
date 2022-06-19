@@ -9,7 +9,7 @@ import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 
-from optimize import minimize
+from optimize import minimize, log
 from util import dilate, h5_str, EARTH
 
 CONFIGURATION_FILE = "oceans" # "continents"; "countries"
@@ -157,18 +157,19 @@ if __name__ == "__main__":
 					for dj in range(0, 2):
 						i_primary = i + di
 						i_secondary = i + 1 - di
-						west_node = node_indices[h, i + di, j]
-						east_node = node_indices[h, i + di, j + 1]
-						south_node = node_indices[h, i,     j + dj]
-						north_node = node_indices[h, i + 1, j + dj]
-						cell_definition = np.array([i + di, i + 1 - di,
-						                            west_node, east_node,
-						                            south_node, north_node])
-						if not np.any(cell_definition == -1):
-							cell_indices[h, i, j, di, dj] = find_or_add(
-								cell_definition, cell_definitions)
-						else:
-							cell_indices[h, i, j, di, dj] = -1
+						if i_primary != 0 and i_primary != ф_mesh.size - 1: # skip the corners next to the poles
+							west_node = node_indices[h, i + di, j]
+							east_node = node_indices[h, i + di, j + 1]
+							south_node = node_indices[h, i,     j + dj]
+							north_node = node_indices[h, i + 1, j + dj]
+							cell_definition = np.array([i_primary, i_secondary,
+							                            west_node, east_node,
+							                            south_node, north_node])
+							if not np.any(cell_definition == -1):
+								cell_indices[h, i, j, di, dj] = find_or_add(
+									cell_definition, cell_definitions)
+							else:
+								cell_indices[h, i, j, di, dj] = -1
 
 	cell_areas = []
 	for k in range(len(cell_definitions)):
@@ -183,7 +184,7 @@ if __name__ == "__main__":
 
 	def compute_principal_strains(positions: np.ndarray) -> tuple[float, float]:
 		i = cell_definitions[:, 0]
-		dΛ = EARTH.R*dλ/np.cos(ф_mesh[i]) # TODO: account for eccentricity
+		dΛ = EARTH.R*dλ*np.cos(ф_mesh[i]) # TODO: account for eccentricity
 		dΦ = EARTH.R*dф
 
 		west = positions[cell_definitions[:, 2], :]
@@ -208,21 +209,29 @@ if __name__ == "__main__":
 
 	def compute_energy_strict(positions: np.ndarray, arrangement=node_indices) -> float:
 		a, b = compute_principal_strains(positions)
+		if np.any(a <= 0) or np.any(b <= 0):
+			print(a, b)
+			raise ValueError("the principal stretches should all be positive by now")
 		ab = a*b
-		scale_term = ab**2/2 - np.log(ab)
+		scale_term = ab**2/2 - log(ab)
 		shape_term = ((a/b + b/a)/2)**2
 		return ((3*scale_term + shape_term)*cell_areas).sum()
 
-	def plot_status(positions: np.ndarray, value: float) -> None:
+	def plot_status(positions: np.ndarray, value: float, step: np.ndarray) -> None:
 		print(value)
 		if np.random.random() < 3e-1:
 			plt.clf()
-			plt.scatter(positions[:, 1], -positions[:, 0]) # TODO: zoom in and rotate automatically
+			plt.scatter(positions[:, 0], positions[:, 1], c=-np.hypot(step[:, 0], step[:, 1])) # TODO: zoom in and rotate automatically
 			plt.axis("equal")
 			plt.pause(.01)
 
 	node_positions = minimize(compute_energy_loose,
-	                          np.array(node_positions),
+	                          guess=node_positions,
+	                          bounds=None,
+	                          report=plot_status) # TODO: scale gradients
+
+	node_positions = minimize(compute_energy_strict,
+	                          guess=node_positions,
 	                          bounds=None,
 	                          report=plot_status)
 

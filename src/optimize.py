@@ -14,6 +14,12 @@ from typing import Callable
 import numpy as np
 
 
+# REGULARIZATION = 0.
+STEP_REDUCTION = 5.
+STEP_AUGMENTATION = 50.
+LINE_SEARCH_STRICTNESS = 0.
+
+
 class Variable:
 	def __init__(self, values: np.ndarray or "Variable", gradients: np.ndarray = None,
 	             independent: bool = False, num_dimensions: int = 0):
@@ -54,7 +60,7 @@ class Variable:
 			# if no gradients are given and these are not independent
 			else:
 				# take the values to be constant
-				self.gradients = np.array(0)
+				self.gradients = np.array(0) # TODO: sparse matrices?
 
 		self.shape = self.values.shape
 		""" the shape of self.values """
@@ -72,6 +78,14 @@ class Variable:
 		other = Variable(other)
 		return Variable(self.values + other.values,
 		                self.gradients + other.gradients)
+
+	def __le__(self, other):
+		other = Variable(other)
+		return self.values <= other.values
+
+	def __ge__(self, other):
+		other = Variable(other)
+		return self.values >= other.values
 
 	def __mul__(self, other):
 		other = Variable(other, num_dimensions=len(self.shape))
@@ -106,6 +120,10 @@ class Variable:
 	def sqrt(self):
 		return self ** 0.5
 
+	def log(self):
+		return Variable(np.log(self.values),
+		                self.gradients / self.values[self.bc])
+
 	def sum(self, axis=None):
 		if axis is None:
 			axis = tuple(np.arange(len(self.shape)))
@@ -116,12 +134,20 @@ class Variable:
 		                self.gradients.sum(axis=axis))
 
 
+def log(x):
+	""" I don't know where to put this... """
+	try:
+		return x.log()
+	except AttributeError:
+		return np.log(x)
+
+
 def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
              guess: np.ndarray,
              scale: np.ndarray = None,
              tolerance: float = 1e-8,
              bounds: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
-             report: Callable[[np.ndarray, float], None] = None,
+             report: Callable[[np.ndarray, float, np.ndarray], None] = None,
              ) -> np.ndarray:
 	""" find the vector that minimizes a function of a list of points using gradient
 	    descent with a dynamically chosen step size. unlike a more generic minimization
@@ -146,8 +172,8 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 	                   corresponding bounding box in the final solution.
 	    :param report: an optional function that will be called each time a line search
 	                   is completed, to provide real-time information on how the fitting
-	                   routine is going. it takes as arguments the current state and
-	                   current value of the function
+	                   routine is going. it takes as arguments the current state, the
+	                   current value of the function, and the previous step if any
 	    :return: the optimal n×2 array of points
 	"""
 	n, d = guess.shape
@@ -169,37 +195,42 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 	# start at the inicial gess
 	state = guess
 	value = get_value(state)
+	step = np.zeros_like(state)
 	# and with the step size parameter set to unity
 	step_size = 1.
 	# descend until we can't descend any further
 	num_line_searches = 0
 	while True:
-		report(state, value)
+		report(state, value, step)
 		# compute the gradient once per outer loop
 		direction = -get_gradient(state)
+		# regularize it somewhat to ease convergence
+		# direction /= np.power(np.sum(direction**2, axis=1), 1/2*REGULARIZATION)[:, None]
 		assert direction.shape == state.shape
 		# do a line search to choose a good step size
 		num_step_sizes = 0
 		while True:
 			# step according to the gradient and step size for this inner loop
-			new_state = state + direction*step_size
+			step = direction*step_size
+			new_state = state + step
 			new_value = get_value(new_state)
 			# if the line search condition is met, take it
-			if new_value < value:
+			if new_value < value - LINE_SEARCH_STRICTNESS*np.sum(step*direction):
 				break
 			# if the condition is not met, decrement the step size and try agen
-			step_size /= 5.
+			step_size /= STEP_REDUCTION
 			# keep track of the number of step sizes we've tried
 			if num_step_sizes > 100:
 				raise RuntimeError("line search did not converge")
 		# if the termination condition is met, finish
 		if (value - new_value)/value < tolerance:
+			print(f"Completed in {num_line_searches} iterations.")
 			return new_state
 		# take the new state and error value
 		state = new_state
 		value = new_value
 		# and set the step size back a bit
-		step_size *= 50.
+		step_size *= STEP_AUGMENTATION
 		# keep track of the number of iterations
 		num_line_searches += 1
 		if num_line_searches > 1e6:
