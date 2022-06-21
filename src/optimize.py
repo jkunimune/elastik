@@ -14,10 +14,9 @@ from typing import Callable
 import numpy as np
 
 
-# REGULARIZATION = 0.
 STEP_REDUCTION = 5.
-STEP_AUGMENTATION = 50.
-LINE_SEARCH_STRICTNESS = 0.
+STEP_AUGMENTATION = STEP_REDUCTION**2.6
+LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
 
 class Variable:
@@ -56,23 +55,29 @@ class Variable:
 			# if no gradients are given and these are independent variables
 			elif independent:
 				# make an identity matrix of sorts
-				self.gradients = np.identity(self.values.size).reshape(self.values.shape*2)
+				self.gradients = np.identity(self.values.size).reshape(self.values.shape*2) # TODO: if the gradient calculation step becomes very slow, I should try using sparse matrices for this part
 			# if no gradients are given and these are not independent
 			else:
 				# take the values to be constant
-				self.gradients = np.array(0) # TODO: sparse matrices?
+				self.gradients = np.array(0)
 
 		self.shape = self.values.shape
 		""" the shape of self.values """
 		self.space = self.gradients.shape[len(self.values.shape):]
 		""" the shape of each gradient """
-		self.bc = (slice(None),)*len(self.shape) + (None,)*len(self.space)
+		self.bc = (slice(None),)*len(self.shape) + (np.newaxis,)*len(self.space)
 		""" this tuple should be used to index self.values when they need to broadcast
 		    to the shape of self.gradients
 		"""
 
+	def __str__(self):
+		return f"{'x'.join(str(i) for i in self.shape)}({'x'.join(str(i) for i in self.space)})"
+
 	def __getitem__(self, item):
-		return Variable(self.values[item], self.gradients[(*item, ...)])
+		value_index = item
+		gradient_index = (slice(None),)*len(self.space)
+		return Variable(self.values[value_index],
+		                self.gradients[(*value_index, *gradient_index)])
 
 	def __add__(self, other):
 		other = Variable(other)
@@ -114,32 +119,32 @@ class Variable:
 	def __rsub__(self, other):
 		return -self + other
 
-	def __rmul__(self, other):
+	def __rmul__(self, other): # watch out! never multiply ndarray*Variable, as I have no way to override Numpy's bad behavior there
 		return self * other
 
 	def sqrt(self):
 		return self ** 0.5
 
-	def log(self):
-		return Variable(np.log(self.values),
-		                self.gradients / self.values[self.bc])
-
 	def sum(self, axis=None):
 		if axis is None:
 			axis = tuple(np.arange(len(self.shape)))
 		else:
-			axis = tuple(np.array(axis))
+			axis = np.atleast_1d(axis)
 			axis = (axis + len(self.shape))%len(self.shape)
+			axis = tuple(axis)
 		return Variable(self.values.sum(axis=axis),
 		                self.gradients.sum(axis=axis))
 
 
-def log(x):
-	""" I don't know where to put this... """
-	try:
-		return x.log()
-	except AttributeError:
-		return np.log(x)
+class GradientSafe:
+	""" some static math functions that work with both Variables and built-ins """
+	@staticmethod
+	def log(x: Variable or np.ndarray or float):
+		try:
+			return Variable(np.log(x.values),
+			                x.gradients / x.values[x.bc])
+		except AttributeError:
+			return np.log(x)
 
 
 def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
@@ -203,19 +208,17 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 	while True:
 		report(state, value, step)
 		# compute the gradient once per outer loop
-		direction = -get_gradient(state)
-		# regularize it somewhat to ease convergence
-		# direction /= np.power(np.sum(direction**2, axis=1), 1/2*REGULARIZATION)[:, None]
-		assert direction.shape == state.shape
+		gradient = get_gradient(state)
+		assert gradient.shape == state.shape
 		# do a line search to choose a good step size
 		num_step_sizes = 0
 		while True:
 			# step according to the gradient and step size for this inner loop
-			step = direction*step_size
+			step = -gradient*step_size
 			new_state = state + step
 			new_value = get_value(new_state)
 			# if the line search condition is met, take it
-			if new_value < value - LINE_SEARCH_STRICTNESS*np.sum(step*direction):
+			if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(step*gradient):
 				break
 			# if the condition is not met, decrement the step size and try agen
 			step_size /= STEP_REDUCTION

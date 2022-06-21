@@ -5,26 +5,148 @@ create_map_projection.py
 take a basic mesh and optimize it according to a particular cost function in order to
 create a new Elastic Projection.
 """
+from typing import Callable
+
 import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 
-from optimize import minimize, log
+from optimize import minimize, GradientSafe
 from util import dilate, h5_str, EARTH
 
 CONFIGURATION_FILE = "oceans" # "continents"; "countries"
 
 
-def find_or_add(vector: np.ndarray, vectors: list[np.ndarray]) -> int:
-	""" add vector to vectors if it's not already there, then return its index """
+def find_or_add(vector: np.ndarray, vectors: list[np.ndarray]) -> tuple[bool, int]:
+	""" add vector to vectors if it's not already there, then return its index
+	    :return: whether we had to add it to the list (because we didn't find it), and
+	             the index of this item in the list
+	"""
 	if np.any(np.isnan(vector)):
-		return -1
+		return False, -1
 	else:
 		for k in range(len(vectors)):
 			if np.all(vectors[k] == vector):
-				return k
+				return False, k
 		vectors.append(vector)
-		return len(vectors) - 1
+		return True, len(vectors) - 1
+
+
+def enumerate_nodes(mesh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+	""" take an array of positions for a mesh and generate the list of unique nodes,
+	    returning mappings from the old mesh to the new indices and the n×2 list positions
+	"""
+	node_indices = np.empty(mesh.shape[:3], dtype=int)
+	node_positions = []
+	for h in range(mesh.shape[0]):
+		for i in range(mesh.shape[1]):
+			for j in range(mesh.shape[2]):
+				_, node_indices[h, i, j] = find_or_add(mesh[h, i, j, :], node_positions)
+	return node_indices, np.array(node_positions)
+
+
+def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray
+                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+	""" take an array of nodes and generate the list of cells in which the elastic energy
+	    should be calculated.
+	"""
+	cell_indices = np.empty((node_indices.shape[0],
+	                         node_indices.shape[1] - 1,
+	                         node_indices.shape[2] - 1,
+	                         2, 2),
+	                        dtype=int)
+	cell_definitions = []
+	cell_areas = []
+	for h in range(node_indices.shape[0]):
+		for i in range(node_indices.shape[1] - 1):
+			for j in range(node_indices.shape[2] - 1):
+				# each corner of each cell should be represented separately
+				for di in range(0, 2):
+					for dj in range(0, 2):
+						if i + di != 0 and i + di != node_indices.shape[1] - 1: # skip the corners next to the poles
+							# define each cell corner by its i and j, and the indices of its adjacent nodes
+							west_node = node_indices[h, i + di, j]
+							east_node = node_indices[h, i + di, j + 1]
+							south_node = node_indices[h, i,     j + dj]
+							north_node = node_indices[h, i + 1, j + dj]
+							cell_definition = np.array([i + di, j + dj,
+							                            west_node, east_node,
+							                            south_node, north_node])
+							if not np.any(cell_definition == -1):
+								added, cell_indices[h, i, j, di, dj] = find_or_add(
+									cell_definition, cell_definitions)
+								if added:
+									# calculate the area of the corner when appropriate
+									ф_1 = ф[i + di]
+									ф_2 = ф[i + 1 - di]
+									cell_areas.append(EARTH.R**2*dф*dλ*(3*np.cos(ф_1) + np.cos(ф_2))/16)
+							else:
+								cell_indices[h, i, j, di, dj] = -1
+	return cell_indices, np.array(cell_definitions), np.array(cell_areas)
+
+
+def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
+                  ) -> tuple[Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray]]:
+	""" create a pair of inverse functions that transform points between the full space of
+	    possible meshes and a reduced space with fewer degrees of freedom. the idea here
+	    is to identify 80% or so of the nodes that can form a skeleton, and from which the
+	    remaining nodes can be interpolated. to that end, each parallel will have some
+	    number of regularly spaced key nodes, and all nodes adjacent to an edge will
+	    be keys, as well, and all nodes that aren't key nodes will be ignored when
+	    reducing the position vector and interpolated from neibors when restoring it.
+	    :param ф: the latitudes of the nodes
+	    :param lookup_table: the index of each node's position in the state vector
+	    :return: a function to linearly reduce a set of node positions to just the bare
+	             skeleton, and a function to linearly reconstruct the missing node
+	             positions from a reduced set
+	"""
+	# first decide which nodes should be independently defined in the skeleton
+	important = np.full(np.max(lookup_table) + 1, False)
+	for h in range(lookup_table.shape[0]):
+		for i in range(lookup_table.shape[1]):
+			period = int(round(1/np.cos(ф[i])))
+			for j in range(lookup_table.shape[2]):
+				if lookup_table[h, i, j] != -1:
+					if j%period == 0:
+						important[lookup_table[h, i, j]] = True
+					elif i == 0 or i == lookup_table.shape[1] - 1:
+						important[lookup_table[h, i, j]] = True
+					elif j == 0 or j == lookup_table.shape[2] - 1:
+						important[lookup_table[h, i, j]] = True
+					else:
+						for dj in [-1, 1]:
+							if lookup_table[h, i, j + dj] == -1:
+								important[lookup_table[h, i, j]] = True
+
+	# then decide how to define the ones that aren't
+	defining_indices = np.empty((important.size, 2), dtype=int)
+	defining_weits = np.empty((important.size, 2), dtype=float)
+	for k0 in range(important.size):
+		# important nodes are defined by the corresponding row in the reduced vector
+		if important[k0]:
+			defining_indices[k0, :] = np.sum(important[:k0])
+			defining_weits[k0, 0] = 1
+		# each remaining node is a linear combination of two important nodes
+		else:
+			h, i, j = np.nonzero(lookup_table == k0)
+			j_left, j_rite = j[0], j[0]
+			while not important[lookup_table[h[0], i[0], j_left]]:
+				j_left -= 1
+			k_left = lookup_table[h[0], i[0], j_left]
+			defining_indices[k0, 0] = np.sum(important[:k_left])
+			defining_weits[k0, 0] = (j_rite - j[0])/(j_rite - j_left)
+			while not important[lookup_table[h[0], i[0], j_rite]]:
+				j_rite += 1
+			k_rite = lookup_table[h[0], i[0], j_rite]
+			defining_indices[k0, 1] = np.sum(important[:k_rite])
+	defining_weits[:, 1] = 1 - defining_weits[:, 0]
+
+	# put the conversions together and return them as functions
+	def reduced(full):
+		return full[important, :]
+	def restored(reduced):
+		return (reduced[defining_indices, :]*defining_weits[:, :, np.newaxis]).sum(axis=1)
+	return reduced, restored
 
 
 def get_bounding_box(points: np.ndarray) -> np.ndarray:
@@ -135,54 +257,19 @@ if __name__ == "__main__":
 	dф = ф_mesh[1] - ф_mesh[0]
 
 	# reformat the nodes into a list without gaps or duplicates
-	node_indices = np.empty((len(section_borders), ф_mesh.size, λ_mesh.size),
-	                        dtype=int)
-	node_positions = []
-	for h in range(len(section_borders)):
-		for i in range(ф_mesh.size):
-			for j in range(λ_mesh.size):
-				if not np.any(np.isnan(mesh[h, i, j, :])):
-					node_indices[h, i, j] = find_or_add(mesh[h, i, j, :], node_positions)
-				else:
-					node_indices[h, i, j] = -1
+	node_indices, initial_node_positions = enumerate_nodes(mesh)
 
-	# and then do the same thing for cells, defining each by the indices of its nodes
-	cell_indices = np.empty((len(section_borders), ф_mesh.size - 1, λ_mesh.size - 1, 2, 2),
-	                        dtype=int)
-	cell_definitions = []
-	for h in range(len(section_borders)):
-		for i in range(ф_mesh.size - 1):
-			for j in range(λ_mesh.size - 1):
-				for di in range(0, 2): # each corner of each cell should be represented separately
-					for dj in range(0, 2):
-						i_primary = i + di
-						i_secondary = i + 1 - di
-						if i_primary != 0 and i_primary != ф_mesh.size - 1: # skip the corners next to the poles
-							west_node = node_indices[h, i + di, j]
-							east_node = node_indices[h, i + di, j + 1]
-							south_node = node_indices[h, i,     j + dj]
-							north_node = node_indices[h, i + 1, j + dj]
-							cell_definition = np.array([i_primary, i_secondary,
-							                            west_node, east_node,
-							                            south_node, north_node])
-							if not np.any(cell_definition == -1):
-								cell_indices[h, i, j, di, dj] = find_or_add(
-									cell_definition, cell_definitions)
-							else:
-								cell_indices[h, i, j, di, dj] = -1
+	# and then do the same thing for cell corners
+	cell_indices, cell_definitions, cell_areas = enumerate_cells(ф_mesh, node_indices)
 
-	cell_areas = []
-	for k in range(len(cell_definitions)):
-		i_prim, i_second = cell_definitions[k][:2]
-		ф_prim, ф_second = ф_mesh[i_prim], ф_mesh[i_second]
-		cell_areas.append(EARTH.R**2*dф*dλ*(3*np.cos(ф_prim) + np.cos(ф_second))/16)
-
-	# now we're all set to do this calculation in numpy
-	node_positions = np.array(node_positions)
-	cell_definitions = np.array(cell_definitions)
-	cell_areas = np.array(cell_areas)
+	# define functions that can define the node positions from a reduced set of them
+	reduced, restored = mesh_skeleton(ф_mesh, node_indices)
 
 	def compute_principal_strains(positions: np.ndarray) -> tuple[float, float]:
+		if positions.shape[0] != initial_node_positions.shape[0]: # convert from reduced mesh to full mesh
+			return compute_principal_strains(restored(positions))
+		assert positions.shape == initial_node_positions.shape
+
 		i = cell_definitions[:, 0]
 		dΛ = EARTH.R*dλ*np.cos(ф_mesh[i]) # TODO: account for eccentricity
 		dΦ = EARTH.R*dф
@@ -205,33 +292,38 @@ if __name__ == "__main__":
 		a, b = compute_principal_strains(positions)
 		scale_term = (a*b - 1)**2
 		shape_term = (a - b)**2
-		return ((3*scale_term + shape_term)*cell_areas).sum()
+		return ((scale_term + 3*shape_term)*cell_areas).sum()
 
-	def compute_energy_strict(positions: np.ndarray, arrangement=node_indices) -> float:
+	def compute_energy_strict(positions: np.ndarray) -> float:
 		a, b = compute_principal_strains(positions)
 		if np.any(a <= 0) or np.any(b <= 0):
 			print(a, b)
 			raise ValueError("the principal stretches should all be positive by now")
 		ab = a*b
-		scale_term = ab**2/2 - log(ab)
+		scale_term = ab**2/2 - GradientSafe.log(ab)
 		shape_term = ((a/b + b/a)/2)**2
-		return ((3*scale_term + shape_term)*cell_areas).sum()
+		return ((scale_term + 3*shape_term)*cell_areas).sum()
 
 	def plot_status(positions: np.ndarray, value: float, step: np.ndarray) -> None:
 		print(value)
-		if np.random.random() < 3e-1:
+		if np.random.random() < 1e-1:
 			plt.clf()
-			plt.scatter(positions[:, 0], positions[:, 1], c=-np.hypot(step[:, 0], step[:, 1])) # TODO: zoom in and rotate automatically
+			plt.scatter(positions[:, 0], positions[:, 1], c=-np.hypot(step[:, 0], step[:, 1]), s=10) # TODO: zoom in and rotate automatically
 			plt.axis("equal")
 			plt.pause(.01)
 
 	node_positions = minimize(compute_energy_loose,
-	                          guess=node_positions,
+	                          guess=reduced(initial_node_positions),
 	                          bounds=None,
 	                          report=plot_status) # TODO: scale gradients
 
 	node_positions = minimize(compute_energy_strict,
 	                          guess=node_positions,
+	                          bounds=None,
+	                          report=plot_status)
+
+	node_positions = minimize(compute_energy_strict,
+	                          guess=restored(node_positions),
 	                          bounds=None,
 	                          report=plot_status)
 
