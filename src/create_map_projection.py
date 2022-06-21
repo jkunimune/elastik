@@ -100,8 +100,23 @@ def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
 	             skeleton, and a function to linearly reconstruct the missing node
 	             positions from a reduced set
 	"""
-	# first decide which nodes should be independently defined in the skeleton
-	important = np.full(np.max(lookup_table) + 1, False)
+	n_full = np.max(lookup_table) + 1
+	# start by filling out these connection graffs, which are nontrivial because of the layers
+	left_neibor = np.full(n_full, -1)
+	rite_neibor = np.full(n_full, -1)
+	for h in range(lookup_table.shape[0]):
+		for i in range(lookup_table.shape[1]):
+			for j in range(lookup_table.shape[2]):
+				if lookup_table[h, i, j] != -1:
+					if j - 1 >= 0 and lookup_table[h, i, j - 1] != -1:
+						left_neibor[lookup_table[h, i, j]] = lookup_table[h, i, j - 1]
+					if j + 1 < lookup_table.shape[2] and lookup_table[h, i, j + 1] != -1:
+						rite_neibor[lookup_table[h, i, j]] = lookup_table[h, i, j + 1]
+
+	# then decide which nodes should be independently defined in the skeleton
+	important = (left_neibor == -1) | (rite_neibor == -1) # points at the edge of a cut
+	important[lookup_table[:, :, 0]] |= (lookup_table[:, :, 0] != -1) # the defined portion of the left edge
+	important[lookup_table[:, :, -1]] |= (lookup_table[:, :, -1] != -1) # the defined portion of the right edge
 	for h in range(lookup_table.shape[0]):
 		for i in range(lookup_table.shape[1]):
 			period = int(round(1/np.cos(ф[i])))
@@ -109,36 +124,28 @@ def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
 				if lookup_table[h, i, j] != -1:
 					if j%period == 0:
 						important[lookup_table[h, i, j]] = True
-					elif i == 0 or i == lookup_table.shape[1] - 1:
-						important[lookup_table[h, i, j]] = True
-					elif j == 0 or j == lookup_table.shape[2] - 1:
-						important[lookup_table[h, i, j]] = True
-					else:
-						for dj in [-1, 1]:
-							if lookup_table[h, i, j + dj] == -1:
-								important[lookup_table[h, i, j]] = True
 
 	# then decide how to define the ones that aren't
-	defining_indices = np.empty((important.size, 2), dtype=int)
-	defining_weits = np.empty((important.size, 2), dtype=float)
-	for k0 in range(important.size):
+	defining_indices = np.empty((n_full, 2), dtype=int)
+	defining_weits = np.empty((n_full, 2), dtype=float)
+	for k0 in range(n_full):
 		# important nodes are defined by the corresponding row in the reduced vector
 		if important[k0]:
 			defining_indices[k0, :] = np.sum(important[:k0])
 			defining_weits[k0, 0] = 1
 		# each remaining node is a linear combination of two important nodes
 		else:
-			h, i, j = np.nonzero(lookup_table == k0)
-			j_left, j_rite = j[0], j[0]
-			while not important[lookup_table[h[0], i[0], j_left]]:
-				j_left -= 1
-			k_left = lookup_table[h[0], i[0], j_left]
+			k_left, distance_left = k0, 0
+			while not important[k_left]:
+				k_left = left_neibor[k_left]
+				distance_left += 1
+			k_rite, distance_rite = k0, 0
+			while not important[k_rite]:
+				k_rite = rite_neibor[k_rite]
+				distance_rite += 1
 			defining_indices[k0, 0] = np.sum(important[:k_left])
-			defining_weits[k0, 0] = (j_rite - j[0])/(j_rite - j_left)
-			while not important[lookup_table[h[0], i[0], j_rite]]:
-				j_rite += 1
-			k_rite = lookup_table[h[0], i[0], j_rite]
 			defining_indices[k0, 1] = np.sum(important[:k_rite])
+			defining_weits[k0, 0] = distance_rite/(distance_left + distance_rite)
 	defining_weits[:, 1] = 1 - defining_weits[:, 0]
 
 	# put the conversions together and return them as functions
