@@ -46,15 +46,10 @@ def enumerate_nodes(mesh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray
-                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                    ) -> tuple[np.ndarray, np.ndarray]:
 	""" take an array of nodes and generate the list of cells in which the elastic energy
 	    should be calculated.
 	"""
-	cell_indices = np.empty((node_indices.shape[0],
-	                         node_indices.shape[1] - 1,
-	                         node_indices.shape[2] - 1,
-	                         2, 2),
-	                        dtype=int)
 	cell_definitions = []
 	cell_areas = []
 	for h in range(node_indices.shape[0]):
@@ -69,20 +64,17 @@ def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray
 							east_node = node_indices[h, i + di, j + 1]
 							south_node = node_indices[h, i,     j + dj]
 							north_node = node_indices[h, i + 1, j + dj]
-							cell_definition = np.array([i + di, j + dj,
+							cell_definition = np.array([h, i + di, j + dj,
 							                            west_node, east_node,
 							                            south_node, north_node])
 							if not np.any(cell_definition == -1):
-								added, cell_indices[h, i, j, di, dj] = find_or_add(
-									cell_definition, cell_definitions)
+								added, _ = find_or_add(cell_definition, cell_definitions)
 								if added:
 									# calculate the area of the corner when appropriate
 									ф_1 = ф[i + di]
 									ф_2 = ф[i + 1 - di]
 									cell_areas.append(EARTH.R**2*dф*dλ*(3*np.cos(ф_1) + np.cos(ф_2))/16)
-							else:
-								cell_indices[h, i, j, di, dj] = -1
-	return cell_indices, np.array(cell_definitions), np.array(cell_areas)
+	return np.array(cell_definitions), np.array(cell_areas)/(4*np.pi*EARTH.R**2)
 
 
 def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
@@ -267,35 +259,41 @@ if __name__ == "__main__":
 	node_indices, initial_node_positions = enumerate_nodes(mesh)
 
 	# and then do the same thing for cell corners
-	cell_indices, cell_definitions, cell_areas = enumerate_cells(ф_mesh, node_indices)
+	cell_definitions, cell_areas = enumerate_cells(ф_mesh, node_indices)
 
 	# define functions that can define the node positions from a reduced set of them
 	reduced, restored = mesh_skeleton(ф_mesh, node_indices)
 
+	# define the objective functions
 	def compute_principal_strains(positions: np.ndarray) -> tuple[float, float]:
 		if positions.shape[0] != initial_node_positions.shape[0]: # convert from reduced mesh to full mesh
 			return compute_principal_strains(restored(positions))
 		assert positions.shape == initial_node_positions.shape
 
-		i = cell_definitions[:, 0]
+		i = cell_definitions[:, 1]
 		dΛ = EARTH.R*dλ*np.cos(ф_mesh[i]) # TODO: account for eccentricity
 		dΦ = EARTH.R*dф
 
-		west = positions[cell_definitions[:, 2], :]
-		east = positions[cell_definitions[:, 3], :]
+		west = positions[cell_definitions[:, 3], :]
+		east = positions[cell_definitions[:, 4], :]
 		dxdΛ = ((east - west)/dΛ[:, None])[:, 0]
 		dydΛ = ((east - west)/dΛ[:, None])[:, 1]
 
-		south = positions[cell_definitions[:, 4], :]
-		north = positions[cell_definitions[:, 5], :]
+		south = positions[cell_definitions[:, 5], :]
+		north = positions[cell_definitions[:, 6], :]
 		dxdΦ = ((north - south)/dΦ)[:, 0]
 		dydΦ = ((north - south)/dΦ)[:, 1]
 
 		trace = np.sqrt((dxdΛ + dydΦ)**2 + (dxdΦ - dydΛ)**2)
 		antitrace = np.sqrt((dxdΛ - dydΦ)**2 + (dxdΦ + dydΛ)**2)
+		# if not hasattr(east, "gradients"):
+		# 	if np.any(antitrace >= trace):
+		# 		for i in np.nonzero(antitrace >= trace)[0]:
+		# 			print(f"{west[i]} to {east[i]}; {south[i]} to {north[i]}.  the partials are [[{dxdΛ[i]}, {dxdΦ[i]}], [{dydΛ[i]}, {dydΦ[i]}]], and the symmetric eigenvalues are {trace[i] + antitrace[i]} and {trace[i] - antitrace[i]}")
+		# 			break
 		return trace + antitrace, trace - antitrace
 
-	def compute_energy_loose(positions: np.ndarray) -> float:
+	def compute_energy_lenient(positions: np.ndarray) -> float:
 		a, b = compute_principal_strains(positions)
 		scale_term = (a*b - 1)**2
 		shape_term = (a - b)**2
@@ -304,39 +302,46 @@ if __name__ == "__main__":
 	def compute_energy_strict(positions: np.ndarray) -> float:
 		a, b = compute_principal_strains(positions)
 		if np.any(a <= 0) or np.any(b <= 0):
-			print(a, b)
-			raise ValueError("the principal stretches should all be positive by now")
+			return np.inf
 		ab = a*b
 		scale_term = ab**2/2 - GradientSafe.log(ab)
 		shape_term = ((a/b + b/a)/2)**2
 		return ((scale_term + 3*shape_term)*cell_areas).sum()
 
 	def plot_status(positions: np.ndarray, value: float, step: np.ndarray) -> None:
-		print(value)
 		if np.random.random() < 1e-1:
+			print(f"{value:.6f}")
 			plt.clf()
 			plt.scatter(positions[:, 0], positions[:, 1], c=-np.hypot(step[:, 0], step[:, 1]), s=10) # TODO: zoom in and rotate automatically
 			plt.axis("equal")
 			plt.pause(.01)
 
-	node_positions = minimize(compute_energy_loose,
+	# then minimize! start with the lenient condition, since the initial gess is likely to have inside-out cells
+	node_positions = minimize(compute_energy_lenient,
 	                          guess=reduced(initial_node_positions),
 	                          bounds=None,
 	                          report=plot_status) # TODO: scale gradients
 
+	# this should make the mesh well-behaved
+	assert np.all(np.positive(compute_principal_strains(node_positions)))
+
+	# switch to the strict condition
 	node_positions = minimize(compute_energy_strict,
 	                          guess=node_positions,
 	                          bounds=None,
 	                          report=plot_status)
 
+	# then finally, do a final pass with the full mesh (rather than the reduced set)
 	node_positions = minimize(compute_energy_strict,
 	                          guess=restored(node_positions),
 	                          bounds=None,
 	                          report=plot_status)
 
+	# apply the optimized vector back to the mesh
 	mesh = node_positions[node_indices, :]
 	mesh[node_indices == -1, :] = np.nan
 
+	# and save it!
 	save_mesh(configure["name"], ф_mesh, λ_mesh, mesh,
 	          section_borders, configure["section_names"].split(","),
 	          configure["descript"])
