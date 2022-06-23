@@ -11,6 +11,7 @@ import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 
+from cmap import CUSTOM_CMAP
 from optimize import minimize, GradientSafe
 from util import dilate, h5_str, EARTH
 
@@ -232,8 +233,9 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 		map_axes.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], f"#bbb", linewidth=.5) # TODO: zoom in and stuff?
 		map_axes.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"#bbb", linewidth=.5)
 	if not final:
-		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1],
-		                 c=-np.hypot(velocity[:, 0], velocity[:, 1]), s=10) # TODO: zoom in and rotate automatically
+		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=10,
+		                 c=-np.hypot(velocity[:, 0], velocity[:, 1]),
+		                 cmap=CUSTOM_CMAP["speed"]) # TODO: zoom in and rotate automatically
 	map_axes.axis("equal")
 
 	a, b = compute_principal_strains(ф_mesh, cell_definitions, all_positions)
@@ -241,7 +243,8 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 	hist_axes.hist2d(np.concatenate([a, b]),
 	                 np.concatenate([b, a]),
 	                 weights=np.tile(cell_areas, 2),
-	                 bins=np.linspace(0, 2, 41))
+	                 bins=np.linspace(0, 2, 41),
+	                 cmap=CUSTOM_CMAP["density"])
 	hist_axes.axis("square")
 
 	valu_axes.clear()
@@ -255,7 +258,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 	diffs = -np.diff(values)/values[1:]
 	if diffs.size > 0:
 		diff_axes.clear()
-		diff_axes.scatter(np.arange(1, len(values)), diffs, s=5, zorder=10)
+		diff_axes.scatter(np.arange(1, len(values)), diffs, s=2, zorder=10)
 		diff_axes.set_ylim(diffs.min(where=diffs != 0, initial=1e6),
 		                   diffs.min(where=diffs != 0, initial=1e6)*1e3)
 		diff_axes.set_yscale("log")
