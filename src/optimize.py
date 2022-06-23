@@ -152,7 +152,7 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
              scale: np.ndarray = None,
              tolerance: float = 1e-8,
              bounds: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
-             report: Callable[[np.ndarray, float, np.ndarray], None] = None,
+             report: Callable[[np.ndarray, float, np.ndarray, bool], None] = None,
              ) -> np.ndarray:
 	""" find the vector that minimizes a function of a list of points using gradient
 	    descent with a dynamically chosen step size. unlike a more generic minimization
@@ -178,7 +178,8 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 	    :param report: an optional function that will be called each time a line search
 	                   is completed, to provide real-time information on how the fitting
 	                   routine is going. it takes as arguments the current state, the
-	                   current value of the function, and the previous step if any
+	                   current value of the function, the previous step if any, and
+	                   whether this is the final value
 	    :return: the optimal n×2 array of points
 	"""
 	n, d = guess.shape
@@ -202,11 +203,11 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 	value = get_value(state)
 	step = np.zeros_like(state)
 	# and with the step size parameter set to unity
-	step_size = 1.
+	step_size = 1e6
 	# descend until we can't descend any further
 	num_line_searches = 0
 	while True:
-		report(state, value, step)
+		report(state, value, step, False)
 		# compute the gradient once per outer loop
 		gradient = get_gradient(state)
 		assert gradient.shape == state.shape
@@ -228,6 +229,7 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 		# if the termination condition is met, finish
 		if (value - new_value)/value < tolerance:
 			print(f"Completed in {num_line_searches} iterations.")
+			report(new_state, new_value, step, True)
 			return new_state
 		# take the new state and error value
 		state = new_state

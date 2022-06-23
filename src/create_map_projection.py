@@ -17,6 +17,16 @@ from util import dilate, h5_str, EARTH
 CONFIGURATION_FILE = "oceans" # "continents"; "countries"
 
 
+def get_bounding_box(points: np.ndarray) -> np.ndarray:
+	""" compute the maximum and minimums of this set of points and package it as
+	    [[left, bottom], [right, top]]
+	"""
+	return np.array([
+		[np.nanmin(points[..., 0]), np.nanmin(points[..., 1])],
+		[np.nanmax(points[..., 0]), np.nanmax(points[..., 1])], # TODO: account for the border, and for spline interpolation
+	])
+
+
 def find_or_add(vector: np.ndarray, vectors: list[np.ndarray]) -> tuple[bool, int]:
 	""" add vector to vectors if it's not already there, then return its index
 	    :return: whether we had to add it to the list (because we didn't find it), and
@@ -148,14 +158,33 @@ def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
 	return reduced, restored
 
 
-def get_bounding_box(points: np.ndarray) -> np.ndarray:
-	""" compute the maximum and minimums of this set of points and package it as
-	    [[left, bottom], [right, top]]
+def compute_principal_strains(ф: np.ndarray, cell_definitions: np.ndarray,
+                              positions: np.ndarray) -> tuple[float, float]:
+	""" take a set of cell definitions and 2D coordinates for each node, and calculate
+	    the Tissot-ellipse semiaxes of each cell.
 	"""
-	return np.array([
-		[np.nanmin(points[..., 0]), np.nanmin(points[..., 1])],
-		[np.nanmax(points[..., 0]), np.nanmax(points[..., 1])], # TODO: account for the border, and for spline interpolation
-	])
+	i = cell_definitions[:, 1]
+	dΛ = EARTH.R*dλ*np.cos(ф[i]) # TODO: account for eccentricity
+	dΦ = EARTH.R*dф
+
+	west = positions[cell_definitions[:, 3], :]
+	east = positions[cell_definitions[:, 4], :]
+	dxdΛ = ((east - west)/dΛ[:, None])[:, 0]
+	dydΛ = ((east - west)/dΛ[:, None])[:, 1]
+
+	south = positions[cell_definitions[:, 5], :]
+	north = positions[cell_definitions[:, 6], :]
+	dxdΦ = ((north - south)/dΦ)[:, 0]
+	dydΦ = ((north - south)/dΦ)[:, 1]
+
+	trace = np.sqrt((dxdΛ + dydΦ)**2 + (dxdΦ - dydΛ)**2)
+	antitrace = np.sqrt((dxdΛ - dydΦ)**2 + (dxdΦ + dydΛ)**2)
+	# if not hasattr(east, "gradients"):
+	# 	if np.any(antitrace >= trace):
+	# 		for i in np.nonzero(antitrace >= trace)[0]:
+	# 			print(f"{west[i]} to {east[i]}; {south[i]} to {north[i]}.  the partials are [[{dxdΛ[i]}, {dxdΦ[i]}], [{dydΛ[i]}, {dydΦ[i]}]], and the symmetric eigenvalues are {trace[i] + antitrace[i]} and {trace[i] - antitrace[i]}")
+	# 			break
+	return trace + antitrace, trace - antitrace
 
 
 def load_pixel_values(filename: str) -> np.ndarray:
@@ -190,6 +219,49 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 			mesh[h, :, :, :] = file[f"section{h}/projection"]
 			sections.append(np.radians(file[f"section{h}/border"][:, :]))
 	return ф, λ, mesh, sections
+
+
+def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
+              velocity: np.ndarray, values: list[float],
+              mesh_index: np.ndarray, final: bool,
+              map_axes: plt.Axes, hist_axes: plt.Axes,
+              valu_axes: plt.Axes, diff_axes: plt.Axes) -> None:
+	map_axes.clear()
+	mesh = all_positions[mesh_index, :]
+	for h in range(mesh.shape[0]):
+		map_axes.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], f"#bbb", linewidth=.5) # TODO: zoom in and stuff?
+		map_axes.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"#bbb", linewidth=.5)
+	if not final:
+		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1],
+		                 c=-np.hypot(velocity[:, 0], velocity[:, 1]), s=10) # TODO: zoom in and rotate automatically
+	map_axes.axis("equal")
+
+	a, b = compute_principal_strains(ф_mesh, cell_definitions, all_positions)
+	hist_axes.clear()
+	hist_axes.hist2d(np.concatenate([a, b]),
+	                 np.concatenate([b, a]),
+	                 weights=np.tile(cell_areas, 2),
+	                 bins=np.linspace(0, 2, 41))
+	hist_axes.axis("square")
+
+	valu_axes.clear()
+	valu_axes.plot(values)
+	valu_axes.set_xlim(len(values) - 1000, len(values))
+	valu_axes.set_ylim(0, 3*values[-1])
+	valu_axes.minorticks_on()
+	valu_axes.yaxis.set_tick_params(which='both')
+	valu_axes.grid(which="both", axis="y")
+
+	diffs = -np.diff(values)/values[1:]
+	if diffs.size > 0:
+		diff_axes.clear()
+		diff_axes.scatter(np.arange(1, len(values)), diffs, s=5, zorder=10)
+		diff_axes.set_ylim(diffs.min(where=diffs != 0, initial=1e6),
+		                   diffs.min(where=diffs != 0, initial=1e6)*1e3)
+		diff_axes.set_yscale("log")
+		diff_axes.grid(which="major", axis="y")
+
+
 
 
 def save_mesh(name: str, ф: np.ndarray, λ: np.ndarray, mesh: np.ndarray,
@@ -264,56 +336,51 @@ if __name__ == "__main__":
 	# define functions that can define the node positions from a reduced set of them
 	reduced, restored = mesh_skeleton(ф_mesh, node_indices)
 
+	main_fig, map_axes = plt.subplots(figsize=(7, 5))
+	small_fig = plt.figure(figsize=(3, 5))
+	gridspecs = (plt.GridSpec(3, 1, height_ratios=[2, 1, 1]),
+	             plt.GridSpec(3, 1, height_ratios=[2, 1, 1], hspace=0))
+	hist_axes = small_fig.add_subplot(gridspecs[0][0, :])
+	valu_axes = small_fig.add_subplot(gridspecs[1][1, :])
+	diff_axes = small_fig.add_subplot(gridspecs[1][2, :], sharex=valu_axes)
+
+	values = []
+
 	# define the objective functions
-	def compute_principal_strains(positions: np.ndarray) -> tuple[float, float]:
+	def compute_energy_lenient(positions: np.ndarray) -> float:
 		if positions.shape[0] != initial_node_positions.shape[0]: # convert from reduced mesh to full mesh
-			return compute_principal_strains(restored(positions))
+			return compute_energy_lenient(restored(positions))
 		assert positions.shape == initial_node_positions.shape
 
-		i = cell_definitions[:, 1]
-		dΛ = EARTH.R*dλ*np.cos(ф_mesh[i]) # TODO: account for eccentricity
-		dΦ = EARTH.R*dф
-
-		west = positions[cell_definitions[:, 3], :]
-		east = positions[cell_definitions[:, 4], :]
-		dxdΛ = ((east - west)/dΛ[:, None])[:, 0]
-		dydΛ = ((east - west)/dΛ[:, None])[:, 1]
-
-		south = positions[cell_definitions[:, 5], :]
-		north = positions[cell_definitions[:, 6], :]
-		dxdΦ = ((north - south)/dΦ)[:, 0]
-		dydΦ = ((north - south)/dΦ)[:, 1]
-
-		trace = np.sqrt((dxdΛ + dydΦ)**2 + (dxdΦ - dydΛ)**2)
-		antitrace = np.sqrt((dxdΛ - dydΦ)**2 + (dxdΦ + dydΛ)**2)
-		# if not hasattr(east, "gradients"):
-		# 	if np.any(antitrace >= trace):
-		# 		for i in np.nonzero(antitrace >= trace)[0]:
-		# 			print(f"{west[i]} to {east[i]}; {south[i]} to {north[i]}.  the partials are [[{dxdΛ[i]}, {dxdΦ[i]}], [{dydΛ[i]}, {dydΦ[i]}]], and the symmetric eigenvalues are {trace[i] + antitrace[i]} and {trace[i] - antitrace[i]}")
-		# 			break
-		return trace + antitrace, trace - antitrace
-
-	def compute_energy_lenient(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(positions)
+		a, b = compute_principal_strains(ф_mesh, cell_definitions, positions)
 		scale_term = (a*b - 1)**2
 		shape_term = (a - b)**2
 		return ((scale_term + 3*shape_term)*cell_areas).sum()
 
 	def compute_energy_strict(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(positions)
+		if positions.shape[0] != initial_node_positions.shape[0]: # convert from reduced mesh to full mesh
+			return compute_energy_lenient(restored(positions))
+		assert positions.shape == initial_node_positions.shape
+
+		a, b = compute_principal_strains(ф_mesh, cell_definitions, positions)
 		if np.any(a <= 0) or np.any(b <= 0):
 			return np.inf
 		ab = a*b
-		scale_term = ab**2/2 - GradientSafe.log(ab)
-		shape_term = ((a/b + b/a)/2)**2
+		scale_term = (ab**2 - 1)/2 - GradientSafe.log(ab)
+		shape_term = ((a/b + b/a)/2 - 1)**2
 		return ((scale_term + 3*shape_term)*cell_areas).sum()
 
-	def plot_status(positions: np.ndarray, value: float, step: np.ndarray) -> None:
-		if np.random.random() < 1e-1:
-			print(f"{value:.6f}")
-			plt.clf()
-			plt.scatter(positions[:, 0], positions[:, 1], c=-np.hypot(step[:, 0], step[:, 1]), s=10) # TODO: zoom in and rotate automatically
-			plt.axis("equal")
+	def plot_status(positions: np.ndarray, value: float, step: np.ndarray, final: bool) -> None:
+		values.append(value)
+		if np.random.random() < 1e-1 or final:
+			if positions.shape[0] == initial_node_positions.shape[0]:
+				all_positions = np.concatenate([positions, [[np.nan, np.nan]]])
+			else:
+				all_positions = np.concatenate([restored(positions), [[np.nan, np.nan]]])
+			show_mesh(positions, all_positions, step, values,
+			          node_indices, final, map_axes, hist_axes, valu_axes, diff_axes)
+			main_fig.canvas.draw()
+			small_fig.canvas.draw()
 			plt.pause(.01)
 
 	# then minimize! start with the lenient condition, since the initial gess is likely to have inside-out cells
@@ -323,7 +390,8 @@ if __name__ == "__main__":
 	                          report=plot_status) # TODO: scale gradients
 
 	# this should make the mesh well-behaved
-	assert np.all(np.positive(compute_principal_strains(node_positions)))
+	assert np.all(np.positive(compute_principal_strains(
+		ф_mesh, cell_definitions, restored(node_positions))))
 
 	# switch to the strict condition
 	node_positions = minimize(compute_energy_strict,
@@ -346,10 +414,4 @@ if __name__ == "__main__":
 	          section_borders, configure["section_names"].split(","),
 	          configure["descript"])
 
-	plt.close("all")
-	plt.figure()
-	for h in range(mesh.shape[0]):
-		plt.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], f"C{h}") # TODO: zoom in and stuff?
-		plt.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"C{h}")
-		plt.axis("equal")
 	plt.show()
