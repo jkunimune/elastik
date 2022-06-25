@@ -345,20 +345,12 @@ if __name__ == "__main__":
 
 	# define the objective functions
 	def compute_energy_lenient(positions: np.ndarray) -> float:
-		if positions.shape[0] != initial_node_positions.shape[0]: # convert from reduced mesh to full mesh
-			return compute_energy_lenient(restored(positions))
-		assert positions.shape == initial_node_positions.shape
-
-		a, b = compute_principal_strains(ф_mesh, cell_definitions, positions)
+		a, b = compute_principal_strains(ф_mesh, cell_definitions, restored(positions))
 		scale_term = (a*b - 1)**2
 		shape_term = (a - b)**2
 		return ((scale_term + 3*shape_term)*cell_areas).sum()
 
 	def compute_energy_strict(positions: np.ndarray) -> float:
-		if positions.shape[0] != initial_node_positions.shape[0]: # convert from reduced mesh to full mesh
-			return compute_energy_lenient(restored(positions))
-		assert positions.shape == initial_node_positions.shape
-
 		a, b = compute_principal_strains(ф_mesh, cell_definitions, positions)
 		if np.any(a <= 0) or np.any(b <= 0):
 			return np.inf
@@ -392,14 +384,7 @@ if __name__ == "__main__":
 	assert np.all(np.positive(compute_principal_strains(
 		ф_mesh, cell_definitions, restored(node_positions))))
 
-	# switch to the strict condition
-	node_positions = minimize(compute_energy_strict,
-	                          guess=node_positions,
-	                          bounds=None,
-	                          report=plot_status,
-	                          tolerance=1e-3/EARTH.R)
-
-	# then finally, do a final pass with the full mesh (rather than the reduced set)
+	# then switch to the strict condition and full mesh
 	node_positions = minimize(compute_energy_strict,
 	                          guess=restored(node_positions),
 	                          bounds=None,
