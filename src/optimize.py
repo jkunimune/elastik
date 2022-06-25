@@ -149,10 +149,10 @@ class GradientSafe:
 
 def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
              guess: np.ndarray,
+             tolerance: float,
              scale: np.ndarray = None,
-             tolerance: float = 1e-8,
              bounds: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
-             report: Callable[[np.ndarray, float, np.ndarray, bool], None] = None,
+             report: Callable[[np.ndarray, float, np.ndarray, np.ndarray, bool], None] = None,
              ) -> np.ndarray:
 	""" find the vector that minimizes a function of a list of points using gradient
 	    descent with a dynamically chosen step size. unlike a more generic minimization
@@ -165,8 +165,8 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 	                  state vector. gradients will be scaled by these values. if it is not
 	                  provided, we will assume that each point should move at the same
 	                  speed.
-	    :param tolerance: the relative tolerance. when a single step fails to reduce the
-	                      error by less than this amount, the algorithm will terminate.
+	    :param tolerance: the absolute tolerance. when the magnitude of the gradient at
+	                      any given point dips below this, we are done.
 	    :param bounds: a list of inequality constraints on various linear combinations.
 	                   each item of the list should comprise a m×n matrix that multiplies
 	                   by the state array to produce a m×2 vector of tracer particle
@@ -178,8 +178,8 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 	    :param report: an optional function that will be called each time a line search
 	                   is completed, to provide real-time information on how the fitting
 	                   routine is going. it takes as arguments the current state, the
-	                   current value of the function, the previous step if any, and
-	                   whether this is the final value
+	                   current value of the function, the current gradient, the previous
+	                   step if any, and whether this is the final value
 	    :return: the optimal n×2 array of points
 	"""
 	n, d = guess.shape
@@ -199,18 +199,27 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 		return func(Variable(x, independent=True)).gradients
 
 	# start at the inicial gess
+	initial_value = get_value(guess)
+	value = initial_value
 	state = guess
-	value = get_value(state)
 	step = np.zeros_like(state)
 	# and with the step size parameter set to unity
 	step_size = 1e6
 	# descend until we can't descend any further
 	num_line_searches = 0
 	while True:
-		report(state, value, step, False)
 		# compute the gradient once per outer loop
 		gradient = get_gradient(state)
 		assert gradient.shape == state.shape
+
+		# if the termination condition is met, finish
+		if np.linalg.norm(gradient) > tolerance:
+			report(state, value, gradient, step, False)
+		else:
+			report(state, value, gradient, step, True)
+			print(f"Completed in {num_line_searches} iterations.")
+			return state
+
 		# do a line search to choose a good step size
 		num_step_sizes = 0
 		while True:
@@ -223,18 +232,15 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 				break
 			# if the condition is not met, decrement the step size and try agen
 			step_size /= STEP_REDUCTION
+			num_step_sizes += 1
 			# keep track of the number of step sizes we've tried
 			if num_step_sizes > 100:
 				raise RuntimeError("line search did not converge")
-		# if the termination condition is met, finish
-		if (value - new_value)/value < tolerance:
-			print(f"Completed in {num_line_searches} iterations.")
-			report(new_state, new_value, step, True)
-			return new_state
+
 		# take the new state and error value
 		state = new_state
 		value = new_value
-		# and set the step size back a bit
+		# set the step size back a bit
 		step_size *= STEP_AUGMENTATION
 		# keep track of the number of iterations
 		num_line_searches += 1

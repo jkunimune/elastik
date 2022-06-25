@@ -178,13 +178,8 @@ def compute_principal_strains(ф: np.ndarray, cell_definitions: np.ndarray,
 	dxdΦ = ((north - south)/dΦ)[:, 0]
 	dydΦ = ((north - south)/dΦ)[:, 1]
 
-	trace = np.sqrt((dxdΛ + dydΦ)**2 + (dxdΦ - dydΛ)**2)
-	antitrace = np.sqrt((dxdΛ - dydΦ)**2 + (dxdΦ + dydΛ)**2)
-	# if not hasattr(east, "gradients"):
-	# 	if np.any(antitrace >= trace):
-	# 		for i in np.nonzero(antitrace >= trace)[0]:
-	# 			print(f"{west[i]} to {east[i]}; {south[i]} to {north[i]}.  the partials are [[{dxdΛ[i]}, {dxdΦ[i]}], [{dydΛ[i]}, {dydΦ[i]}]], and the symmetric eigenvalues are {trace[i] + antitrace[i]} and {trace[i] - antitrace[i]}")
-	# 			break
+	trace = np.sqrt((dxdΛ + dydΦ)**2 + (dxdΦ - dydΛ)**2)/2
+	antitrace = np.sqrt((dxdΛ - dydΦ)**2 + (dxdΦ + dydΛ)**2)/2
 	return trace + antitrace, trace - antitrace
 
 
@@ -255,16 +250,15 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 	valu_axes.yaxis.set_tick_params(which='both')
 	valu_axes.grid(which="both", axis="y")
 
+	diff_axes.clear()
 	diffs = -np.diff(values)/values[1:]
 	if diffs.size > 0:
-		diff_axes.clear()
-		diff_axes.scatter(np.arange(1, len(values)), diffs, s=2, zorder=10)
-		diff_axes.set_ylim(diffs.min(where=diffs != 0, initial=1e6),
-		                   diffs.min(where=diffs != 0, initial=1e6)*1e3)
-		diff_axes.set_yscale("log")
-		diff_axes.grid(which="major", axis="y")
-
-
+		diff_axes.scatter(np.arange(1, len(values)), diffs, s=1, zorder=10)
+	diff_axes.scatter(np.arange(len(grads)), grads, s=1, zorder=10)
+	ylim = max(5e-3, diffs.min(where=diffs != 0, initial=np.min(grads))*1e3)
+	diff_axes.set_ylim(ylim/1e3, ylim)
+	diff_axes.set_yscale("log")
+	diff_axes.grid(which="major", axis="y")
 
 
 def save_mesh(name: str, ф: np.ndarray, λ: np.ndarray, mesh: np.ndarray,
@@ -347,7 +341,7 @@ if __name__ == "__main__":
 	valu_axes = small_fig.add_subplot(gridspecs[1][1, :])
 	diff_axes = small_fig.add_subplot(gridspecs[1][2, :], sharex=valu_axes)
 
-	values = []
+	values, grads = [], []
 
 	# define the objective functions
 	def compute_energy_lenient(positions: np.ndarray) -> float:
@@ -373,8 +367,9 @@ if __name__ == "__main__":
 		shape_term = ((a/b + b/a)/2 - 1)**2
 		return ((scale_term + 3*shape_term)*cell_areas).sum()
 
-	def plot_status(positions: np.ndarray, value: float, step: np.ndarray, final: bool) -> None:
+	def plot_status(positions: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, final: bool) -> None:
 		values.append(value)
+		grads.append(np.linalg.norm(grad)*EARTH.R)
 		if np.random.random() < 1e-1 or final:
 			if positions.shape[0] == initial_node_positions.shape[0]:
 				all_positions = np.concatenate([positions, [[np.nan, np.nan]]])
@@ -390,7 +385,8 @@ if __name__ == "__main__":
 	node_positions = minimize(compute_energy_lenient,
 	                          guess=reduced(initial_node_positions),
 	                          bounds=None,
-	                          report=plot_status) # TODO: scale gradients
+	                          report=plot_status,
+	                          tolerance=1e-3/EARTH.R)
 
 	# this should make the mesh well-behaved
 	assert np.all(np.positive(compute_principal_strains(
@@ -400,13 +396,15 @@ if __name__ == "__main__":
 	node_positions = minimize(compute_energy_strict,
 	                          guess=node_positions,
 	                          bounds=None,
-	                          report=plot_status)
+	                          report=plot_status,
+	                          tolerance=1e-3/EARTH.R)
 
 	# then finally, do a final pass with the full mesh (rather than the reduced set)
 	node_positions = minimize(compute_energy_strict,
 	                          guess=restored(node_positions),
 	                          bounds=None,
-	                          report=plot_status)
+	                          report=plot_status,
+	                          tolerance=1e-3/EARTH.R)
 
 	# apply the optimized vector back to the mesh
 	mesh = node_positions[node_indices, :]

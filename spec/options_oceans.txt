@@ -1,6 +1,6 @@
 name: dai-hai
-descript: okeano e rivo ro an-parca li cou di metre-grafi jek-metodo
+descript: hai e rivo ro an-parca li cou di metre-grafi jek-metodo
 cuts: mountains
 weights: ocean
 scale: uniform
-section_names: Pasífiko,Barti,Atlántiko
+section_names: Pasifi,Barti,Atlanti
