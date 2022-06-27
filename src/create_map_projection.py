@@ -229,7 +229,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 		map_axes.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"#bbb", linewidth=.5)
 	if not final:
 		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=10,
-		                 c=-np.hypot(velocity[:, 0], velocity[:, 1]),
+		                 c=-np.linalg.norm(velocity, axis=1),
 		                 cmap=CUSTOM_CMAP["speed"]) # TODO: zoom in and rotate automatically
 	map_axes.axis("equal")
 
