@@ -356,7 +356,7 @@ if __name__ == "__main__":
 			return np.inf
 		ab = a*b
 		scale_term = (ab**2 - 1)/2 - GradientSafe.log(ab)
-		shape_term = ((a/b + b/a)/2 - 1)**2
+		shape_term = (a - b)**2
 		return ((scale_term + 3*shape_term)*cell_areas).sum()
 
 	def plot_status(positions: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, final: bool) -> None:
