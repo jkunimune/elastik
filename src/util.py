@@ -46,6 +46,12 @@ def wrap_angle(x: float or np.ndarray) -> float or np.ndarray: # TODO: come up w
 	""" wrap an angular value into the range [-np.pi, np.pi) """
 	return x - np.floor((x + np.pi)/(2*np.pi))*2*np.pi
 
+def to_cartesian(ф: float or np.ndarray, λ: float or np.ndarray) -> float or np.ndarray:
+	""" convert spherical coordinates in degrees to unit-sphere cartesian coordinates """
+	return (np.cos(np.radians(ф))*np.cos(np.radians(λ)),
+	        np.cos(np.radians(ф))*np.sin(np.radians(λ)),
+	        np.sin(np.radians(ф)))
+
 def dilate(x: np.ndarray, distance: int) -> np.ndarray:
 	""" take a 1D boolean array and make it so that any Falses near Trues become True.
 	    then return the modified array.
