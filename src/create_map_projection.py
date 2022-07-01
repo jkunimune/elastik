@@ -10,10 +10,12 @@ from typing import Callable
 import h5py
 import numpy as np
 from matplotlib import pyplot as plt
+import tifffile
 
 from cmap import CUSTOM_CMAP
 from optimize import minimize, GradientSafe
-from util import dilate, h5_str, EARTH
+from util import dilate, h5_str, EARTH, resample
+
 
 CONFIGURATION_FILE = "oceans" # "continents"; "countries"
 
@@ -56,13 +58,13 @@ def enumerate_nodes(mesh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 	return node_indices, np.array(node_positions)
 
 
-def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray
+def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray, values: np.ndarray,
                     ) -> tuple[np.ndarray, np.ndarray]:
 	""" take an array of nodes and generate the list of cells in which the elastic energy
 	    should be calculated.
 	"""
 	cell_definitions = []
-	cell_areas = []
+	cell_weights = []
 	for h in range(node_indices.shape[0]):
 		for i in range(node_indices.shape[1] - 1):
 			for j in range(node_indices.shape[2] - 1):
@@ -78,14 +80,18 @@ def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray
 							cell_definition = np.array([h, i + di, j + dj,
 							                            west_node, east_node,
 							                            south_node, north_node])
+
 							if not np.any(cell_definition == -1):
 								added, _ = find_or_add(cell_definition, cell_definitions)
 								if added:
 									# calculate the area of the corner when appropriate
 									ф_1 = ф[i + di]
 									ф_2 = ф[i + 1 - di]
-									cell_areas.append(EARTH.R**2*dф*dλ*(3*np.cos(ф_1) + np.cos(ф_2))/16)
-	return np.array(cell_definitions), np.array(cell_areas)/(4*np.pi*EARTH.R**2)
+									area = dф*dλ*(3*np.cos(ф_1) + np.cos(ф_2))/16/(4*np.pi)
+									value = values[i, j]
+									cell_weights.append(area*value)
+
+	return np.array(cell_definitions), np.array(cell_weights)
 
 
 def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
@@ -188,7 +194,7 @@ def load_pixel_values(filename: str) -> np.ndarray:
 	if filename == "uniform":
 		return np.array(1)
 	else:
-		return np.loadtxt(f"../spec/pixels_{filename}.txt")
+		return tifffile.imread(f"../spec/pixels_{filename}.tif")
 
 
 def load_options(filename: str) -> dict[str, str]:
@@ -237,7 +243,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 	hist_axes.clear()
 	hist_axes.hist2d(np.concatenate([a, b]),
 	                 np.concatenate([b, a]),
-	                 weights=np.tile(cell_areas, 2),
+	                 weights=np.tile(cell_weights, 2),
 	                 bins=np.linspace(0, 2, 41),
 	                 cmap=CUSTOM_CMAP["density"])
 	hist_axes.axis("square")
@@ -317,8 +323,8 @@ def save_mesh(name: str, ф: np.ndarray, λ: np.ndarray, mesh: np.ndarray,
 if __name__ == "__main__":
 	configure = load_options(CONFIGURATION_FILE)
 	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
-	weights = load_pixel_values(configure["weights"])
-	scale = load_pixel_values(configure["scale"])
+	values = resample(load_pixel_values(configure["weights"])**2, mesh.shape[1:3])
+	scale = resample(load_pixel_values(configure["scale"]), mesh.shape[1:3])
 
 	# assume the coordinates are more or less evenly spaced
 	dλ = λ_mesh[1] - λ_mesh[0]
@@ -328,7 +334,7 @@ if __name__ == "__main__":
 	node_indices, initial_node_positions = enumerate_nodes(mesh)
 
 	# and then do the same thing for cell corners
-	cell_definitions, cell_areas = enumerate_cells(ф_mesh, node_indices)
+	cell_definitions, cell_weights = enumerate_cells(ф_mesh, node_indices, values)
 
 	# define functions that can define the node positions from a reduced set of them
 	reduced, restored = mesh_skeleton(ф_mesh, node_indices)
@@ -348,7 +354,7 @@ if __name__ == "__main__":
 		a, b = compute_principal_strains(ф_mesh, cell_definitions, restored(positions))
 		scale_term = (a*b - 1)**2
 		shape_term = (a - b)**2
-		return ((scale_term + 3*shape_term)*cell_areas).sum()
+		return ((scale_term + 3*shape_term)*cell_weights).sum()
 
 	def compute_energy_strict(positions: np.ndarray) -> float:
 		a, b = compute_principal_strains(ф_mesh, cell_definitions, positions)
@@ -357,7 +363,7 @@ if __name__ == "__main__":
 		ab = a*b
 		scale_term = (ab**2 - 1)/2 - GradientSafe.log(ab)
 		shape_term = (a - b)**2
-		return ((scale_term + 3*shape_term)*cell_areas).sum()
+		return ((scale_term + 3*shape_term)*cell_weights).sum()
 
 	def plot_status(positions: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, final: bool) -> None:
 		values.append(value)
@@ -373,7 +379,9 @@ if __name__ == "__main__":
 			small_fig.canvas.draw()
 			plt.pause(.01)
 
-	# then minimize! start with the lenient condition, since the initial gess is likely to have inside-out cells
+	# then minimize!
+	print("begin fitting process")
+	# start with the lenient condition, since the initial gess is likely to have inside-out cells
 	node_positions = minimize(compute_energy_lenient,
 	                          guess=reduced(initial_node_positions),
 	                          bounds=None,

@@ -9,6 +9,7 @@ import math
 
 import numpy as np
 import shapefile
+import tifffile
 from matplotlib import pyplot as plt
 
 from util import bin_centers, to_cartesian
@@ -16,6 +17,7 @@ from util import bin_centers, to_cartesian
 
 COAST_WIDTH = 10 # degrees
 PRECISION = .5 # degrees
+ANTARCTIC_CUTOFF = -56 # degrees
 
 
 def load_coast_vertices(precision) -> list[tuple[float, float]]:
@@ -36,7 +38,7 @@ def load_coast_vertices(precision) -> list[tuple[float, float]]:
 	return points
 
 
-def calculate_coast_distance(ф: np.ndarray, λ: np.ndarray) -> np.ndarray:
+def calculate_coast_distance(ф: np.ndarray, λ: np.ndarray, crop_antarctica: bool) -> np.ndarray:
 	""" take a set of latitudes and longitudes and calculate the angular distance from
 	    each point to the nearest shoreline (in degrees)
 	"""
@@ -47,9 +49,10 @@ def calculate_coast_distance(ф: np.ndarray, λ: np.ndarray) -> np.ndarray:
 	minimum_distance = np.full((ф.size, λ.size), np.inf)
 
 	for λ_0, ф_0 in points:
-		x_0, y_0, z_0 = to_cartesian(ф_0, λ_0)
-		minimum_distance = np.minimum(minimum_distance,
-		                              np.degrees(np.arccos(x_0*xx + y_0*yy + z_0*zz)))
+		if not crop_antarctica or ф_0 > ANTARCTIC_CUTOFF:
+			x_0, y_0, z_0 = to_cartesian(ф_0, λ_0)
+			minimum_distance = np.minimum(minimum_distance,
+			                              np.degrees(np.arccos(x_0*xx + y_0*yy + z_0*zz)))
 	return minimum_distance
 
 
@@ -62,7 +65,7 @@ def load_land_polygons() -> list[list[tuple[float, float]]]:
 	return polygons
 
 
-def find_land_mask(ф_grid: np.ndarray, λ_grid: np.ndarray) -> np.ndarray:
+def find_land_mask(ф_grid: np.ndarray, λ_grid: np.ndarray, crop_antarctica: bool) -> np.ndarray:
 	""" bild a 2D bool array that is True for coordinates on land and False for coordinates in the ocean. """
 	crossings = np.full((ф.size, λ.size), 0)
 	polygons = load_land_polygons()
@@ -76,6 +79,8 @@ def find_land_mask(ф_grid: np.ndarray, λ_grid: np.ndarray) -> np.ndarray:
 			intersects = np.not_equal(λ_0 < λ_grid, λ_1 < λ_grid)
 			ф_X[~intersects] = np.inf
 			crossings[ф_X[np.newaxis, :] < ф_grid[:, np.newaxis]] += 1
+	if crop_antarctica:
+		crossings[ф_grid <= ANTARCTIC_CUTOFF] = 0
 	return crossings%2 == 1
 
 
@@ -84,12 +89,25 @@ if __name__ == "__main__":
 	λ_edges = bin_centers(np.linspace(-180, 180, 361))
 	ф, λ = bin_centers(ф_edges), bin_centers(λ_edges)
 
-	coast_distance = calculate_coast_distance(ф, λ)
+	# iterate thru the four weight files we want to generate
+	for crop_antarctica in [False, True]:
+		for value_land in [False, True]:
+			filename = f"../spec/pixels{'_land' if value_land else '_sea'}{'_sen-ata' if crop_antarctica else ''}.tif"
+			print(filename)
 
-	land = find_land_mask(ф, λ)
+			# get the set of points that are uniformly important
+			land = find_land_mask(ф, λ, crop_antarctica=crop_antarctica)
+			mask = land if value_land else ~land
 
-	importance = np.where(land, 1, np.exp(-coast_distance/COAST_WIDTH))
+			# get the distance of each point from the nearest coast
+			coast_distance = calculate_coast_distance(ф, λ, crop_antarctica=crop_antarctica)
 
-	plt.figure()
-	plt.pcolormesh(λ_edges, ф_edges, importance)
+			# combine them
+			importance = np.where(mask, 1, np.exp(-coast_distance/COAST_WIDTH))
+
+			# save and plot
+			tifffile.imwrite(filename, (255.9*importance).astype(int))
+			plt.figure()
+			plt.pcolormesh(λ_edges, ф_edges, importance)
+
 	plt.show()

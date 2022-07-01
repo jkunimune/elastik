@@ -1,6 +1,6 @@
 name: lin
 descript: ...
 cuts: oceans
-weights: continents
+weights: land
 scale: uniform
 section_names: Áfrika,Australia,Amérika

@@ -17,7 +17,7 @@ from util import bin_index, bin_centers, wrap_angle, EARTH
 # filename of the borders to use
 SECTIONS_FILE = "../spec/cuts_mountains.txt"
 # how many cells per 90°
-RESOLUTION = 5#20
+RESOLUTION = 5#18
 # filename of mesh at which to save it
 MESH_FILE = "../spec/mesh_mountains.h5"
 # locations of various straits that should be shown continuously
@@ -370,15 +370,15 @@ if __name__ == "__main__":
 							if include[h, i_next, j_next] and np.isnan(nodes[h, i_next, j_next, 0]):
 								cue.put((h, i_next, j_next))
 
-			# show a status update
-			if np.random.random() < 2e-2 or cue.empty():
-				plt.clf()
-				plt.scatter(*nodes.reshape((-1, 2)).T, s=5, color="k")
-				for h in range(nodes.shape[0]):
-					plt.plot(nodes[h, :, :, 0], nodes[h, :, :, 1], f"C{h}")
-					plt.plot(nodes[h, :, :, 0].T, nodes[h, :, :, 1].T, f"C{h}")
-				plt.axis("equal")
-				plt.pause(.01)
+		# show a status update
+		if np.random.random() < 2e-2 or cue.empty():
+			plt.clf()
+			plt.scatter(*nodes.reshape((-1, 2)).T, s=5, color="k")
+			for h in range(nodes.shape[0]):
+				plt.plot(nodes[h, :, :, 0], nodes[h, :, :, 1], f"C{h}")
+				plt.plot(nodes[h, :, :, 0].T, nodes[h, :, :, 1].T, f"C{h}")
+			plt.axis("equal")
+			plt.pause(.01)
 
 	# save it to HDF5
 	save_mesh(MESH_FILE, ф, λ, nodes, sections)
