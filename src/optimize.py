@@ -73,7 +73,7 @@ class Variable:
 					raise IndexError("the given array dimensions do not match")
 				self.curvatures = curvatures
 			else:
-				self.curvatures = np.array(0)
+				self.curvatures = np.zeros(self.gradients.shape)
 
 		self.shape = self.values.shape
 		""" the shape of self.values """
@@ -92,7 +92,7 @@ class Variable:
 		gradient_index = (slice(None),)*len(self.space)
 		return Variable(self.values[value_index],
 		                self.gradients[(*value_index, *gradient_index)],
-		                self.gradients[(*value_index, *gradient_index)])
+		                self.curvatures[(*value_index, *gradient_index)])
 
 	def __add__(self, other):
 		other = Variable(other)
@@ -239,8 +239,8 @@ def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
 			return state
 
 		# otherwise, descend the gradient
-		curvature_cutoff = np.quantile(abs(curvature), 1.00)
-		direction = -gradient/np.maximum(abs(curvature), curvature_cutoff)[:, np.newaxis]
+		curvature_cutoff = np.quantile(abs(curvature), .01)
+		direction = -gradient/np.maximum(curvature, curvature_cutoff)[:, np.newaxis]
 
 		# do a line search to choose a good step size
 		num_step_sizes = 0
