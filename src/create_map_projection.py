@@ -9,12 +9,12 @@ from typing import Callable
 
 import h5py
 import numpy as np
-from matplotlib import pyplot as plt
 import tifffile
+from matplotlib import pyplot as plt
 
 from cmap import CUSTOM_CMAP
 from optimize import minimize, GradientSafe
-from util import dilate, h5_str, EARTH, resample
+from util import dilate, h5_str, EARTH
 
 
 CONFIGURATION_FILE = "oceans" # "continents"; "countries"
@@ -28,6 +28,24 @@ def get_bounding_box(points: np.ndarray) -> np.ndarray:
 		[np.nanmin(points[..., 0]), np.nanmin(points[..., 1])],
 		[np.nanmax(points[..., 0]), np.nanmax(points[..., 1])], # TODO: account for the border, and for spline interpolation
 	])
+
+
+def downsample(full: np.ndarray, shape: tuple):
+	""" decrease the size of a numpy array by setting each pixel to the mean of the pixels
+	    in the original image for which it was the nearest neibor
+	"""
+	if full.shape == ():
+		return np.full(shape, full)
+	assert len(shape) == len(full.shape)
+	for i in range(len(shape)):
+		assert shape[i] < full.shape[i]
+	reduc = np.empty(shape)
+	i_reduc = (np.arange(full.shape[0])/full.shape[0]*reduc.shape[0]).astype(int)
+	j_reduc = (np.arange(full.shape[1])/full.shape[1]*reduc.shape[1]).astype(int)
+	for i in range(shape[0]):
+		for j in range(shape[1]):
+			reduc[i][j] = np.mean(full[i_reduc == i][:, j_reduc == j])
+	return reduc
 
 
 def find_or_add(vector: np.ndarray, vectors: list[np.ndarray]) -> tuple[bool, int]:
@@ -190,7 +208,7 @@ def compute_principal_strains(ф: np.ndarray, cell_definitions: np.ndarray,
 
 
 def load_pixel_values(filename: str) -> np.ndarray:
-	""" load a generic 2D raster image """
+	""" load and resample a generic 2D raster image """
 	if filename == "uniform":
 		return np.array(1)
 	else:
@@ -323,8 +341,8 @@ def save_mesh(name: str, ф: np.ndarray, λ: np.ndarray, mesh: np.ndarray,
 if __name__ == "__main__":
 	configure = load_options(CONFIGURATION_FILE)
 	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
-	values = resample(load_pixel_values(configure["weights"])**2, mesh.shape[1:3])
-	scale = resample(load_pixel_values(configure["scale"]), mesh.shape[1:3])
+	scale = downsample(load_pixel_values(configure["scale"]), mesh.shape[1:3]) # I get best results when values is
+	values = downsample(load_pixel_values(configure["weights"])**2, mesh.shape[1:3]) # steeper than scale, hence this ^2
 
 	# assume the coordinates are more or less evenly spaced
 	dλ = λ_mesh[1] - λ_mesh[0]

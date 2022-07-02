@@ -60,22 +60,3 @@ def dilate(x: np.ndarray, distance: int) -> np.ndarray:
 		x[:-1] |= x[1:]
 		x[1:] |= x[:-1]
 	return x
-
-def resample(im: np.ndarray, shape: tuple) -> np.ndarray:
-	""" decrease the size of a numpy array by setting each pixel to the mean of the pixels
-	    in the original image for which it was the nearest neibor
-	"""
-	if im.shape == ():
-		return np.full(shape, im)
-	assert len(shape) == len(im.shape)
-	for i in range(len(shape)):
-		assert shape[i] < im.shape[i]
-	oup = np.empty(shape)
-	index = []
-	for i in range(len(shape)):
-		positions = np.arange(0.5, im.shape[i])
-		scaled_positions = positions/im.shape[i]*shape[i]
-		index.append(scaled_positions.astype(int))
-	index = tuple(np.meshgrid(*index, indexing="ij"))
-	oup[index] = im # TODO: figure out the downsampling later; for now this is just nearest-neibor
-	return oup
