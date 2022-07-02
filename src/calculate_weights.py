@@ -92,7 +92,7 @@ if __name__ == "__main__":
 	# iterate thru the four weight files we want to generate
 	for crop_antarctica in [False, True]:
 		for value_land in [False, True]:
-			filename = f"../spec/pixels{'_land' if value_land else '_sea'}{'_sen-ata' if crop_antarctica else ''}.tif"
+			filename = f"../spec/pixels{'_land' if value_land else '_sea'}{'_sinATA' if crop_antarctica else ''}.tif"
 			print(filename)
 
 			# get the set of points that are uniformly important
@@ -106,8 +106,8 @@ if __name__ == "__main__":
 			importance = np.where(mask, 1, np.exp(-coast_distance/COAST_WIDTH))
 
 			# save and plot
-			tifffile.imwrite(filename, (255.9*importance).astype(int))
+			tifffile.imwrite(filename, importance)
 			plt.figure()
-			plt.pcolormesh(λ_edges, ф_edges, importance)
+			plt.pcolormesh(λ_edges, ф_edges, importance**2)
 
 	plt.show()

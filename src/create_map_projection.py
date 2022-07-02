@@ -261,7 +261,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 	if diffs.size > 0:
 		diff_axes.scatter(np.arange(1, len(values)), diffs, s=1, zorder=10)
 	diff_axes.scatter(np.arange(len(grads)), grads, s=1, zorder=10)
-	ylim = max(5e-3, diffs.min(where=diffs != 0, initial=np.min(grads))*1e3)
+	ylim = max(2e-2, diffs.min(where=diffs != 0, initial=np.min(grads))*1e3)
 	diff_axes.set_ylim(ylim/1e3, ylim)
 	diff_axes.set_yscale("log")
 	diff_axes.grid(which="major", axis="y")
