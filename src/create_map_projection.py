@@ -9,8 +9,10 @@ from typing import Callable
 
 import h5py
 import numpy as np
+import shapefile
 import tifffile
 from matplotlib import pyplot as plt
+from scipy import interpolate
 
 from cmap import CUSTOM_CMAP
 from optimize import minimize, GradientSafe
@@ -225,6 +227,15 @@ def load_options(filename: str) -> dict[str, str]:
 	return options
 
 
+def load_coastline_data(reduction=2) -> list[np.ndarray]:
+	coastlines = []
+	with shapefile.Reader(f"../data/ne_110m_coastline.zip") as shapef:
+		for shape in shapef.shapes():
+			if len(shape.points) > 3*reduction:
+				coastlines.append(np.radians(shape.points)[::reduction, ::-1])
+	return coastlines
+
+
 def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[np.ndarray]]:
 	""" load the ф values, λ values, node locations, and section borders from a HDF5
 	    file, in that order.
@@ -243,14 +254,20 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 
 def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
               velocity: np.ndarray, values: list[float],
-              mesh_index: np.ndarray, final: bool,
+              final: bool, ф_mesh: np.ndarray, λ_mesh: np.ndarray,
+              mesh_index: np.ndarray, coastlines: list[np.array],
               map_axes: plt.Axes, hist_axes: plt.Axes,
               valu_axes: plt.Axes, diff_axes: plt.Axes) -> None:
 	map_axes.clear()
 	mesh = all_positions[mesh_index, :]
 	for h in range(mesh.shape[0]):
-		map_axes.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], f"#bbb", linewidth=.5) # TODO: zoom in and stuff?
-		map_axes.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"#bbb", linewidth=.5)
+		map_axes.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], f"#bbb", linewidth=.4) # TODO: zoom in and stuff?
+		map_axes.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"#bbb", linewidth=.4)
+		project = interpolate.RegularGridInterpolator([ф_mesh, λ_mesh], mesh[h, :, :, :],
+		                                              bounds_error=False, fill_value=np.nan)
+		for line in coastlines:
+			projected_line = project(line)
+			plt.plot(projected_line[:, 0], projected_line[:, 1], f"#000", linewidth=.8, zorder=2)
 	if not final:
 		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=10,
 		                 c=-np.linalg.norm(velocity, axis=1),
@@ -355,21 +372,25 @@ if __name__ == "__main__":
 	cell_definitions, cell_weights = enumerate_cells(ф_mesh, node_indices, values)
 
 	# define functions that can define the node positions from a reduced set of them
-	reduced, restored = mesh_skeleton(ф_mesh, node_indices)
+	reduce, restore = mesh_skeleton(ф_mesh, node_indices)
 
-	main_fig, map_axes = plt.subplots(figsize=(7, 5))
+	# load the coastline data from Natural Earth
+	coastlines = load_coastline_data()
+
+	# set up the plotting axes
 	small_fig = plt.figure(figsize=(3, 5))
 	gridspecs = (plt.GridSpec(3, 1, height_ratios=[2, 1, 1]),
 	             plt.GridSpec(3, 1, height_ratios=[2, 1, 1], hspace=0))
 	hist_axes = small_fig.add_subplot(gridspecs[0][0, :])
 	valu_axes = small_fig.add_subplot(gridspecs[1][1, :])
 	diff_axes = small_fig.add_subplot(gridspecs[1][2, :], sharex=valu_axes)
+	main_fig, map_axes = plt.subplots(figsize=(7, 5))
 
 	values, grads = [], []
 
 	# define the objective functions
 	def compute_energy_lenient(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(ф_mesh, cell_definitions, restored(positions))
+		a, b = compute_principal_strains(ф_mesh, cell_definitions, restore(positions))
 		scale_term = (a*b - 1)**2
 		shape_term = (a - b)**2
 		return ((scale_term + 3*shape_term)*cell_weights).sum()
@@ -390,9 +411,10 @@ if __name__ == "__main__":
 			if positions.shape[0] == initial_node_positions.shape[0]:
 				all_positions = np.concatenate([positions, [[np.nan, np.nan]]])
 			else:
-				all_positions = np.concatenate([restored(positions), [[np.nan, np.nan]]])
-			show_mesh(positions, all_positions, step, values,
-			          node_indices, final, map_axes, hist_axes, valu_axes, diff_axes)
+				all_positions = np.concatenate([restore(positions), [[np.nan, np.nan]]])
+			show_mesh(positions, all_positions, step, values, final,
+			          ф_mesh, λ_mesh, node_indices, coastlines,
+			          map_axes, hist_axes, valu_axes, diff_axes)
 			main_fig.canvas.draw()
 			small_fig.canvas.draw()
 			plt.pause(.01)
@@ -401,18 +423,18 @@ if __name__ == "__main__":
 	print("begin fitting process")
 	# start with the lenient condition, since the initial gess is likely to have inside-out cells
 	node_positions = minimize(compute_energy_lenient,
-	                          guess=reduced(initial_node_positions),
+	                          guess=reduce(initial_node_positions),
 	                          bounds=None,
 	                          report=plot_status,
 	                          tolerance=1e-3/EARTH.R)
 
 	# this should make the mesh well-behaved
 	assert np.all(np.positive(compute_principal_strains(
-		ф_mesh, cell_definitions, restored(node_positions))))
+		ф_mesh, cell_definitions, restore(node_positions))))
 
 	# then switch to the strict condition and full mesh
 	node_positions = minimize(compute_energy_strict,
-	                          guess=restored(node_positions),
+	                          guess=restore(node_positions),
 	                          bounds=None,
 	                          report=plot_status,
 	                          tolerance=1e-3/EARTH.R)
