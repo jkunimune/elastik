@@ -7,11 +7,12 @@ it doesn't overshoot. there are probably scipy functions that do this, but I don
 what the name for this algorithm would be, and anyway, I want to be able to see its
 progress as it goes.
 """
-
+from __future__ import annotations
 
 from typing import Callable
-
 import numpy as np
+
+from sparse import DenseSparseArray
 
 
 STEP_REDUCTION = 5.
@@ -21,7 +22,7 @@ LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
 
 class Variable:
-	def __init__(self, values: np.ndarray or "Variable",
+	def __init__(self, values: np.ndarray | Variable,
 	             gradients: np.ndarray = None,
 	             curvatures: np.ndarray = None,
 	             independent: bool = False, num_dimensions: int = 0):
@@ -56,13 +57,13 @@ class Variable:
 			# if gradients are specified
 			if gradients is not None:
 				# make sure the shapes match
-				if gradients.shape[:len(self.values.shape)] != self.values.shape:
+				if gradients.shape[:self.values.ndim] != self.values.shape:
 					raise IndexError("the given array dimensions do not match.")
 				self.gradients = gradients
 			# if no gradients are given and these are independent variables
 			elif independent:
 				# make an identity matrix of sorts
-				self.gradients = np.identity(self.values.size).reshape(self.values.shape*2) # TODO: if the gradient calculation step becomes very slow, I should try using sparse matrices for this part
+				self.gradients = DenseSparseArray.identity(self.values.shape) # TODO: if the gradient calculation step becomes very slow, I should try using sparse matrices for this part
 			# if no gradients are given and these are not independent
 			else:
 				# take the values to be constant
@@ -72,12 +73,15 @@ class Variable:
 				if curvatures.shape != self.gradients.shape:
 					raise IndexError("the given array dimensions do not match")
 				self.curvatures = curvatures
+			elif self.gradients.ndim > 0:
+				self.curvatures = DenseSparseArray.zeros(
+					self.values.shape, self.gradients.shape[self.values.ndim:])
 			else:
-				self.curvatures = np.zeros(self.gradients.shape)
+				self.curvatures = np.array(0)
 
 		self.shape = self.values.shape
 		""" the shape of self.values """
-		self.space = self.gradients.shape[len(self.values.shape):]
+		self.space = self.gradients.shape[self.values.ndim:]
 		""" the shape of each gradient """
 		self.bc = (slice(None),)*len(self.shape) + (np.newaxis,)*len(self.space)
 		""" this tuple should be used to index self.values when they need to broadcast
@@ -112,20 +116,20 @@ class Variable:
 		other = Variable(other, num_dimensions=len(self.shape))
 		return Variable(values=self.values * other.values,
 		                gradients=self.gradients * other.values[self.bc] +
-		                          self.values[self.bc] * other.gradients,
+		                          other.gradients * self.values[self.bc],
 		                curvatures=self.curvatures * other.values[self.bc] +
-		                           2 * self.gradients * other.gradients +
-		                           self.values[self.bc] * other.curvatures)
+		                           self.gradients * other.gradients * 2 +
+		                           other.curvatures * self.values[self.bc])
 
 	def __neg__(self):
 		return self * (-1)
 
 	def __pow__(self, power):
 		return Variable(self.values ** power,
-		                power * self.values[self.bc]**(power - 1) * self.gradients,
-		                power * self.values[self.bc]**(power - 2)*(
-				                (power - 1) * self.gradients**2 +
-				                self.values[self.bc] * self.curvatures))
+		                self.gradients * self.values[self.bc]**(power - 1) * power,
+		                (self.gradients**2 * (power - 1) +
+		                 self.curvatures * self.values[self.bc]) *
+		                self.values[self.bc]**(power - 2) * power)
 
 	def __sub__(self, other):
 		other = Variable(other)
@@ -163,7 +167,7 @@ class Variable:
 class GradientSafe:
 	""" some static math functions that work with both Variables and built-ins """
 	@staticmethod
-	def log(x: Variable or np.ndarray or float):
+	def log(x: Variable | np.ndarray | float):
 		try:
 			return Variable(np.log(x.values),
 			                x.gradients / x.values[x.bc],
@@ -172,7 +176,7 @@ class GradientSafe:
 			return np.log(x)
 
 
-def minimize(func: Callable[[np.ndarray or Variable], float or Variable],
+def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
              guess: np.ndarray,
              tolerance: float,
              bounds: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = None,

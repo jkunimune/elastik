@@ -38,7 +38,7 @@ class Path:
 		self.end = (i[-1], j[-1])
 
 
-def round_index(x: float or np.ndarray, arr: np.ndarray) -> int or np.ndarray:
+def round_index(x: float | np.ndarray, arr: np.ndarray) -> int | np.ndarray:
 	""" find the index for arr that yields the value nearest x """
 	anser = np.round(np.interp(x, arr, np.arange(arr.size)))
 	try:
@@ -117,7 +117,7 @@ def load_elevation_data(ф_nodes: np.ndarray, λ_nodes: np.ndarray) -> np.array:
 	return z_nodes
 
 
-def find_hiest_path(start: tuple[float, float], end: tuple[float, float] or np.ndarray,
+def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | np.ndarray,
                     x_nodes: np.ndarray, y_nodes: np.ndarray, z_nodes: np.ndarray
                     ) -> np.ndarray:
 	""" perform a dijkstra search to find the hiest path between start and end.  a path
@@ -203,7 +203,7 @@ if __name__ == "__main__":
 	z_map = load_elevation_data(ф_map, λ_map)
 
 	# search for paths between the endpoints
-	tripoint: tuple[float, float] or None = None
+	tripoint: tuple[float, float] | None = None
 	paths = []
 	for i in range(1, len(endpoints)):
 		start = endpoints[i]
