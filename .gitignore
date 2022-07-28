@@ -1,8 +1,11 @@
 # compiled Python
 *.pyc
 
+# compiled C
+cmake-build-debug/*
+
 # IntelliJ files
 .idea/*
 
-# data files (see README for where to get them)
+# input data files (see README for where to get them)
 data/*

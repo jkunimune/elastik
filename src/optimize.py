@@ -58,7 +58,7 @@ class Variable:
 			if gradients is not None:
 				# make sure the shapes match
 				if gradients.shape[:self.values.ndim] != self.values.shape:
-					raise IndexError("the given array dimensions do not match.")
+					raise IndexError(f"the given array dimensions do not match (you passd {self.values.shape} values and {gradients.shape} gradients).")
 				self.gradients = gradients
 			# if no gradients are given and these are independent variables
 			elif independent:
@@ -152,6 +152,11 @@ class Variable:
 	def sqrt(self):
 		return self ** 0.5
 
+	def log(self):
+		return Variable(np.log(self.values),
+		                self.gradients / self.values[self.bc],
+		                self.curvatures / self.values[self.bc] - self.gradients**2 / self.values[self.bc]**2)
+
 	def sum(self, axis=None):
 		if axis is None:
 			axis = tuple(np.arange(len(self.shape)))
@@ -162,18 +167,6 @@ class Variable:
 		return Variable(self.values.sum(axis=axis),
 		                self.gradients.sum(axis=axis),
 		                self.curvatures.sum(axis=axis))
-
-
-class GradientSafe:
-	""" some static math functions that work with both Variables and built-ins """
-	@staticmethod
-	def log(x: Variable | np.ndarray | float):
-		try:
-			return Variable(np.log(x.values),
-			                x.gradients / x.values[x.bc],
-			                x.curvatures / x.values[x.bc] - x.gradients**2 / x.values[x.bc]**2)
-		except AttributeError:
-			return np.log(x)
 
 
 def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
@@ -214,10 +207,14 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 		value = func(x)
 		if value <= 0:
 			raise ValueError("I'm not set up to have objective functions that can go nonpositive")
+		elif np.isnan(value):
+			raise ValueError("there are nan values")
 		return value
 	# define a utility function to use Variable to get the gradient of the value
 	def get_gradient(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 		variable = func(Variable(x, independent=True))
+		if np.any(np.isnan(variable.gradients)):
+			raise ValueError("there are nan gradients")
 		return variable.gradients, np.sum(variable.curvatures, axis=-1)
 
 	# start at the inicial gess

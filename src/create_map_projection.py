@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 from scipy import interpolate
 
 from cmap import CUSTOM_CMAP
-from optimize import minimize, GradientSafe
+from optimize import minimize
 from util import dilate, h5_str, EARTH
 
 
@@ -180,8 +180,9 @@ def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
 	# put the conversions together and return them as functions
 	def reduced(full):
 		return full[important, :]
-	def restored(reduced):
-		return (reduced[defining_indices, :]*defining_weits[:, :, np.newaxis]).sum(axis=1)
+	def restored(partial):
+		return partial[defining_indices[:, 0], :]*defining_weits[:, 0, np.newaxis] +\
+		       partial[defining_indices[:, 1], :]*defining_weits[:, 1, np.newaxis]
 	return reduced, restored
 
 
@@ -372,7 +373,7 @@ if __name__ == "__main__":
 	cell_definitions, cell_weights = enumerate_cells(ф_mesh, node_indices, values)
 
 	# define functions that can define the node positions from a reduced set of them
-	reduce, restore = mesh_skeleton(ф_mesh, node_indices)
+	reduced, restored = mesh_skeleton(ф_mesh, node_indices)
 
 	# load the coastline data from Natural Earth
 	coastlines = load_coastline_data()
@@ -390,7 +391,7 @@ if __name__ == "__main__":
 
 	# define the objective functions
 	def compute_energy_lenient(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(ф_mesh, cell_definitions, restore(positions))
+		a, b = compute_principal_strains(ф_mesh, cell_definitions, restored(positions))
 		scale_term = (a*b - 1)**2
 		shape_term = (a - b)**2
 		return ((scale_term + 3*shape_term)*cell_weights).sum()
@@ -400,7 +401,7 @@ if __name__ == "__main__":
 		if np.any(a <= 0) or np.any(b <= 0):
 			return np.inf
 		ab = a*b
-		scale_term = (ab**2 - 1)/2 - GradientSafe.log(ab)
+		scale_term = (ab**2 - 1)/2 - np.log(ab)
 		shape_term = (a - b)**2
 		return ((scale_term + 3*shape_term)*cell_weights).sum()
 
@@ -411,7 +412,7 @@ if __name__ == "__main__":
 			if positions.shape[0] == initial_node_positions.shape[0]:
 				all_positions = np.concatenate([positions, [[np.nan, np.nan]]])
 			else:
-				all_positions = np.concatenate([restore(positions), [[np.nan, np.nan]]])
+				all_positions = np.concatenate([restored(positions), [[np.nan, np.nan]]])
 			show_mesh(positions, all_positions, step, values, final,
 			          ф_mesh, λ_mesh, node_indices, coastlines,
 			          map_axes, hist_axes, valu_axes, diff_axes)
@@ -423,18 +424,18 @@ if __name__ == "__main__":
 	print("begin fitting process")
 	# start with the lenient condition, since the initial gess is likely to have inside-out cells
 	node_positions = minimize(compute_energy_lenient,
-	                          guess=reduce(initial_node_positions),
+	                          guess=reduced(initial_node_positions),
 	                          bounds=None,
 	                          report=plot_status,
 	                          tolerance=1e-3/EARTH.R)
 
 	# this should make the mesh well-behaved
-	assert np.all(np.positive(compute_principal_strains(
-		ф_mesh, cell_definitions, restore(node_positions))))
+	assert np.all(np.greater(compute_principal_strains(
+		ф_mesh, cell_definitions, restored(node_positions)), 0))
 
 	# then switch to the strict condition and full mesh
 	node_positions = minimize(compute_energy_strict,
-	                          guess=restore(node_positions),
+	                          guess=restored(node_positions),
 	                          bounds=None,
 	                          report=plot_status,
 	                          tolerance=1e-3/EARTH.R)
