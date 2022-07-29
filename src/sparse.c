@@ -46,33 +46,6 @@ int product(const int values[], int length) {
 }
 
 /**
- * copy an int array and return a pointer to the copy
- */
-int* copy_of_ia(const int original[], int length) {
-    int* copy = malloc(length*sizeof(int));
-    for (int k = 0; k < length; k ++)
-        copy[k] = original[k];
-    return copy;
-}
-
-/**
- * copy a double array and return a pointer to the copy
- */
-double* copy_of_da(const double original[], int length) {
-    double* copy = malloc(length*sizeof(double));
-    for (int k = 0; k < length; k ++)
-        copy[k] = original[k];
-    return copy;
-}
-
-struct SparseArray copy_of_sa(struct SparseArray original) {
-    struct SparseArray copy = {.ndim=original.ndim, .nitems=original.nitems};
-    copy.indices = copy_of_ia(original.indices, original.nitems*original.ndim);
-    copy.values = copy_of_da(original.values, original.nitems);
-    return copy;
-}
-
-/**
  * free the memory allocated to a SparseArray
  * @param a
  */
@@ -85,13 +58,59 @@ void free_sa(struct SparseArray a) {
 
 /**
  * free the memory allocated to a SparseArrayArray and all of its elements
- * @param a
  */
 __attribute__((unused)) __declspec(dllexport) void free_saa(
         struct SparseArrayArray a) {
     for (int i = 0; i < a.size; i ++)
         free_sa(a.elements[i]);
+    free(a.elements);
     free(a.shape);
+}
+
+/**
+ * free the memory allocated to an nd-array, given the location of its memory.
+ * this is really just an alias for the existing free function; I only have it
+ * here so that I only haff to import one dll file.
+ */
+__attribute__((unused)) __declspec(dllexport) void free_nda(double* a) {
+    free(a);
+}
+
+/**
+ * copy an int array and return a pointer to the copy
+ */
+int* copy_of_ia(const int original[], int length) {
+    if (length > 0) {
+        int *copy = malloc(length*sizeof(int));
+        for (int k = 0; k < length; k ++)
+            copy[k] = original[k];
+        return copy;
+    }
+    else {
+        return NULL;
+    }
+}
+
+/**
+ * copy a double array and return a pointer to the copy
+ */
+double* copy_of_da(const double original[], int length) {
+    double* copy = malloc(length*sizeof(double));
+    for (int k = 0; k < length; k ++)
+        copy[k] = original[k];
+    return copy;
+}
+
+/**
+ * copy a SparseArray and return the new identical object
+ */
+struct SparseArray copy_of_sa(struct SparseArray original) {
+    struct SparseArray copy = {.ndim=original.ndim, .nitems=original.nitems};
+    if (copy.nitems > 0) {
+        copy.indices = copy_of_ia(original.indices, original.nitems*original.ndim);
+        copy.values = copy_of_da(original.values, original.nitems);
+    }
+    return copy;
 }
 
 /**
@@ -112,91 +131,96 @@ struct SparseArray elementwise_sa(enum Operator operator,
 
     struct SparseArray c = {.ndim=a.ndim};
 
-    // first, merge-sort the indices of a and b
-    int a_mapping[a.nitems + b.nitems];
-    int b_mapping[a.nitems + b.nitems];
-    // they're both sorted, so iterate thru them simultaneously
-    int j_a = 0, j_b = 0;
-    int j_c = 0;
-    while (j_a < a.nitems || j_b < b.nitems) {
-        int* a_index = (j_a < a.nitems) ? a.indices + j_a*c.ndim : NULL;
-        int* b_index = (j_b < b.nitems) ? b.indices + j_b*c.ndim : NULL;
-        // each iteration, see which index comes next
-        int comparison = 0; // default to 0: a combined a and b comes next
-        if (a_index == NULL)
-            comparison = 1; // 1: a b index comes next
-        else if (b_index == NULL)
-            comparison = -1; // -1: an a index comes next
-        else {
-            for (int k = 0; k < c.ndim; k ++) {
-                if (a_index[k] < b_index[k])
-                    comparison = -1; // -1: an a index comes next
-                else if (a_index[k] > b_index[k])
-                    comparison = 1; // 1: a b index comes next
-                if (comparison != 0)
-                    break;
-            }
-        }
-        // if the next one should be a, assine it the next a index and mark b as nonparticipating
-        if (comparison < 0) {
-            a_mapping[j_c] = j_a;
-            j_a ++;
-            b_mapping[j_c] = -1;
-        }
-        // if the next one should be b, assine it the next b index and mark a as nonparticipating
-        else if (comparison > 0) {
-            a_mapping[j_c] = -1;
-            b_mapping[j_c] = j_b;
-            j_b ++;
-        }
-        // if they are both next, then they both get to participate!
-        else {
-            a_mapping[j_c] = j_a;
-            j_a ++;
-            b_mapping[j_c] = j_b;
-            j_b ++;
-        }
-        // keep in mind that when multiplying, we only need to keep indices where both inputs have an element
-        if (operator != MULTIPLY || (a_mapping[j_c] >= 0 && b_mapping[j_c] >= 0))
-            j_c ++;
-    }
-
-    // now bild the new thing
-    c.nitems = j_c;
-    c.indices = malloc(c.nitems*c.ndim*sizeof(int));
-    c.values = malloc(c.nitems*sizeof(double));
-    for (j_c = 0; j_c < c.nitems; j_c ++) {
-        j_a = a_mapping[j_c];
-        j_b = b_mapping[j_c];
-        // copy the indices from whencever they're defined
-        for (int k = 0; k < c.ndim; k ++) {
-            if (j_a >= 0)
-                c.indices[j_c*c.ndim + k] = a.indices[j_a*c.ndim + k];
-            else
-                c.indices[j_c*c.ndim + k] = b.indices[j_b*c.ndim + k];
-        }
-        // and operate on the values
-        if (j_a >= 0) {
-            if (j_b >= 0) {
-                if (operator == ADD)
-                    c.values[j_c] = a.values[j_a] + b.values[j_b];
-                else if (operator == SUBTRACT)
-                    c.values[j_c] = a.values[j_a] - b.values[j_b];
-                else if (operator == MULTIPLY)
-                    c.values[j_c] = a.values[j_a] * b.values[j_b];
-                else {
-                    printf("Error! %d is an illegal operation for SparseArrays.\n", operator);
-                    struct SparseArray null = {};
-                    return null;
+    if (a.nitems > 0 || b.nitems > 0) {
+        // first, merge-sort the indices of a and b
+        int a_mapping[a.nitems + b.nitems];
+        int b_mapping[a.nitems + b.nitems];
+        // they're both sorted, so iterate thru them simultaneously
+        int j_a = 0, j_b = 0;
+        int j_c = 0;
+        while (j_a < a.nitems || j_b < b.nitems) {
+            int *a_index = (j_a < a.nitems) ? a.indices + j_a*c.ndim : NULL;
+            int *b_index = (j_b < b.nitems) ? b.indices + j_b*c.ndim : NULL;
+            // each iteration, see which index comes next
+            int comparison = 0; // default to 0: a combined a and b comes next
+            if (a_index == NULL)
+                comparison = 1; // 1: a b index comes next
+            else if (b_index == NULL)
+                comparison = - 1; // -1: an a index comes next
+            else {
+                for (int k = 0; k < c.ndim; k ++) {
+                    if (a_index[k] < b_index[k])
+                        comparison = - 1; // -1: an a index comes next
+                    else if (a_index[k] > b_index[k])
+                        comparison = 1; // 1: a b index comes next
+                    if (comparison != 0)
+                        break;
                 }
             }
-            else
-                c.values[j_c] = a.values[j_a];
+            // if the next one should be a, assine it the next a index and mark b as nonparticipating
+            if (comparison < 0) {
+                a_mapping[j_c] = j_a;
+                j_a ++;
+                b_mapping[j_c] = - 1;
+            }
+                // if the next one should be b, assine it the next b index and mark a as nonparticipating
+            else if (comparison > 0) {
+                a_mapping[j_c] = - 1;
+                b_mapping[j_c] = j_b;
+                j_b ++;
+            }
+                // if they are both next, then they both get to participate!
+            else {
+                a_mapping[j_c] = j_a;
+                j_a ++;
+                b_mapping[j_c] = j_b;
+                j_b ++;
+            }
+            // keep in mind that when multiplying, we only need to keep indices where both inputs have an element
+            if (operator != MULTIPLY || (a_mapping[j_c] >= 0 && b_mapping[j_c] >= 0))
+                j_c ++;
         }
-        else {
-            if (operator == SUBTRACT) c.values[j_c] = -b.values[j_b];
-            else                      c.values[j_c] = b.values[j_b];
+
+        // now bild the new thing
+        c.nitems = j_c;
+        c.indices = malloc(c.nitems*c.ndim*sizeof(int));
+        c.values = malloc(c.nitems*sizeof(double));
+        for (j_c = 0; j_c < c.nitems; j_c ++) {
+            j_a = a_mapping[j_c];
+            j_b = b_mapping[j_c];
+            // copy the indices from whencever they're defined
+            for (int k = 0; k < c.ndim; k ++) {
+                if (j_a >= 0)
+                    c.indices[j_c*c.ndim + k] = a.indices[j_a*c.ndim + k];
+                else
+                    c.indices[j_c*c.ndim + k] = b.indices[j_b*c.ndim + k];
+            }
+            // and operate on the values
+            if (j_a >= 0) {
+                if (j_b >= 0) {
+                    if (operator == ADD)
+                        c.values[j_c] = a.values[j_a] + b.values[j_b];
+                    else if (operator == SUBTRACT)
+                        c.values[j_c] = a.values[j_a] - b.values[j_b];
+                    else if (operator == MULTIPLY)
+                        c.values[j_c] = a.values[j_a]*b.values[j_b];
+                    else {
+                        printf("Error! %d is an illegal operation for SparseArrays.\n", operator);
+                        struct SparseArray null = {};
+                        return null;
+                    }
+                }
+                else
+                    c.values[j_c] = a.values[j_a];
+            }
+            else {
+                if (operator == SUBTRACT) c.values[j_c] = - b.values[j_b];
+                else c.values[j_c] = b.values[j_b];
+            }
         }
+    }
+    else { // on the off-chance these are both empty
+        c.nitems = 0; // don't allocate any memory
     }
 
     return c;
@@ -388,21 +412,23 @@ struct SparseArrayArray elementwise_nda(enum Operator operator, struct SparseArr
     c.elements = malloc(a.size*sizeof(struct SparseArray));
     for (int i_a = 0; i_a < a.size; i_a ++) {
         struct SparseArray old = a.elements[i_a];
-        // first figure out how to broadcast a value from the ndarray to this spot
-        int i_b = broadcast_index(i_a, a.shape, b_shape, a.ndim);
-        // then perform the operation
         struct SparseArray new = {.ndim=old.ndim, .nitems=old.nitems};
-        new.indices = copy_of_ia(old.indices, old.nitems*old.ndim);
-        new.values = copy_of_da(old.values, old.nitems);
-        for (int j = 0; j < old.nitems; j ++) {
-            if (operator == MULTIPLY)
-                new.values[j] = old.values[j]*b[i_b];
-            else if (operator == DIVIDE)
-                new.values[j] = old.values[j]/b[i_b];
-            else {
-                printf("Error! %d is an illegal operation for a SparseArrayArray and a dense array.\n", operator);
-                struct SparseArrayArray null = {};
-                return null;
+        if (new.nitems > 0) {
+            new.indices = copy_of_ia(old.indices, old.nitems*old.ndim);
+            new.values = malloc(old.nitems*sizeof(double));
+            // first figure out how to broadcast a value from the ndarray to this spot
+            int i_b = broadcast_index(i_a, a.shape, b_shape, a.ndim);
+            // then perform the operation
+            for (int j = 0; j < old.nitems; j ++) {
+                if (operator == MULTIPLY)
+                    new.values[j] = old.values[j]*b[i_b];
+                else if (operator == DIVIDE)
+                    new.values[j] = old.values[j]/b[i_b];
+                else {
+                    printf("Error! %d is an illegal operation for a SparseArrayArray and a dense array.\n", operator);
+                    struct SparseArrayArray null = {};
+                    return null;
+                }
             }
         }
         c.elements[i_a] = new;
@@ -428,20 +454,22 @@ struct SparseArrayArray elementwise_f(enum Operator operator, struct SparseArray
     for (int i = 0; i < a.size; i ++) {
         struct SparseArray old = a.elements[i];
         struct SparseArray new = {.ndim=old.ndim, .nitems=old.nitems};
-        new.indices = copy_of_ia(old.indices, old.nitems*old.ndim);
+        if (new.nitems > 0) {
+            new.indices = copy_of_ia(old.indices, old.nitems*old.ndim);
 
-        new.values = malloc(old.nitems*sizeof(double));
-        for (int j = 0; j < old.nitems; j ++) {
-            if (operator == MULTIPLY)
-                new.values[j] = old.values[j]*b;
-            else if (operator == DIVIDE)
-                new.values[j] = old.values[j]/b;
-            else if (operator == POWER)
-                new.values[j] = pow(old.values[j], b);
-            else {
-                printf("Error! %d is an illegal operation for a SparseArrayArray and a float.\n", operator);
-                struct SparseArrayArray null = {};
-                return null;
+            new.values = malloc(old.nitems*sizeof(double));
+            for (int j = 0; j < old.nitems; j ++) {
+                if (operator == MULTIPLY)
+                    new.values[j] = old.values[j]*b;
+                else if (operator == DIVIDE)
+                    new.values[j] = old.values[j]/b;
+                else if (operator == POWER)
+                    new.values[j] = pow(old.values[j], b);
+                else {
+                    printf("Error! %d is an illegal operation for a SparseArrayArray and a float.\n", operator);
+                    struct SparseArrayArray null = {};
+                    return null;
+                }
             }
         }
         c.elements[i] = new;

@@ -17,7 +17,7 @@ from util import bin_index, bin_centers, wrap_angle, EARTH
 # filename of the borders to use
 SECTIONS_FILE = "../spec/cuts_mountains.txt"
 # how many cells per 90°
-RESOLUTION = 5#18
+RESOLUTION = 8#18
 # filename of mesh at which to save it
 MESH_FILE = "../spec/mesh_mountains.h5"
 # locations of various straits that should be shown continuously
@@ -222,7 +222,7 @@ def load_sections(filename: str) -> list[Section]:
 			cuts.append(data[starts[l]:])
 	sections = []
 	for l in range(len(cuts)):
-		sections.append(Section(cuts[l], cuts[(l + 1)%3], cut_tripoint[0] < 0))
+		sections.append(Section(cuts[l], cuts[(l + 1)%len(cuts)], cut_tripoint[0] < 0))
 	return sections
 
 

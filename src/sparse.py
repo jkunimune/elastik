@@ -36,7 +36,10 @@ def c_int_array(lst: Sequence[int]) -> Array:
 	return (c_int*len(lst))(*lst)
 
 def ndarray_from_c(data: c_ndarray, shape: Sequence[int]) -> np.ndarray:
-	return np.ctypeslib.as_array(cast(data, POINTER(c_double)), shape=shape) # TODO: someone on the internet sed that Python won't free this memory even tho the documentation ses that it shares memory with the ctypes input and the git repo ses that tit used to leak but has ben fixd... so check this for leaks
+	c_array = np.ctypeslib.as_array(cast(data, POINTER(c_double)), shape=shape) # bild a np.ndarray around the existing memory
+	py_array = c_array.copy() # transcribe it to a python-ownd block of memory
+	c_lib.free_nda(c_array) # then delete the old memory from c, since Python won't do it for us
+	return py_array
 
 def declare_c_func(func: Callable, args: list[type], res: type | None):
 	func.argtypes = args
@@ -44,6 +47,7 @@ def declare_c_func(func: Callable, args: list[type], res: type | None):
 
 # declare all of the C functions we plan to use and their parameters' types
 declare_c_func(c_lib.free_saa, [c_SparseArrayArray], None)
+declare_c_func(c_lib.free_nda, [c_ndarray], None)
 declare_c_func(c_lib.add_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.subtract_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.multiply_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
@@ -109,7 +113,10 @@ class DenseSparseArray:
 
 	def __add__(self, other: DenseSparseArray | np.ndarray | float) -> DenseSparseArray:
 		if type(other) is DenseSparseArray:
-			return DenseSparseArray(self.shape, c_lib.add_saa(self, other))
+			if self.dense_shape == other.dense_shape and self.sparse_shape == other.sparse_shape:
+				return DenseSparseArray(self.shape, c_lib.add_saa(self, other))
+			else:
+				raise ValueError("these array sizes do not match")
 		else:
 			if np.all(np.equal(other, 0)):
 				return self
@@ -118,7 +125,10 @@ class DenseSparseArray:
 
 	def __sub__(self, other: DenseSparseArray | np.ndarray | float) -> DenseSparseArray:
 		if type(other) is DenseSparseArray:
-			return DenseSparseArray(self.shape, c_lib.subtract_saa(self, other))
+			if self.dense_shape == other.dense_shape and self.sparse_shape == other.sparse_shape:
+				return DenseSparseArray(self.shape, c_lib.subtract_saa(self, other))
+			else:
+				raise ValueError("these array sizes do not match")
 		else:
 			if np.all(np.equal(other, 0)):
 				return self
@@ -154,7 +164,7 @@ class DenseSparseArray:
 		    that, so that they can reasonbaly operate with each other in the shadow realm
 		"""
 		if type(other) is DenseSparseArray:
-			if self.shape == other.shape and self.dense_shape == other.dense_shape:
+			if self.dense_shape == other.dense_shape and self.sparse_shape == other.sparse_shape:
 				return other
 			else:
 				raise IndexError(f"array shapes do not match: {self.shape} and {other.shape}")
@@ -188,30 +198,31 @@ class DenseSparseArray:
 			raise IndexError(f"this index has {len(index)} indices but we can only index {self.ndim}")
 
 		# then go thru and do each item one at a time
-		result = self._as_parameter_
-		shape = []
+		shape = self.shape
+		result = self
 		for k in range(self.ndim - 1, -1, -1):
 			if type(index[k]) is slice and index[k] == slice(None):
-				shape.append(self.shape[k])
+				pass
 			elif k >= self.dense_ndim:
 				raise NotImplementedError(f"this SparseArray implementation does not support indexing on the sparse axis: {index}")
 			elif type(index[k]) == np.ndarray:
 				if index[k].ndim == 1:
-					result = c_lib.get_reindex_saa(result, c_int_array(index[k]), c_int(index[k].size), c_int(k))
-					shape.append(index[k].size)
+					shape = shape[:k] + (index[k].size,) + shape[k+1:]
+					result = DenseSparseArray(shape, c_lib.get_reindex_saa(
+						result, c_int_array(index[k]), c_int(index[k].size), c_int(k)))
 				else:
 					raise NotImplementedError("only 1D numpy ndarrays may be used to index")
 			elif type(index[k]) == int:
-				result = c_lib.get_slice_saa(result, c_int(index[k]), c_int(k))
+				shape = shape[:k] + shape[k+1:]
+				result = DenseSparseArray(shape, c_lib.get_slice_saa(result, c_int(index[k]), c_int(k)))
 			else:
 				raise NotImplementedError(f"I can't do this index, {index[k]!r}")
-		return DenseSparseArray(shape[::-1], result)
+		return result
 
 	def __str__(self):
 		return str(np.array(self))
 
 	def __array__(self):
-		print("look out: it's converting to a dense array")
 		return ndarray_from_c(c_lib.to_dense(self, c_int_array(self.sparse_shape)), self.shape)
 
 	def sum(self, axis: Collection[int] | int | None) -> DenseSparseArray | np.ndarray:
@@ -229,12 +240,12 @@ class DenseSparseArray:
 			return ndarray_from_c(c_lib.sum_all(self, c_int_array(self.sparse_shape)), self.sparse_shape)
 		# otherwise, do them one at a time
 		else:
-			result = self._as_parameter_
+			result = self
 			shape = list(self.shape[:])
 			for k in sorted(axis, reverse=True):
-				result = c_lib.sum_along_axis(result, c_int(k))
 				shape.pop(k)
-			return DenseSparseArray(shape, result)
+				result = DenseSparseArray(shape, c_lib.sum_along_axis(result, c_int(k)))
+			return result
 
 
 if __name__ == "__main__":
