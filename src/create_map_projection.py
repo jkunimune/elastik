@@ -19,7 +19,7 @@ from optimize import minimize
 from util import dilate, h5_str, EARTH
 
 
-CONFIGURATION_FILE = "oceans" # "continents"; "countries"
+CONFIGURATION_FILE = "oceans" # "oceans" | "continents" | "countries"
 
 
 def get_bounding_box(points: np.ndarray) -> np.ndarray:
@@ -78,13 +78,14 @@ def enumerate_nodes(mesh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 	return node_indices, np.array(node_positions)
 
 
-def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray, values: np.ndarray,
-                    ) -> tuple[np.ndarray, np.ndarray]:
+def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray, values: np.ndarray, scales: np.ndarray,
+                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 	""" take an array of nodes and generate the list of cells in which the elastic energy
 	    should be calculated.
 	"""
 	cell_definitions = []
 	cell_weights = []
+	cell_scales = []
 	for h in range(node_indices.shape[0]):
 		for i in range(node_indices.shape[1] - 1):
 			for j in range(node_indices.shape[2] - 1):
@@ -108,10 +109,10 @@ def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray, values: np.ndarray
 									ф_1 = ф[i + di]
 									ф_2 = ф[i + 1 - di]
 									area = dф*dλ*(3*np.cos(ф_1) + np.cos(ф_2))/16/(4*np.pi)
-									value = values[i, j]
-									cell_weights.append(area*value)
+									cell_weights.append(area*values[i, j])
+									cell_scales.append(scales[i, j])
 
-	return np.array(cell_definitions), np.array(cell_weights)
+	return np.array(cell_definitions), np.array(cell_weights), np.array(cell_scales)
 
 
 def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
@@ -213,7 +214,7 @@ def compute_principal_strains(ф: np.ndarray, cell_definitions: np.ndarray,
 def load_pixel_values(filename: str) -> np.ndarray:
 	""" load and resample a generic 2D raster image """
 	if filename == "uniform":
-		return np.array(1)
+		return np.array(1.)
 	else:
 		return tifffile.imread(f"../spec/pixels_{filename}.tif")
 
@@ -360,7 +361,7 @@ if __name__ == "__main__":
 	configure = load_options(CONFIGURATION_FILE)
 	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
 	scale = downsample(load_pixel_values(configure["scale"]), mesh.shape[1:3]) # I get best results when values is
-	values = downsample(load_pixel_values(configure["weights"])**2, mesh.shape[1:3]) # steeper than scale, hence this ^2
+	weights = downsample(load_pixel_values(configure["weights"])**2, mesh.shape[1:3]) # steeper than scale, hence this ^2
 
 	# assume the coordinates are more or less evenly spaced
 	dλ = λ_mesh[1] - λ_mesh[0]
@@ -370,7 +371,7 @@ if __name__ == "__main__":
 	node_indices, initial_node_positions = enumerate_nodes(mesh)
 
 	# and then do the same thing for cell corners
-	cell_definitions, cell_weights = enumerate_cells(ф_mesh, node_indices, values)
+	cell_definitions, cell_weights, cell_scales = enumerate_cells(ф_mesh, node_indices, weights, scale)
 
 	# define functions that can define the node positions from a reduced set of them
 	reduced, restored = mesh_skeleton(ф_mesh, node_indices)
@@ -387,12 +388,12 @@ if __name__ == "__main__":
 	diff_axes = small_fig.add_subplot(gridspecs[1][2, :], sharex=valu_axes)
 	main_fig, map_axes = plt.subplots(figsize=(7, 5))
 
-	values, grads = [], []
+	weights, grads = [], []
 
 	# define the objective functions
 	def compute_energy_lenient(positions: np.ndarray) -> float:
 		a, b = compute_principal_strains(ф_mesh, cell_definitions, restored(positions))
-		scale_term = (a*b - 1)**2
+		scale_term = (a*b/cell_scales - 1)**2
 		shape_term = (a - b)**2
 		return ((scale_term + 3*shape_term)*cell_weights).sum()
 
@@ -400,20 +401,20 @@ if __name__ == "__main__":
 		a, b = compute_principal_strains(ф_mesh, cell_definitions, positions)
 		if np.any(a <= 0) or np.any(b <= 0):
 			return np.inf
-		ab = a*b
+		ab = a*b/cell_scales
 		scale_term = (ab**2 - 1)/2 - np.log(ab)
 		shape_term = (a - b)**2
 		return ((scale_term + 3*shape_term)*cell_weights).sum()
 
 	def plot_status(positions: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, final: bool) -> None:
-		values.append(value)
+		weights.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
 		if np.random.random() < 1e-1 or final:
 			if positions.shape[0] == initial_node_positions.shape[0]:
 				all_positions = np.concatenate([positions, [[np.nan, np.nan]]])
 			else:
 				all_positions = np.concatenate([restored(positions), [[np.nan, np.nan]]])
-			show_mesh(positions, all_positions, step, values, final,
+			show_mesh(positions, all_positions, step, weights, final,
 			          ф_mesh, λ_mesh, node_indices, coastlines,
 			          map_axes, hist_axes, valu_axes, diff_axes)
 			main_fig.canvas.draw()

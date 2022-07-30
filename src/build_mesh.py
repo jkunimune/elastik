@@ -14,12 +14,14 @@ from matplotlib import pyplot as plt
 
 from util import bin_index, bin_centers, wrap_angle, EARTH
 
+# the filenames with which to work
+NAME = "mountains" # "basic" | "oceans" | "mountains"
 # filename of the borders to use
-SECTIONS_FILE = "../spec/cuts_mountains.txt"
+SECTIONS_FILE = f"../spec/cuts_{NAME}.txt"
 # how many cells per 90°
 RESOLUTION = 8#18
 # filename of mesh at which to save it
-MESH_FILE = "../spec/mesh_mountains.h5"
+MESH_FILE = f"../spec/mesh_{NAME}.h5"
 # locations of various straits that should be shown continuously
 STRAITS = np.radians([(66.5, -169.0), # Bering
                       (9.1, -79.7), # Panama canal
@@ -44,13 +46,15 @@ class Section:
 		if not (left_border[0, 0] == rite_border[0, 0] and left_border[0, 1] == rite_border[0, 1]):
 			raise ValueError("the borders are supposed to start at the same point")
 
-		self.cut_border = np.concatenate([left_border[::-1, :], rite_border])
+		self.cut_border = np.concatenate([left_border[:0:-1, :], rite_border])
 
 		self.glue_border = Section.path_through_pole(self.cut_border[-1, :],
 		                                             self.cut_border[0, :],
 		                                             glue_on_north)
 
 		self.border = np.concatenate([self.cut_border[:-1, :], self.glue_border])
+
+		self.glue_pole = 1 if glue_on_north else -1
 
 
 	@staticmethod
@@ -70,12 +74,14 @@ class Section:
 		if np.sign(start[1] - end[1]) != sign:
 			path.insert(2, [sign*np.pi/2, -sign*np.pi])
 			path.insert(3, [sign*np.pi/2,  sign*np.pi])
-		# if the direction could still be considerd ambiguous
-		for k in range(1, len(path)):
+		for k in range(len(path) - 1, 0, -1):
 			dy = abs(path[k][1] - path[k - 1][1])
+			# if at any point the direction could still be considerd ambiguous, clarify it
 			if dy > np.pi and dy != 2*np.pi:
 				path.insert(k, [sign*np.pi/2, 0])
-				break
+			# also, if there are any zero-length segments, remove them
+			elif np.all(path[k] == path[k - 1]):
+				path.pop(k)
 		return np.array(path)
 
 
@@ -91,6 +97,7 @@ class Section:
 
 		# then do a simple polygon inclusion test
 		x_centers = bin_centers(x_edges)
+		test = np.zeros((x_centers.size, y_edges.size - 1))
 		for j in range(y_edges.size - 1):
 			y = (y_edges[j] + y_edges[j + 1])/2
 			x_crossings = []
@@ -103,8 +110,12 @@ class Section:
 				if crosses:
 					x_crossings.append(np.interp(y, [y0, y1], [x0, x1]))
 			x_crossings = np.sort(x_crossings)
-			num_crossings = np.sum(x_crossings[None, :] < x_centers[:, None], axis=1) # and apply the even/odd rule
-			included[:, j] |= num_crossings%2 == 1
+			if self.glue_pole > 0:
+				num_crossings = np.sum(x_crossings[None, :] > x_centers[:, None], axis=1) # count the crossings
+			else:
+				num_crossings = np.sum(x_crossings[None, :] < x_centers[:, None], axis=1) # from the glue pole
+			included[:, j] |= num_crossings%2 == 1 # and apply the even/odd rule
+			test[:, j] = num_crossings
 
 		return included
 
@@ -296,10 +307,23 @@ if __name__ == "__main__":
 	# now choose a longitude at which to seed it
 	h_seed, j_seed = None, None
 	for h in range(len(sections)):
+		last_meridian_was_viable, this_meridian_is_viable = None, None
+		first_viable_meridian, last_viable_meridian = None, None
 		for j in range(num_λ): # there's bound to be at least one meridian that runs unbroken from pole to pole
-			if np.all(include[h, :, j]):
-				h_seed, j_seed = h, j
-				break # it'll throw an index error if there is no such meridian
+			last_meridian_was_viable = this_meridian_is_viable
+			this_meridian_is_viable = np.all(include[h, :, j])
+			if this_meridian_is_viable and not last_meridian_was_viable:
+				first_viable_meridian = j
+			elif last_meridian_was_viable and not this_meridian_is_viable:
+				last_viable_meridian = j - 1
+		if first_viable_meridian is not None and last_viable_meridian is not None:
+			h_seed = h
+			j_seed = int((first_viable_meridian + last_viable_meridian)/2)
+			if last_viable_meridian < first_viable_meridian:
+				j_seed = (j_seed + num_λ//2)%num_λ
+			break
+	if h_seed is None:
+		raise ValueError("there were no unbroken meridians with which to seed the mesh")
 
 	# bild the cue from that seed
 	cue = queue.Queue()
