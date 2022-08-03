@@ -135,23 +135,21 @@ class Section:
 		""" calculate the point that should go at the center of the stereographic
 		    projection that minimizes the maximum distortion of this region of the globe
 		"""
-		ф_sample = np.linspace(-math.pi/2, math.pi/2, 13)
-		λ_sample = np.linspace(-math.pi, math.pi, 25)
-		inside = self.inside(ф_sample, λ_sample)
-		best_antipole = None
-		best_radius = -np.inf
-		for i, ф_anti in enumerate(bin_centers(ф_sample)):
-			for j, λ_anti in enumerate(bin_centers(λ_sample)):
-				if not inside[i, j]:
-					radius = np.inf
-					for ф, λ in self.border:
-						distance, _ = rotated_coordinates(ф_anti, λ_anti, ф, λ)
-						if distance < radius:
-							radius = distance
-					if radius > best_radius:
-						best_radius = radius
-						best_antipole = ф_anti, λ_anti
-		ф_anti, λ_anti = best_antipole
+		ф_grid = np.linspace(-math.pi/2, math.pi/2, 13)
+		λ_grid = np.linspace(-math.pi, math.pi, 25)
+		ф_sample, λ_sample = bin_centers(ф_grid), bin_centers(λ_grid)
+		inside = self.inside(ф_grid, λ_grid)
+		max_distortion = np.where(inside, np.inf, 0)
+		for points, importance in [(self.border, 1), (self.glue_border, 2)]:
+			distance, _ = rotated_coordinates(
+				ф_sample[:, np.newaxis, np.newaxis],
+				λ_sample[np.newaxis, :, np.newaxis],
+				points[np.newaxis, np.newaxis, :, 0],
+				points[np.newaxis, np.newaxis, :, 1])
+			distortion = importance/np.sin(distance/2)**2
+			max_distortion = np.maximum(max_distortion, np.max(distortion, axis=2))
+		best_i, best_j = np.unravel_index(np.argmin(max_distortion), max_distortion.shape)
+		ф_anti, λ_anti = ф_sample[best_i], λ_sample[best_j]
 		return -ф_anti, wrap_angle(λ_anti + math.pi)
 
 
