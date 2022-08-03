@@ -1,6 +1,6 @@
 name: desa
 descript: ...
 cuts: basic
-weights: land_sinATA
+weights: land
 scale: land_sinATA
 section_names: veste,dong

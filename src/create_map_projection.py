@@ -19,7 +19,7 @@ from optimize import minimize
 from util import dilate, h5_str, EARTH
 
 
-CONFIGURATION_FILE = "oceans" # "oceans" | "continents" | "countries"
+CONFIGURATION_FILE = "countries" # "oceans" | "continents" | "countries"
 
 
 def get_bounding_box(points: np.ndarray) -> np.ndarray:
@@ -78,10 +78,25 @@ def enumerate_nodes(mesh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 	return node_indices, np.array(node_positions)
 
 
-def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray, values: np.ndarray, scales: np.ndarray,
-                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.ndarray,
+                    dΦ: np.ndarray, dΛ: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 	""" take an array of nodes and generate the list of cells in which the elastic energy
 	    should be calculated.
+	    :param node_indices: the lookup table that tells you the index in the position
+	                         vector at which is stored each node at each location in the
+	                         mesh
+	    :param values: the relative importance of each cell in the cell matrix
+	    :param scales: the desired relative areal scale factor for each location in the cell matrix
+	    :param dΦ: the spacing between each adjacent row of nodes (km)
+	    :param dΛ: the spacing between adjacent nodes in each row (km)
+	    :return: cell_definitions: the list of cells, each defined by a set of seven
+	                               indices (the section index, the two indices specifying
+	                               its location the matrix, and the indices of the four
+	                               vertex nodes (two of them are probably the same node)
+	                               in the node vector
+	             cell_weights: the volume of each cell for elastic-energy-summing porpoises
+	             cell_scales: the desired relative linear scale factor for each cell
+
 	"""
 	cell_definitions = []
 	cell_weights = []
@@ -104,18 +119,19 @@ def enumerate_cells(ф: np.ndarray, node_indices: np.ndarray, values: np.ndarray
 
 							if not np.any(cell_definition == -1):
 								added, _ = find_or_add(cell_definition, cell_definitions)
+								# if this is a new cell we're defining now,
 								if added:
 									# calculate the area of the corner when appropriate
-									ф_1 = ф[i + di]
-									ф_2 = ф[i + 1 - di]
-									area = dф*dλ*(3*np.cos(ф_1) + np.cos(ф_2))/16/(4*np.pi)
+									A_1 = dΦ[i + di]*dΛ[i + di]
+									A_2 = dΦ[i + 1 - di]*dΛ[i + 1 - di]
+									area = (3*A_1 + A_2)/16/(4*np.pi*EARTH.R**2)
 									cell_weights.append(area*values[i, j])
-									cell_scales.append(scales[i, j])
+									cell_scales.append(np.sqrt(scales[i, j])) # this sqrt converts it from an area scale to a linear one
 
 	return np.array(cell_definitions), np.array(cell_weights), np.array(cell_scales)
 
 
-def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
+def mesh_skeleton(lookup_table: np.ndarray, ф: np.ndarray,
                   ) -> tuple[Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray]]:
 	""" create a pair of inverse functions that transform points between the full space of
 	    possible meshes and a reduced space with fewer degrees of freedom. the idea here
@@ -124,8 +140,8 @@ def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
 	    number of regularly spaced key nodes, and all nodes adjacent to an edge will
 	    be keys, as well, and all nodes that aren't key nodes will be ignored when
 	    reducing the position vector and interpolated from neibors when restoring it.
-	    :param ф: the latitudes of the nodes
 	    :param lookup_table: the index of each node's position in the state vector
+	    :param ф: the latitudes of the nodes
 	    :return: a function to linearly reduce a set of node positions to just the bare
 	             skeleton, and a function to linearly reconstruct the missing node
 	             positions from a reduced set
@@ -187,36 +203,32 @@ def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
 	return reduced, restored
 
 
-def compute_principal_strains(ф: np.ndarray, cell_definitions: np.ndarray,
-                              positions: np.ndarray) -> tuple[float, float]:
+def compute_principal_strains(positions: np.ndarray,
+                              cell_definitions: np.ndarray, cell_scales: np.ndarray,
+                              dΦ: np.ndarray, dΛ: np.ndarray) -> tuple[float, float]:
 	""" take a set of cell definitions and 2D coordinates for each node, and calculate
 	    the Tissot-ellipse semiaxes of each cell.
+	    :param positions: the vector specifying the location of each node in the map plane
+	    :param cell_definitions: the list of cells, each defined by seven indices
+	    :param cell_scales: the linear scale factor for each cell
+	    :param dΦ: the distance between adjacent rows of nodes (km)
+	    :param dΛ: the distance between adjacent nodes in each row (km)
 	"""
 	i = cell_definitions[:, 1]
-	dΛ = EARTH.R*dλ*np.cos(ф[i]) # TODO: account for eccentricity
-	dΦ = EARTH.R*dф
 
 	west = positions[cell_definitions[:, 3], :]
 	east = positions[cell_definitions[:, 4], :]
-	dxdΛ = ((east - west)/dΛ[:, None])[:, 0]
-	dydΛ = ((east - west)/dΛ[:, None])[:, 1]
+	F_λ = ((east - west)/(dΛ[i]/cell_scales)[:, np.newaxis])
+	dxdΛ, dydΛ = F_λ[:, 0], F_λ[:, 1]
 
 	south = positions[cell_definitions[:, 5], :]
 	north = positions[cell_definitions[:, 6], :]
-	dxdΦ = ((north - south)/dΦ)[:, 0]
-	dydΦ = ((north - south)/dΦ)[:, 1]
+	F_ф = ((north - south)/(dΦ[i]/cell_scales)[:, np.newaxis])
+	dxdΦ, dydΦ = F_ф[:, 0], F_ф[:, 1]
 
 	trace = np.sqrt((dxdΛ + dydΦ)**2 + (dxdΦ - dydΛ)**2)/2
 	antitrace = np.sqrt((dxdΛ - dydΦ)**2 + (dxdΦ + dydΛ)**2)/2
 	return trace + antitrace, trace - antitrace
-
-
-def load_pixel_values(filename: str) -> np.ndarray:
-	""" load and resample a generic 2D raster image """
-	if filename == "uniform":
-		return np.array(1.)
-	else:
-		return tifffile.imread(f"../spec/pixels_{filename}.tif")
 
 
 def load_options(filename: str) -> dict[str, str]:
@@ -227,6 +239,14 @@ def load_options(filename: str) -> dict[str, str]:
 			key, value = line.split(":")
 			options[key.strip()] = value.strip()
 	return options
+
+
+def load_pixel_values(filename: str) -> np.ndarray:
+	""" load and resample a generic 2D raster image """
+	if filename == "uniform":
+		return np.array(1.)
+	else:
+		return tifffile.imread(f"../spec/pixels_{filename}.tif")
 
 
 def load_coastline_data(reduction=2) -> list[np.ndarray]:
@@ -242,7 +262,7 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 	""" load the ф values, λ values, node locations, and section borders from a HDF5
 	    file, in that order.
 	"""
-	with h5py.File(f"../spec/mesh_{filename}.h5", "r") as file: # TODO: I should look into reducing the precision on some of these numbers
+	with h5py.File(f"../spec/mesh_{filename}.h5", "r") as file:
 		ф = np.radians(file["section0/latitude"])
 		λ = np.radians(file["section0/longitude"])
 		num_sections = file.attrs["num_sections"]
@@ -276,7 +296,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 		                 cmap=CUSTOM_CMAP["speed"]) # TODO: zoom in and rotate automatically
 	map_axes.axis("equal")
 
-	a, b = compute_principal_strains(ф_mesh, cell_definitions, all_positions)
+	a, b = compute_principal_strains(all_positions, cell_definitions, cell_scales, dΦ, dΛ)
 	hist_axes.clear()
 	hist_axes.hist2d(np.concatenate([a, b]),
 	                 np.concatenate([b, a]),
@@ -362,23 +382,28 @@ if __name__ == "__main__":
 	print(f"loaded options from {CONFIGURATION_FILE}")
 	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
 	print(f"loaded a {np.sum(np.isfinite(mesh[:, :, :, 0]))}-node mesh")
-	scale = downsample(load_pixel_values(configure["scale"]), mesh.shape[1:3]) # I get best results when values is
-	print(f"loaded the {configure['scale']} map as the scale")
-	weights = downsample(load_pixel_values(configure["weights"])**2, mesh.shape[1:3]) # steeper than scale, hence this ^2
-	print(f"loaded the {configure['scale']} map as the weights")
+	scale = downsample(np.maximum(.1, load_pixel_values(configure["scale"])), mesh.shape[1:3])
+	print(f"loaded the {configure['scale']} map as the scale") # I get best results when weights is
+	weights = downsample(np.maximum(.03, load_pixel_values(configure["weights"])**2), mesh.shape[1:3]) # steeper than scale, hence this ^2
+	print(f"loaded the {configure['weights']} map as the weights")
+
+	plt.pcolormesh(scale, vmin=0)
+	plt.figure()
+	plt.pcolormesh(weights, vmin=0)
+	plt.show()
 
 	# assume the coordinates are more or less evenly spaced
-	dλ = λ_mesh[1] - λ_mesh[0]
-	dф = ф_mesh[1] - ф_mesh[0]
+	dΦ = EARTH.a*(1 - EARTH.e2)*(1 - EARTH.e2*np.sin(ф_mesh)**2)**(3/2)*(ф_mesh[1] - ф_mesh[0])
+	dΛ = EARTH.a*(1 + (1 - EARTH.e2)*np.tan(ф_mesh)**2)**(-1/2)*(λ_mesh[1] - λ_mesh[0])
 
 	# reformat the nodes into a list without gaps or duplicates
 	node_indices, initial_node_positions = enumerate_nodes(mesh)
 
 	# and then do the same thing for cell corners
-	cell_definitions, cell_weights, cell_scales = enumerate_cells(ф_mesh, node_indices, weights, scale)
+	cell_definitions, cell_weights, cell_scales = enumerate_cells(node_indices, weights, scale, dΦ, dΛ)
 
 	# define functions that can define the node positions from a reduced set of them
-	reduced, restored = mesh_skeleton(ф_mesh, node_indices)
+	reduced, restored = mesh_skeleton(node_indices, ф_mesh)
 
 	# load the coastline data from Natural Earth
 	coastlines = load_coastline_data()
@@ -396,16 +421,16 @@ if __name__ == "__main__":
 
 	# define the objective functions
 	def compute_energy_lenient(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(ф_mesh, cell_definitions, restored(positions))
-		scale_term = (a*b/cell_scales - 1)**2
+		a, b = compute_principal_strains(restored(positions), cell_definitions, cell_scales, dΦ, dΛ)
+		scale_term = (a*b - 1)**2
 		shape_term = (a - b)**2
 		return ((scale_term + 3*shape_term)*cell_weights).sum()
 
 	def compute_energy_strict(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(ф_mesh, cell_definitions, positions)
+		a, b = compute_principal_strains(positions, cell_definitions, cell_scales, dΦ, dΛ)
 		if np.any(a <= 0) or np.any(b <= 0):
 			return np.inf
-		ab = a*b/cell_scales
+		ab = a*b
 		scale_term = (ab**2 - 1)/2 - np.log(ab)
 		shape_term = (a - b)**2
 		return ((scale_term + 3*shape_term)*cell_weights).sum()
@@ -428,22 +453,32 @@ if __name__ == "__main__":
 	# then minimize!
 	print("begin fitting process")
 	# start with the lenient condition, since the initial gess is likely to have inside-out cells
-	node_positions = minimize(compute_energy_lenient,
-	                          guess=reduced(initial_node_positions),
-	                          bounds=None,
-	                          report=plot_status,
-	                          tolerance=1e-3/EARTH.R)
+	try:
+		node_positions = minimize(compute_energy_lenient,
+		                          guess=reduced(initial_node_positions),
+		                          bounds=None,
+		                          report=plot_status,
+		                          tolerance=1e-3/EARTH.R)
+	except RuntimeError as e:
+		print(e)
+		plt.show()
+		raise e
 
 	# this should make the mesh well-behaved
 	assert np.all(np.greater(compute_principal_strains(
-		ф_mesh, cell_definitions, restored(node_positions)), 0))
+		restored(node_positions), cell_definitions, cell_scales, dΦ, dΛ), 0))
 
 	# then switch to the strict condition and full mesh
-	node_positions = minimize(compute_energy_strict,
-	                          guess=restored(node_positions),
-	                          bounds=None,
-	                          report=plot_status,
-	                          tolerance=1e-3/EARTH.R)
+	try:
+		node_positions = minimize(compute_energy_strict,
+		                          guess=restored(node_positions),
+		                          bounds=None,
+		                          report=plot_status,
+		                          tolerance=1e-3/EARTH.R)
+	except RuntimeError as e:
+		print(e)
+		plt.show()
+		raise e
 
 	# apply the optimized vector back to the mesh
 	mesh = node_positions[node_indices, :]

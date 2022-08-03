@@ -28,7 +28,7 @@ class Ellipsoid:
 h5_str = h5py.string_dtype(encoding='utf-8')
 """ a str typ compatible with h5py """
 
-EARTH = Ellipsoid(6378.137, 1/298.2572)
+EARTH = Ellipsoid(6_378.137, 1/298.257_223_563)
 """ the figure of the earth as given by WGS 84 """
 
 
