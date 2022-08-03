@@ -147,13 +147,13 @@ def mesh_skeleton(ф: np.ndarray, lookup_table: np.ndarray
 	important = (left_neibor == -1) | (rite_neibor == -1) # points at the edge of a cut
 	important[lookup_table[:, :, 0]] |= (lookup_table[:, :, 0] != -1) # the defined portion of the left edge
 	important[lookup_table[:, :, -1]] |= (lookup_table[:, :, -1] != -1) # the defined portion of the right edge
+	assert np.all(important[left_neibor == np.arange(n_full)]), "the mesh is malformd somehow"
 	for h in range(lookup_table.shape[0]):
 		for i in range(lookup_table.shape[1]):
 			period = int(round(1/np.cos(ф[i])))
 			for j in range(lookup_table.shape[2]):
 				if lookup_table[h, i, j] != -1:
-					if j%period == 0:
-						important[lookup_table[h, i, j]] = True
+					important[lookup_table[h, i, j]] |= (j%period == 0) # and some evenly-spaced nodes in each row
 
 	# then decide how to define the ones that aren't
 	defining_indices = np.empty((n_full, 2), dtype=int)
@@ -359,9 +359,13 @@ def save_mesh(name: str, ф: np.ndarray, λ: np.ndarray, mesh: np.ndarray,
 
 if __name__ == "__main__":
 	configure = load_options(CONFIGURATION_FILE)
+	print(f"loaded options from {CONFIGURATION_FILE}")
 	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
+	print(f"loaded a {np.sum(np.isfinite(mesh[:, :, :, 0]))}-node mesh")
 	scale = downsample(load_pixel_values(configure["scale"]), mesh.shape[1:3]) # I get best results when values is
+	print(f"loaded the {configure['scale']} map as the scale")
 	weights = downsample(load_pixel_values(configure["weights"])**2, mesh.shape[1:3]) # steeper than scale, hence this ^2
+	print(f"loaded the {configure['scale']} map as the weights")
 
 	# assume the coordinates are more or less evenly spaced
 	dλ = λ_mesh[1] - λ_mesh[0]
@@ -388,7 +392,7 @@ if __name__ == "__main__":
 	diff_axes = small_fig.add_subplot(gridspecs[1][2, :], sharex=valu_axes)
 	main_fig, map_axes = plt.subplots(figsize=(7, 5))
 
-	weights, grads = [], []
+	values, grads = [], []
 
 	# define the objective functions
 	def compute_energy_lenient(positions: np.ndarray) -> float:
@@ -407,14 +411,14 @@ if __name__ == "__main__":
 		return ((scale_term + 3*shape_term)*cell_weights).sum()
 
 	def plot_status(positions: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, final: bool) -> None:
-		weights.append(value)
+		values.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
 		if np.random.random() < 1e-1 or final:
 			if positions.shape[0] == initial_node_positions.shape[0]:
 				all_positions = np.concatenate([positions, [[np.nan, np.nan]]])
 			else:
 				all_positions = np.concatenate([restored(positions), [[np.nan, np.nan]]])
-			show_mesh(positions, all_positions, step, weights, final,
+			show_mesh(positions, all_positions, step, values, final,
 			          ф_mesh, λ_mesh, node_indices, coastlines,
 			          map_axes, hist_axes, valu_axes, diff_axes)
 			main_fig.canvas.draw()
@@ -449,5 +453,7 @@ if __name__ == "__main__":
 	save_mesh(configure["name"], ф_mesh, λ_mesh, mesh,
 	          section_borders, configure["section_names"].split(","),
 	          configure["descript"])
+
+	print(f"elastik {configure['name']} projection saved!")
 
 	plt.show()
