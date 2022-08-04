@@ -166,7 +166,7 @@ def mesh_skeleton(lookup_table: np.ndarray, ф: np.ndarray,
 	assert np.all(important[left_neibor == np.arange(n_full)]), "the mesh is malformd somehow"
 	for h in range(lookup_table.shape[0]):
 		for i in range(lookup_table.shape[1]):
-			period = int(round(1/np.cos(ф[i])))
+			period = int(round(min(2/np.cos(ф[i]), lookup_table.shape[2]/6)))
 			for j in range(lookup_table.shape[2]):
 				if lookup_table[h, i, j] != -1:
 					important[lookup_table[h, i, j]] |= (j%period == 0) # and some evenly-spaced nodes in each row
