@@ -16,7 +16,7 @@ from util import bin_index, bin_centers, wrap_angle, EARTH
 
 
 # the filenames with which to work
-NAME = "mountains" # "basic" | "oceans" | "mountains"
+NAME = "oceans" # "basic" | "oceans" | "mountains"
 # filename of the borders to use
 SECTIONS_FILE = f"../spec/cuts_{NAME}.txt"
 # how many cells per 90°

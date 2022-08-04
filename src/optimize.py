@@ -146,7 +146,10 @@ class Variable:
 	def __rsub__(self, other):
 		return -self + other
 
-	def __rmul__(self, other): # watch out! never multiply ndarray*Variable, as I have no way to override Numpy's bad behavior there
+	def __rmatmul__(self, other):
+		return Variable(other@self.values, other@self.gradients, other@self.curvatures)
+
+	def __rmul__(self, other): # watch out! never multiply ndarray*Variable, as I can't figure out how to override Numpy's bad behavior there
 		return self * other
 
 	def sqrt(self):

@@ -234,6 +234,18 @@ struct SparseArray add_sa(struct SparseArray a, struct SparseArray b) {
 }
 
 /**
+ * multiply a SparseArray by a scalar
+ */
+struct SparseArray scale_sa(struct SparseArray a, double factor) {
+    struct SparseArray c = {.ndim=a.ndim, .nitems=a.nitems};
+    c.indices = copy_of_ia(a.indices, a.ndim*a.nitems);
+    c.values = malloc(c.nitems*sizeof(double));
+    for (int j = 0; j < c.nitems; j ++)
+        c.values[j] = a.values[j]*factor;
+    return c;
+}
+
+/**
  * combine two SparseArrayArrays into a new one created by applying the given operator to
  * each of their elements
  * @param operator the operation to perform on each pair of SparseArrays
@@ -273,6 +285,59 @@ __declspec(dllexport) struct SparseArrayArray subtract_saa(
 __declspec(dllexport) struct SparseArrayArray multiply_saa(
         struct SparseArrayArray a, struct SparseArrayArray b) {
     return elementwise_saa(MULTIPLY, a, b);
+}
+
+/**
+ * perform matrix multiplication between two 2d SparseArrayArrays
+ * @param a a SparseArrayArray with a single sparse dimension
+ * @param b a SparseArrayArray with a single dense dimension
+ */
+__declspec(dllexport) struct SparseArrayArray matmul_saa(
+        struct SparseArrayArray a, struct SparseArrayArray b) {
+    if (b.ndim < 1) {
+        printf("Error! the second matrix needs at least one dense dim that I can line up with a's sparse dim.\n");
+        struct SparseArrayArray null = {.ndim=-1};
+        return null;
+    }
+
+    // calculate this stride in case b is multidimensional
+    int row_size = 1;
+    for (int k = 1; k < b.ndim; k ++)
+        row_size *= b.shape[k];
+    int sparse_ndim = b.elements[0].ndim;
+
+    // start by defining the output based on its known size and shape
+    struct SparseArrayArray c = {.ndim=a.ndim + b.ndim - 1, .size=a.size*row_size};
+    c.shape = malloc(c.ndim*sizeof(int));
+    for (int k = 0; k < a.ndim; k ++)
+        c.shape[k] = a.shape[k];
+    for (int k = a.ndim; k < c.ndim; k ++)
+        c.shape[k] = b.shape[k - a.ndim + 1];
+
+    // then compute each element as the linear combination of rows from b
+    c.elements = malloc(c.size*sizeof(struct SparseArray));
+    for (int i = 0; i < a.size; i ++) {
+        struct SparseArray vector = a.elements[i];
+        if (vector.ndim != 1) {
+            printf("Error! the first matrix must only have one sparse dim, to match the dense dim on b.\n");
+            struct SparseArrayArray null = {.ndim=-1};
+            return null;
+        }
+
+        for (int l = 0; l < row_size; l ++) {
+            struct SparseArray element = {.ndim=sparse_ndim, .nitems=0};
+            for (int j = 0; j < vector.nitems; j ++) {
+                struct SparseArray initial = element;
+                struct SparseArray change = scale_sa(
+                        b.elements[vector.indices[j]*row_size + l], vector.values[j]);
+                element = add_sa(initial, change);
+                free_sa(initial);
+                free_sa(change);
+            }
+            c.elements[i*row_size + l] = element;
+        }
+    }
+    return c;
 }
 
 /**
@@ -429,6 +494,47 @@ __declspec(dllexport) struct SparseArrayArray multiply_nda(
 __declspec(dllexport) struct SparseArrayArray divide_nda(
         struct SparseArrayArray a, const double* b, const int shape[]) {
     return elementwise_nda(DIVIDE, a, b, shape);
+}
+
+/**
+ * perform matrix multiplication between a 2d SparseArrayArray and a plain dense array
+ * @param a a SparseArrayArray with a single sparse dimension
+ */
+__declspec(dllexport) double* matmul_nda(
+        struct SparseArrayArray a, const double* b, const int b_shape[], int b_ndim) {
+    // start by defining the output based on its known size and shape
+    int c_ndim = a.ndim + b_ndim - 1;
+    int* c_shape = malloc(c_ndim*sizeof(int));
+    for (int k = 0; k < a.ndim; k ++)
+        c_shape[k] = a.shape[k];
+    for (int k = a.ndim; k < c_ndim; k ++)
+        c_shape[k] = b_shape[k - a.ndim + 1];
+
+    // calculate this one stride that we need
+    int row_size = 1;
+    for (int k = 1; k < b_ndim; k ++)
+        row_size *= b_shape[k];
+    int c_size = a.size*row_size;
+    double* c = malloc(c_size*sizeof(double));
+
+    free(c_shape);
+
+    // then compute each row as a linear combination of rows from b
+    for (int i = 0; i < a.size; i ++) {
+        struct SparseArray vector = a.elements[i];
+        if (vector.ndim != 1) {
+            printf("Error! the first matrix must only have one sparse dim, to match the zeroth dim of b.\n");
+            return NULL;
+        }
+
+        for (int l = 0; l < row_size; l ++) {
+            c[i*row_size + l] = 0.;
+            for (int j = 0; j < vector.nitems; j ++)
+                c[i*row_size + l] += vector.values[j]*b[vector.indices[j]*row_size + l];
+        }
+    }
+
+    return c;
 }
 
 struct SparseArrayArray elementwise_f(enum Operator operator, struct SparseArrayArray a, double b) {
@@ -612,6 +718,27 @@ __declspec(dllexport) double* to_dense(
     free(shape);
 
     return values;
+}
+
+/**
+ * modify the shape of a SparseArrayArray by adding dimensions to the beginning of its
+ * shape, without changing its size or altering its values.
+ */
+__declspec(dllexport) struct SparseArrayArray expand_dims(
+        struct SparseArrayArray a, int new_ndim) {
+    struct SparseArrayArray c = {.ndim = a.ndim + new_ndim, .size=a.size};
+
+    c.shape = malloc(c.ndim*sizeof(int));
+    for (int k = 0; k < new_ndim; k ++)
+        c.shape[k] = 1;
+    for (int k = new_ndim; k < c.ndim; k ++)
+        c.shape[k] = a.shape[k - new_ndim];
+
+    c.elements = malloc(c.size*sizeof(struct SparseArray));
+    for (int i = 0; i < c.size; i ++)
+        c.elements[i] = copy_of_sa(a.elements[i]);
+
+    return c;
 }
 
 /**

@@ -5,7 +5,7 @@ create_map_projection.py
 take a basic mesh and optimize it according to a particular cost function in order to
 create a new Elastic Projection.
 """
-from typing import Callable
+from typing import Any
 
 import h5py
 import numpy as np
@@ -16,10 +16,11 @@ from scipy import interpolate
 
 from cmap import CUSTOM_CMAP
 from optimize import minimize
+from sparse import DenseSparseArray
 from util import dilate, h5_str, EARTH
 
 
-CONFIGURATION_FILE = "countries" # "oceans" | "continents" | "countries"
+CONFIGURATION_FILE = "continents" # "oceans" | "continents" | "countries"
 
 
 def get_bounding_box(points: np.ndarray) -> np.ndarray:
@@ -50,6 +51,38 @@ def downsample(full: np.ndarray, shape: tuple):
 	return reduc
 
 
+def follow_graph(progression: np.ndarray, frum: np.ndarray, until: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+	""" take with a markov-chain-like-thing in the form of an array of indices and follow
+	    it to some conclusion.
+	    :param progression: the indices of the nodes that follow from each node
+	    :param frum: the starting state, an array of indices
+	    :param until: a boolean array indicating points that don't need to follow to
+	                        the next part of the graph
+	"""
+	state = frum.copy()
+	distance_traveld = np.zeros(state.shape)
+	arrived = until[state]
+	while np.any(~arrived):
+		if np.any((~arrived) & (progression[state] == state)):
+			raise ValueError("this importance graff was about to cause an infinite loop.")
+		state[~arrived] = progression[state[~arrived]]
+		distance_traveld[~arrived] += 1
+		arrived = until[state]
+	return state, distance_traveld
+
+
+def get_interpolation_weits(distance_a, distance_b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+	""" compute the weits needed to linearly interpolate a point between two fixed points,
+	    given the distance of each respective reference to the point of interpolation.
+	"""
+	weits_a = np.empty(distance_a.shape)
+	normal = distance_a + distance_b != 0
+	weits_a[normal] = distance_b[normal]/(distance_a + distance_b)[normal]
+	weits_a[~normal] = 1
+	weits_b = 1 - weits_a
+	return weits_a, weits_b
+
+
 def find_or_add(vector: np.ndarray, vectors: list[np.ndarray]) -> tuple[bool, int]:
 	""" add vector to vectors if it's not already there, then return its index
 	    :return: whether we had to add it to the list (because we didn't find it), and
@@ -70,7 +103,7 @@ def enumerate_nodes(mesh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 	    returning mappings from the old mesh to the new indices and the n×2 list positions
 	"""
 	node_indices = np.empty(mesh.shape[:3], dtype=int)
-	node_positions = []
+	node_positions = [] # TODO: vectorize this
 	for h in range(mesh.shape[0]):
 		for i in range(mesh.shape[1]):
 			for j in range(mesh.shape[2]):
@@ -131,8 +164,8 @@ def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.nda
 	return np.array(cell_definitions), np.array(cell_weights), np.array(cell_scales)
 
 
-def mesh_skeleton(lookup_table: np.ndarray, ф: np.ndarray,
-                  ) -> tuple[Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray]]:
+def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray,
+                  ) -> tuple[Any, Any]:
 	""" create a pair of inverse functions that transform points between the full space of
 	    possible meshes and a reduced space with fewer degrees of freedom. the idea here
 	    is to identify 80% or so of the nodes that can form a skeleton, and from which the
@@ -141,66 +174,79 @@ def mesh_skeleton(lookup_table: np.ndarray, ф: np.ndarray,
 	    be keys, as well, and all nodes that aren't key nodes will be ignored when
 	    reducing the position vector and interpolated from neibors when restoring it.
 	    :param lookup_table: the index of each node's position in the state vector
+	    :param factor: approximately how much the resolution should decrease
 	    :param ф: the latitudes of the nodes
-	    :return: a function to linearly reduce a set of node positions to just the bare
-	             skeleton, and a function to linearly reconstruct the missing node
-	             positions from a reduced set
+	    :return: a matrix that linearly reduces a set of node positions to just the bare
+	             skeleton, and a matrix that linearly reconstructs the missing node
+	             positions from a reduced set.  don't worry about their exact types;
+	             they'll both support matrix multiplication with '@'.
 	"""
 	n_full = np.max(lookup_table) + 1
 	# start by filling out these connection graffs, which are nontrivial because of the layers
-	left_neibor = np.full(n_full, -1)
-	rite_neibor = np.full(n_full, -1)
+	east_neibor = np.full(n_full, -1)
+	west_neibor = np.full(n_full, -1)
+	north_neibor = np.full(n_full, -1)
+	south_neibor = np.full(n_full, -1)
 	for h in range(lookup_table.shape[0]):
 		for i in range(lookup_table.shape[1]):
 			for j in range(lookup_table.shape[2]):
 				if lookup_table[h, i, j] != -1:
 					if j - 1 >= 0 and lookup_table[h, i, j - 1] != -1:
-						left_neibor[lookup_table[h, i, j]] = lookup_table[h, i, j - 1]
+						west_neibor[lookup_table[h, i, j]] = lookup_table[h, i, j - 1]
 					if j + 1 < lookup_table.shape[2] and lookup_table[h, i, j + 1] != -1:
-						rite_neibor[lookup_table[h, i, j]] = lookup_table[h, i, j + 1]
+						east_neibor[lookup_table[h, i, j]] = lookup_table[h, i, j + 1]
+					if i - 1 >= 0 and lookup_table[h, i - 1, j] != -1:
+						south_neibor[lookup_table[h, i, j]] = lookup_table[h, i - 1, j]
+					if i + 1 < lookup_table.shape[1] and lookup_table[h, i + 1, j] != -1:
+						north_neibor[lookup_table[h, i, j]] = lookup_table[h, i + 1, j]
 
 	# then decide which nodes should be independently defined in the skeleton
-	important = (left_neibor == -1) | (rite_neibor == -1) # points at the edge of a cut
-	important[lookup_table[:, :, 0]] |= (lookup_table[:, :, 0] != -1) # the defined portion of the left edge
-	important[lookup_table[:, :, -1]] |= (lookup_table[:, :, -1] != -1) # the defined portion of the right edge
-	assert np.all(important[left_neibor == np.arange(n_full)]), "the mesh is malformd somehow"
+	has_defined_neibors = np.full(n_full + 1, False) # (this array has an extra False at the end so that -1 works nicely)
+	is_defined = np.full(n_full, False)
 	for h in range(lookup_table.shape[0]):
 		for i in range(lookup_table.shape[1]):
-			period = int(round(min(2/np.cos(ф[i]), lookup_table.shape[2]/6)))
+			east_west_factor = int(round(factor/np.cos(ф[i])))
 			for j in range(lookup_table.shape[2]):
-				if lookup_table[h, i, j] != -1:
-					important[lookup_table[h, i, j]] |= (j%period == 0) # and some evenly-spaced nodes in each row
+				if lookup_table[h, i, j] != -1: # start by marking some evenly spaced interior points
+					important_row = (min(i, ф.size - 1 - i)%factor == 0)
+					important_col = (j%east_west_factor == 0)
+					has_defined_neibors[lookup_table[h, i, j]] |= important_row
+					is_defined[lookup_table[h, i, j]] |= important_col
+	has_defined_neibors[:-1] |= (north_neibor == -1) | (south_neibor == -1) # then make sure we define enuff points at each edge
+	is_defined |= (~has_defined_neibors[east_neibor]) | (~has_defined_neibors[west_neibor]) # to fully define everything
+	is_defined &= has_defined_neibors[:-1]
+	reindex = np.where(is_defined, np.cumsum(is_defined) - 1, -1)
+	n_partial = np.max(reindex) + 1
 
-	# then decide how to define the ones that aren't
-	defining_indices = np.empty((n_full, 2), dtype=int)
-	defining_weits = np.empty((n_full, 2), dtype=float)
-	for k0 in range(n_full):
-		# important nodes are defined by the corresponding row in the reduced vector
-		if important[k0]:
-			defining_indices[k0, :] = np.sum(important[:k0])
-			defining_weits[k0, 0] = 1
-		# each remaining node is a linear combination of two important nodes
-		else:
-			k_left, distance_left = k0, 0
-			while not important[k_left]:
-				k_left = left_neibor[k_left]
-				distance_left += 1
-			k_rite, distance_rite = k0, 0
-			while not important[k_rite]:
-				k_rite = rite_neibor[k_rite]
-				distance_rite += 1
-			defining_indices[k0, 0] = np.sum(important[:k_left])
-			defining_indices[k0, 1] = np.sum(important[:k_rite])
-			defining_weits[k0, 0] = distance_rite/(distance_left + distance_rite)
-	defining_weits[:, 1] = 1 - defining_weits[:, 0]
+	# then decide how to define the ones that aren't defined
+	for h in range(lookup_table.shape[0]):
+		plt.figure()
+		plt.pcolormesh(has_defined_neibors[lookup_table[h, :, :]] + 1.2*is_defined[lookup_table[h, :, :]] - 1.5*(lookup_table[h, :, :] == -1))
+	plt.show()
+	n_reference, n_distance = follow_graph(north_neibor, frum=np.arange(n_full), until=has_defined_neibors)
+	ne_reference, ne_distance = follow_graph(east_neibor, frum=n_reference, until=is_defined)
+	nw_reference, nw_distance = follow_graph(west_neibor, frum=n_reference, until=is_defined)
+	s_reference, s_distance = follow_graph(south_neibor, frum=np.arange(n_full), until=has_defined_neibors)
+	se_reference, se_distance = follow_graph(east_neibor, frum=s_reference, until=is_defined)
+	sw_reference, sw_distance = follow_graph(west_neibor, frum=s_reference, until=is_defined)
+	n_weit, s_weit = get_interpolation_weits(n_distance, s_distance)
+	ne_weit, nw_weit = get_interpolation_weits(ne_distance, nw_distance)
+	se_weit, sw_weit = get_interpolation_weits(se_distance, sw_distance)
+	defining_indices = np.stack([
+		ne_reference, nw_reference, se_reference, sw_reference,
+	], axis=1)
+	defining_weits = np.stack([
+		n_weit * ne_weit,
+		n_weit * nw_weit,
+		s_weit * se_weit,
+		s_weit * sw_weit,
+	], axis=1)
 
 	# put the conversions together and return them as functions
-	def reduced(full):
-		return full[important, :]
-	def restored(partial):
-		return partial[defining_indices[:, 0], :]*defining_weits[:, 0, np.newaxis] +\
-		       partial[defining_indices[:, 1], :]*defining_weits[:, 1, np.newaxis]
-	return reduced, restored
+	reduction = DenseSparseArray.identity(n_full)[is_defined, :]
+	restoration = DenseSparseArray.from_coordinates(
+		[n_partial], np.expand_dims(reindex[defining_indices], axis=-1), defining_weits)
+	return reduction, restoration
 
 
 def compute_principal_strains(positions: np.ndarray,
@@ -387,11 +433,6 @@ if __name__ == "__main__":
 	weights = downsample(np.maximum(.03, load_pixel_values(configure["weights"])**2), mesh.shape[1:3]) # steeper than scale, hence this ^2
 	print(f"loaded the {configure['weights']} map as the weights")
 
-	plt.pcolormesh(scale, vmin=0)
-	plt.figure()
-	plt.pcolormesh(weights, vmin=0)
-	plt.show()
-
 	# assume the coordinates are more or less evenly spaced
 	dΦ = EARTH.a*(1 - EARTH.e2)*(1 - EARTH.e2*np.sin(ф_mesh)**2)**(3/2)*(ф_mesh[1] - ф_mesh[0])
 	dΛ = EARTH.a*(1 + (1 - EARTH.e2)*np.tan(ф_mesh)**2)**(-1/2)*(λ_mesh[1] - λ_mesh[0])
@@ -403,7 +444,7 @@ if __name__ == "__main__":
 	cell_definitions, cell_weights, cell_scales = enumerate_cells(node_indices, weights, scale, dΦ, dΛ)
 
 	# define functions that can define the node positions from a reduced set of them
-	reduced, restored = mesh_skeleton(node_indices, ф_mesh)
+	reduced, restored = mesh_skeleton(node_indices, int(round(ф_mesh.size/10)), ф_mesh)
 
 	# load the coastline data from Natural Earth
 	coastlines = load_coastline_data()
@@ -421,7 +462,7 @@ if __name__ == "__main__":
 
 	# define the objective functions
 	def compute_energy_lenient(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(restored(positions), cell_definitions, cell_scales, dΦ, dΛ)
+		a, b = compute_principal_strains(restored @ positions, cell_definitions, cell_scales, dΦ, dΛ)
 		scale_term = (a*b - 1)**2
 		shape_term = (a - b)**2
 		return ((scale_term + 4*shape_term)*cell_weights).sum()
@@ -442,7 +483,7 @@ if __name__ == "__main__":
 			if positions.shape[0] == initial_node_positions.shape[0]:
 				all_positions = np.concatenate([positions, [[np.nan, np.nan]]])
 			else:
-				all_positions = np.concatenate([restored(positions), [[np.nan, np.nan]]])
+				all_positions = np.concatenate([restored @ positions, [[np.nan, np.nan]]])
 			show_mesh(positions, all_positions, step, values, final,
 			          ф_mesh, λ_mesh, node_indices, coastlines,
 			          map_axes, hist_axes, valu_axes, diff_axes)
@@ -455,7 +496,7 @@ if __name__ == "__main__":
 	# start with the lenient condition, since the initial gess is likely to have inside-out cells
 	try:
 		node_positions = minimize(compute_energy_lenient,
-		                          guess=reduced(initial_node_positions),
+		                          guess=reduced @ initial_node_positions,
 		                          bounds=None,
 		                          report=plot_status,
 		                          tolerance=1e-3/EARTH.R)
@@ -466,7 +507,7 @@ if __name__ == "__main__":
 
 	# this should make the mesh well-behaved
 	if not np.all(np.greater(compute_principal_strains(
-		restored(node_positions), cell_definitions, cell_scales, dΦ, dΛ), 0)):
+		restored @ node_positions, cell_definitions, cell_scales, dΦ, dΛ), 0)):
 		print("Error: the mesh was supposed to be well-behaved now")
 		plt.show()
 		raise RuntimeError("illegal map")
@@ -474,7 +515,7 @@ if __name__ == "__main__":
 	# then switch to the strict condition and full mesh
 	try:
 		node_positions = minimize(compute_energy_strict,
-		                          guess=restored(node_positions),
+		                          guess=restored @ node_positions,
 		                          bounds=None,
 		                          report=plot_status,
 		                          tolerance=1e-3/EARTH.R)
