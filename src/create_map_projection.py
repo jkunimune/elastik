@@ -17,7 +17,7 @@ from scipy import interpolate
 from cmap import CUSTOM_CMAP
 from optimize import minimize
 from sparse import DenseSparseArray
-from util import dilate, h5_str, EARTH
+from util import dilate, h5_str, EARTH, index_grid
 
 
 CONFIGURATION_FILE = "continents" # "oceans" | "continents" | "countries"
@@ -83,32 +83,21 @@ def get_interpolation_weits(distance_a, distance_b: np.ndarray) -> tuple[np.ndar
 	return weits_a, weits_b
 
 
-def find_or_add(vector: np.ndarray, vectors: list[np.ndarray]) -> tuple[bool, int]:
-	""" add vector to vectors if it's not already there, then return its index
-	    :return: whether we had to add it to the list (because we didn't find it), and
-	             the index of this item in the list
-	"""
-	if np.any(np.isnan(vector)):
-		return False, -1
-	else:
-		for k in range(len(vectors)):
-			if np.all(vectors[k] == vector):
-				return False, k
-		vectors.append(vector)
-		return True, len(vectors) - 1
-
-
 def enumerate_nodes(mesh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 	""" take an array of positions for a mesh and generate the list of unique nodes,
 	    returning mappings from the old mesh to the new indices and the n×2 list positions
 	"""
-	node_indices = np.empty(mesh.shape[:3], dtype=int)
-	node_positions = [] # TODO: vectorize this
-	for h in range(mesh.shape[0]):
-		for i in range(mesh.shape[1]):
-			for j in range(mesh.shape[2]):
-				_, node_indices[h, i, j] = find_or_add(mesh[h, i, j, :], node_positions)
-	return node_indices, np.array(node_positions)
+	# first flatten and sort the positions
+	node_positions = mesh.reshape((-1, mesh.shape[-1]))
+	node_positions, node_indices = np.unique(node_positions, axis=0, return_inverse=True)
+	node_indices = node_indices.reshape(mesh.shape[:-1])
+
+	# then remove any nans, which in fact represent the absence of a node
+	nan_index = np.nonzero(np.isnan(node_positions[:, 0]))[0][0]
+	node_positions = node_positions[:nan_index]
+	node_indices[node_indices >= nan_index] = -1
+
+	return node_indices, node_positions
 
 
 def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.ndarray,
@@ -131,37 +120,43 @@ def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.nda
 	             cell_scales: the desired relative linear scale factor for each cell
 
 	"""
-	cell_definitions = []
-	cell_weights = []
-	cell_scales = []
-	for h in range(node_indices.shape[0]):
-		for i in range(node_indices.shape[1] - 1):
-			for j in range(node_indices.shape[2] - 1):
-				# each corner of each cell should be represented separately
-				for di in range(0, 2):
-					for dj in range(0, 2):
-						if i + di != 0 and i + di != node_indices.shape[1] - 1: # skip the corners next to the poles
-							# define each cell corner by its i and j, and the indices of its adjacent nodes
-							west_node = node_indices[h, i + di, j]
-							east_node = node_indices[h, i + di, j + 1]
-							south_node = node_indices[h, i,     j + dj]
-							north_node = node_indices[h, i + 1, j + dj]
-							cell_definition = np.array([h, i + di, j + dj,
-							                            west_node, east_node,
-							                            south_node, north_node])
+	# assemble a list of all possible cells
+	h, i, j = index_grid((node_indices.shape[0],
+	                      node_indices.shape[1] - 1,
+	                      node_indices.shape[2] - 1))
+	h, i, j = h.ravel(), i.ravel(), j.ravel()
+	cell_definitions = np.empty((0, 11), dtype=int)
+	for di in range(0, 2):
+		for dj in range(0, 2):
+			# define them by their indices and neiboring node indices
+			west_node = node_indices[h, i + di, j]
+			east_node = node_indices[h, i + di, j + 1]
+			south_node = node_indices[h, i,     j + dj]
+			north_node = node_indices[h, i + 1, j + dj]
+			cell_definitions = np.concatenate([
+				cell_definitions,
+				np.stack([i, j, i + di, i + 1 - di, # these first four will get chopd off once I'm done with them
+					      h, i + di, j + dj, # these middle three are for generic spacially dependent stuff
+				          west_node, east_node, # these bottom four are the really important indices
+				          south_node, north_node], axis=-1)])
 
-							if not np.any(cell_definition == -1):
-								added, _ = find_or_add(cell_definition, cell_definitions)
-								# if this is a new cell we're defining now,
-								if added:
-									# calculate the area of the corner when appropriate
-									A_1 = dΦ[i + di]*dΛ[i + di]
-									A_2 = dΦ[i + 1 - di]*dΛ[i + 1 - di]
-									area = (3*A_1 + A_2)/16/(4*np.pi*EARTH.R**2)
-									cell_weights.append(area*values[i, j])
-									cell_scales.append(np.sqrt(scales[i, j])) # this sqrt converts it from an area scale to a linear one
+	# then remove all duplicates
+	_, unique_indices = np.unique(cell_definitions[:, -4:], axis=0, return_index=True)
+	cell_definitions = cell_definitions[unique_indices, :]
 
-	return np.array(cell_definitions), np.array(cell_weights), np.array(cell_scales)
+	# and remove the ones that rely on missingnodes or that rely on the poles too many times
+	missing_node = np.any(cell_definitions[:, -4:] == -1, axis=1)
+	degenerate = cell_definitions[:, -4] == cell_definitions[:, -2]
+	cell_definitions = cell_definitions[~(missing_node | degenerate), :]
+
+	# finally, calculate their areas and stuff
+	A_1 = dΦ[cell_definitions[:, 2]]*dΛ[cell_definitions[:, 2]]
+	A_2 = dΦ[cell_definitions[:, 3]]*dΛ[cell_definitions[:, 3]]
+	cell_areas = (3*A_1 + A_2)/16/(4*np.pi*EARTH.R**2)
+	cell_weights = cell_areas*values[cell_definitions[:, 0], cell_definitions[:, 1]]
+	cell_scales = np.sqrt(scales[cell_definitions[:, 0], cell_definitions[:, 1]]) # this sqrt converts it from areal scale to linear
+
+	return cell_definitions[:, -7:], cell_weights, cell_scales
 
 
 def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray,
@@ -219,10 +214,6 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray,
 	n_partial = np.max(reindex) + 1
 
 	# then decide how to define the ones that aren't defined
-	for h in range(lookup_table.shape[0]):
-		plt.figure()
-		plt.pcolormesh(has_defined_neibors[lookup_table[h, :, :]] + 1.2*is_defined[lookup_table[h, :, :]] - 1.5*(lookup_table[h, :, :] == -1))
-	plt.show()
 	n_reference, n_distance = follow_graph(north_neibor, frum=np.arange(n_full), until=has_defined_neibors)
 	ne_reference, ne_distance = follow_graph(east_neibor, frum=n_reference, until=is_defined)
 	nw_reference, nw_distance = follow_graph(west_neibor, frum=n_reference, until=is_defined)

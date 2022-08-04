@@ -252,9 +252,9 @@ class DenseSparseArray:
 				raise NotImplementedError(f"this SparseArray implementation does not support indexing on the sparse axis: {index}")
 			elif type(index[k]) == np.ndarray:
 				if index[k].ndim == 1:
-					if index[k].dtype == bool:
+					if np.issubdtype(index[k].dtype, np.bool):
 						indices = np.arange(self.shape[k])[index[k]]
-					elif index[k].dtype == int:
+					elif np.issubdtype(index[k].dtype, np.integer):
 						indices = index[k]
 					else:
 						raise TypeError(f"don't kno how to interpret an index with an array of dtype {index[k].dtype}")

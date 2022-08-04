@@ -6,6 +6,7 @@ some handy utility functions that are used in multiple places
 """
 import h5py
 import numpy as np
+from typing import Sequence
 
 
 class Ellipsoid:
@@ -41,6 +42,11 @@ def bin_index(x: float | np.ndarray, bin_edges: np.ndarray) -> float | np.ndarra
 	    :param: coerce whether to force everything into the bins (useful when there's roundoff)
 	"""
 	return np.where(x < bin_edges[-1], np.digitize(x, bin_edges) - 1, bin_edges.size - 2)
+
+def index_grid(shape: Sequence[int]) -> Sequence[np.ndarray]:
+	""" create a set of int matrices that together cover every index in an array of the given shape """
+	indices = [np.arange(length) for length in shape]
+	return np.meshgrid(*indices, indexing="ij")
 
 def wrap_angle(x: float | np.ndarray) -> float | np.ndarray: # TODO: come up with a better name
 	""" wrap an angular value into the range [-np.pi, np.pi) """
