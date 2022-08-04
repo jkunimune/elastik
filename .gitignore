@@ -3,6 +3,9 @@
 
 # compiled C
 cmake-build-debug/*
+*.exp
+*.lib
+*.obj
 
 # IntelliJ files
 .idea/*

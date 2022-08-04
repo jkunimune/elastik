@@ -19,20 +19,20 @@ enum Operator {
  * SparseArray's shape is not specified, so there is no enforced bound on indices.
  */
 struct SparseArray {
-	int ndim;
-	int nitems;
-	int* indices;
-	double* values;
+    int ndim;
+    int nitems;
+    int* indices;
+    double* values;
 };
 
 /**
  * a dense ndarray of sparse arrays
  */
 struct SparseArrayArray {
-	int ndim;
+    int ndim;
     int size;
-	int* shape;
-	struct SparseArray* elements;
+    int* shape;
+    struct SparseArray* elements;
 };
 
 /**
@@ -59,7 +59,7 @@ void free_sa(struct SparseArray a) {
 /**
  * free the memory allocated to a SparseArrayArray and all of its elements
  */
-__attribute__((unused)) __declspec(dllexport) void free_saa(
+__declspec(dllexport) void free_saa(
         struct SparseArrayArray a) {
     for (int i = 0; i < a.size; i ++)
         free_sa(a.elements[i]);
@@ -72,7 +72,7 @@ __attribute__((unused)) __declspec(dllexport) void free_saa(
  * this is really just an alias for the existing free function; I only have it
  * here so that I only haff to import one dll file.
  */
-__attribute__((unused)) __declspec(dllexport) void free_nda(double* a) {
+__declspec(dllexport) void free_nda(double* a) {
     free(a);
 }
 
@@ -125,7 +125,7 @@ struct SparseArray elementwise_sa(enum Operator operator,
         struct SparseArray a, struct SparseArray b) {
     if (a.ndim != b.ndim) {
         printf("Error! SparseArrays have different numbers of dimensions\n");
-        struct SparseArray null = {};
+        struct SparseArray null = {.ndim=-1};
         return null;
     }
 
@@ -133,8 +133,8 @@ struct SparseArray elementwise_sa(enum Operator operator,
 
     if (a.nitems > 0 || b.nitems > 0) {
         // first, merge-sort the indices of a and b
-        int a_mapping[a.nitems + b.nitems];
-        int b_mapping[a.nitems + b.nitems];
+        int* a_mapping = malloc((a.nitems + b.nitems)*sizeof(int));
+        int* b_mapping = malloc((a.nitems + b.nitems)*sizeof(int));
         // they're both sorted, so iterate thru them simultaneously
         int j_a = 0, j_b = 0;
         int j_c = 0;
@@ -206,7 +206,7 @@ struct SparseArray elementwise_sa(enum Operator operator,
                         c.values[j_c] = a.values[j_a]*b.values[j_b];
                     else {
                         printf("Error! %d is an illegal operation for SparseArrays.\n", operator);
-                        struct SparseArray null = {};
+                        struct SparseArray null = {.ndim=-1};
                         return null;
                     }
                 }
@@ -218,6 +218,9 @@ struct SparseArray elementwise_sa(enum Operator operator,
                 else c.values[j_c] = b.values[j_b];
             }
         }
+
+        free(a_mapping);
+        free(b_mapping);
     }
     else { // on the off-chance these are both empty
         c.nitems = 0; // don't allocate any memory
@@ -243,7 +246,7 @@ struct SparseArrayArray elementwise_saa(enum Operator operator,
     // check their shapes breefly; no need to examine them in detail
     if (a.ndim != b.ndim || a.size != b.size) {
         printf("Error! the SparseArrayArray dimensions don't look rite.\n");
-        struct SparseArrayArray null = {};
+        struct SparseArrayArray null = {.ndim=-1};
         return null;
     }
 
@@ -257,17 +260,17 @@ struct SparseArrayArray elementwise_saa(enum Operator operator,
     return c;
 }
 
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray add_saa(
+__declspec(dllexport) struct SparseArrayArray add_saa(
         struct SparseArrayArray a, struct SparseArrayArray b) {
     return elementwise_saa(ADD, a, b);
 }
 
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray subtract_saa(
+__declspec(dllexport) struct SparseArrayArray subtract_saa(
         struct SparseArrayArray a, struct SparseArrayArray b) {
     return elementwise_saa(SUBTRACT, a, b);
 }
 
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray multiply_saa(
+__declspec(dllexport) struct SparseArrayArray multiply_saa(
         struct SparseArrayArray a, struct SparseArrayArray b) {
     return elementwise_saa(MULTIPLY, a, b);
 }
@@ -278,7 +281,7 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray multiply_s
  * @param sparse_shape
  * @return
  */
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray zeros(
+__declspec(dllexport) struct SparseArrayArray zeros(
         int dense_ndim, int dense_shape[], int sparse_ndim) {
     struct SparseArrayArray a = {.ndim=dense_ndim};
     a.shape = copy_of_ia(dense_shape, dense_ndim);
@@ -296,7 +299,7 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray zeros(
  * @param ndim the number of dense dimensions and the number of sparse dimensions (half the total number of dimensions)
  * @param shape the shape of the SparseArrayArray, which is also the shape of each of its elements
  */
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray identity(
+__declspec(dllexport) struct SparseArrayArray identity(
         int ndim, const int shape[]) {
     struct SparseArrayArray a = {.ndim=ndim};
     a.shape = copy_of_ia(shape, ndim);
@@ -330,41 +333,23 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray identity(
 }
 
 /**
- * create a SparseArrayArray where each element has a single 1 at an index matching its own index
- * @param ndim the number of dense dimensions and the number of sparse dimensions (half the total number of dimensions)
- * @param shape the shape of the SparseArrayArray, which is also the shape of each of its elements
+ * create a SparseArrayArray based on the given indices and values
+ * @param indices the indices of every nonzero item as an ndarray with shape dense_shape + nelements + sparse_ndim
+ * @param values the value of every nonzero item as an ndarray with shape dense_shape + nelements
  */
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray unit(
-        int dense_ndim, const int dense_shape[], const int dense_index[],
-        int sparse_ndim, const int sparse_index[], double value) {
+__declspec(dllexport) struct SparseArrayArray new_saa(
+        int dense_ndim, const int dense_shape[], int nitems, int sparse_ndim,
+        const int* indices, const double* values) {
     struct SparseArrayArray a = {.ndim=dense_ndim};
     a.shape = copy_of_ia(dense_shape, dense_ndim);
     a.size = product(dense_shape, dense_ndim);
-
-    // find out which index we want to envalue
-    int i_nonzero = 0;
-    for (int k = 0; k < dense_ndim; k ++)
-        i_nonzero = i_nonzero*dense_shape[k] + dense_index[k];
-
-    // then bild the array
     a.elements = malloc(a.size*sizeof(struct SparseArray));
     for (int i = 0; i < a.size; i ++) {
-        // create the single-value SparseArray
-        struct SparseArray element = {.ndim=sparse_ndim};
-        if (i == i_nonzero) {
-            element.nitems = 1;
-            element.indices = copy_of_ia(sparse_index, a.ndim);
-            element.values = malloc(sizeof(double));
-            *element.values = value;
-        }
-        else {
-            element.nitems = 0;
-            element.indices = NULL;
-            element.values = NULL;
-        }
+        struct SparseArray element = {.ndim=sparse_ndim, .nitems=nitems};
+        element.indices = copy_of_ia(indices + i*nitems*sparse_ndim, nitems*sparse_ndim);
+        element.values = copy_of_da(values + i*nitems, nitems);
         a.elements[i] = element;
     }
-
     return a;
 }
 
@@ -400,7 +385,7 @@ int broadcast_index(int old_index, const int old_shape[], const int new_shape[],
 struct SparseArrayArray elementwise_nda(enum Operator operator, struct SparseArrayArray a, const double* b, const int b_shape[]) {
     for (int k = 0; k < a.ndim; k ++) {
         if (b_shape[k] != a.shape[k] && b_shape[k] != 1) {
-            struct SparseArrayArray null = {};
+            struct SparseArrayArray null = {.ndim=-1};
             return null;
         }
     }
@@ -426,7 +411,7 @@ struct SparseArrayArray elementwise_nda(enum Operator operator, struct SparseArr
                     new.values[j] = old.values[j]/b[i_b];
                 else {
                     printf("Error! %d is an illegal operation for a SparseArrayArray and a dense array.\n", operator);
-                    struct SparseArrayArray null = {};
+                    struct SparseArrayArray null = {.ndim=-1};
                     return null;
                 }
             }
@@ -436,12 +421,12 @@ struct SparseArrayArray elementwise_nda(enum Operator operator, struct SparseArr
     return c;
 }
 
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray multiply_nda(
+__declspec(dllexport) struct SparseArrayArray multiply_nda(
         struct SparseArrayArray a, const double* b, const int shape[]) {
     return elementwise_nda(MULTIPLY, a, b, shape);
 }
 
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray divide_nda(
+__declspec(dllexport) struct SparseArrayArray divide_nda(
         struct SparseArrayArray a, const double* b, const int shape[]) {
     return elementwise_nda(DIVIDE, a, b, shape);
 }
@@ -467,7 +452,7 @@ struct SparseArrayArray elementwise_f(enum Operator operator, struct SparseArray
                     new.values[j] = pow(old.values[j], b);
                 else {
                     printf("Error! %d is an illegal operation for a SparseArrayArray and a float.\n", operator);
-                    struct SparseArrayArray null = {};
+                    struct SparseArrayArray null = {.ndim=-1};
                     return null;
                 }
             }
@@ -477,17 +462,17 @@ struct SparseArrayArray elementwise_f(enum Operator operator, struct SparseArray
     return c;
 }
 
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray multiply_f(
+__declspec(dllexport) struct SparseArrayArray multiply_f(
         struct SparseArrayArray a, double factor) {
     return elementwise_f(MULTIPLY, a, factor);
 }
 
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray divide_f(
+__declspec(dllexport) struct SparseArrayArray divide_f(
         struct SparseArrayArray a, double divisor) {
     return elementwise_f(DIVIDE, a, divisor);
 }
 
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray power_f(
+__declspec(dllexport) struct SparseArrayArray power_f(
         struct SparseArrayArray a, double power) {
     return elementwise_f(POWER, a, power);
 }
@@ -498,11 +483,11 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray power_f(
  * @param axis the axis of the array along wihch to perform the sum
  * @return the resulting array
  */
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray sum_along_axis(
+__declspec(dllexport) struct SparseArrayArray sum_along_axis(
         struct SparseArrayArray a, int axis) {
     if (axis < 0 || axis >= a.ndim) {
         printf("Error! the specified axis (%d out of %d) does not exist.\n", axis, a.ndim);
-        struct SparseArrayArray null = {};
+        struct SparseArrayArray null = {.ndim=-1};
         return null;
     }
 
@@ -511,7 +496,7 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray sum_along_
     c.size = a.size/a.shape[axis];
 
     // set up the new shape
-    int b_shape[a.ndim]; // a dummy shape that allows values to be broadcast from a to c
+    int* b_shape = malloc(a.ndim*sizeof(int)); // a dummy shape that allows values to be broadcast from a to c
     for (int k = 0; k < a.ndim; k ++) {
         if (k == axis)
             b_shape[k] = 1;
@@ -541,13 +526,29 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray sum_along_
         }
     }
 
+    free(b_shape);
+
     return c;
+}
+
+/**
+ * sum along all of the sparse axes of a SparseArrayArray
+ */
+__declspec(dllexport) double* sum_all_sparse(
+        struct SparseArrayArray a) {
+    // set up the ndarray
+    double* values = calloc(a.size, sizeof(double));
+    // then do the sum for each SparseArray
+    for (int i = 0; i < a.size; i ++)
+        for (int j = 0; j < a.elements[i].nitems; j ++)
+            values[i] += a.elements[i].values[j];
+    return values;
 }
 
 /**
  * sum along all of the dense axes of a SparseArrayArray
  */
-__attribute__((unused)) __declspec(dllexport) double* sum_all(
+__declspec(dllexport) double* sum_all_dense(
         struct SparseArrayArray a, const int shape[]) {
     // calculate the size
     int size = product(shape, a.elements[0].ndim);
@@ -576,11 +577,11 @@ __attribute__((unused)) __declspec(dllexport) double* sum_all(
 /**
  * convert a SparseArrayArray to a plain dense ndarray (flattend)
  */
-__attribute__((unused)) __declspec(dllexport) double* to_dense(
+__declspec(dllexport) double* to_dense(
         struct SparseArrayArray a, const int sparse_shape[]) {
     // first, you must determine the shape
     int total_ndim = a.ndim + a.elements[0].ndim;
-    int shape[total_ndim];
+    int* shape = malloc(total_ndim*sizeof(int));
     for (int k = 0; k < a.ndim; k ++)
         shape[k] = a.shape[k];
     for (int k = a.ndim; k < total_ndim; k ++)
@@ -608,6 +609,8 @@ __attribute__((unused)) __declspec(dllexport) double* to_dense(
         }
     }
 
+    free(shape);
+
     return values;
 }
 
@@ -615,11 +618,11 @@ __attribute__((unused)) __declspec(dllexport) double* to_dense(
  * index the array on one axis, extracting a slice that is all of the elements where the
  * index on that axis matches what's given
  */
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray get_slice_saa(
+__declspec(dllexport) struct SparseArrayArray get_slice_saa(
         struct SparseArrayArray a, int index, int axis) {
     if (axis < 0 || axis >= a.ndim || index < 0 || index >= a.shape[axis]) {
-        printf("Error! the specified slice (%d on axis %d out of %d) is out of bounds.\n", axis, a.ndim);
-        struct SparseArrayArray null = {};
+        printf("Error! the specified slice (%d on axis %d out of %d) is out of bounds.\n", index, axis, a.ndim);
+        struct SparseArrayArray null = {.ndim=-1};
         return null;
     }
 
@@ -636,9 +639,7 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray get_slice_
 
     // reassine the indices
     c.elements = malloc(c.size*sizeof(struct SparseArray));
-    int c_index[c.ndim];
-    for (int k = 0; k < c.ndim; k ++)
-        c_index[k] = 0;
+    int* c_index = calloc(c.ndim, sizeof(int));
     for (int i_c = 0; i_c < c.size; i_c ++) {
         int i_a = 0;
         for (int k = 0; k < a.ndim; k ++) {
@@ -665,6 +666,8 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray get_slice_
         }
     }
 
+    free(c_index);
+
     return c;
 }
 
@@ -675,11 +678,11 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray get_slice_
  * @param length the number of values in index
  * @param axis the values of index represent indices along this axis
  */
-__attribute__((unused)) __declspec(dllexport) struct SparseArrayArray get_reindex_saa(
+__declspec(dllexport) struct SparseArrayArray get_reindex_saa(
         struct SparseArrayArray a, const int index[], int length, int axis) {
     if (axis < 0 || axis >= a.ndim) {
         printf("Error! the specified axis (%d out of %d) does not exist.\n", axis, a.ndim);
-        struct SparseArrayArray null = {};
+        struct SparseArrayArray null = {.ndim=-1};
         return null;
     }
 
@@ -696,9 +699,7 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray get_reinde
 
     // reassine the indices
     c.elements = malloc(c.size*sizeof(struct SparseArray));
-    int c_index[a.ndim];
-    for (int k = 0; k < a.ndim; k ++)
-        c_index[k] = 0;
+    int* c_index = calloc(a.ndim, sizeof(int));
     for (int i_c = 0; i_c < c.size; i_c ++) {
         int i_a = 0;
         for (int k = 0; k < a.ndim; k ++) {
@@ -721,6 +722,8 @@ __attribute__((unused)) __declspec(dllexport) struct SparseArrayArray get_reinde
                 break;
         }
     }
+
+    free(c_index);
 
     return c;
 }

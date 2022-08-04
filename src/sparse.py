@@ -24,6 +24,7 @@ else:
 
 c_int_p = POINTER(c_int)
 c_ndarray = np.ctypeslib.ndpointer(dtype=c_double, flags='C_CONTIGUOUS')
+c_int_ndarray = np.ctypeslib.ndpointer(dtype=c_int, flags='C_CONTIGUOUS')
 
 class c_SparseArrayArray(Structure):
 	_fields_ = [("ndim", c_int),
@@ -53,7 +54,7 @@ declare_c_func(c_lib.subtract_saa, [c_SparseArrayArray, c_SparseArrayArray], c_S
 declare_c_func(c_lib.multiply_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.zeros, [c_int, c_int_p, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.identity, [c_int, c_int_p], c_SparseArrayArray)
-declare_c_func(c_lib.unit, [c_int, c_int_p, c_int_p, c_int, c_int_p, c_double], c_SparseArrayArray)
+declare_c_func(c_lib.new_saa, [c_int, c_int_p, c_int, c_int, c_int_ndarray, c_ndarray], c_SparseArrayArray)
 declare_c_func(c_lib.multiply_nda, [c_SparseArrayArray, c_ndarray, c_int_p], c_SparseArrayArray)
 declare_c_func(c_lib.divide_nda, [c_SparseArrayArray, c_ndarray, c_int_p], c_SparseArrayArray)
 declare_c_func(c_lib.multiply_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
@@ -73,9 +74,9 @@ class DenseSparseArray:
 		self.ndim = len(shape)
 		self.size = np.product(shape)
 		self.dense_ndim = c_struct.ndim
-		self.dense_shape = shape[:self.dense_ndim]
-		self.sparse_ndim = c_struct.ndim
-		self.sparse_shape = shape[self.dense_ndim:]
+		self.dense_shape = self.shape[:self.dense_ndim]
+		self.sparse_ndim = self.ndim - self.dense_ndim
+		self.sparse_shape = self.shape[self.dense_ndim:]
 		self._as_parameter_ = c_struct
 
 	def __del__(self):
@@ -100,16 +101,32 @@ class DenseSparseArray:
 		return DenseSparseArray(tuple(shape)*2, c_lib.identity(c_int(len(shape)), c_int_array(shape)))
 
 	@staticmethod
-	def unit(dense_shape: Sequence[int], dense_index: Sequence[int],
-	         sparse_shape: Sequence[int], sparse_index: Sequence[int], value: float):
-		""" return an array with a single nonzero element.  mostly for testing purposes. """
-		return DenseSparseArray(tuple(dense_shape) + tuple(sparse_shape),
-		                        c_lib.unit(c_int(len(dense_shape)),
-		                                   c_int_array(dense_shape),
-		                                   c_int_array(dense_index),
-		                                   c_int(len(sparse_shape)),
-		                                   c_int_array(sparse_index),
-		                                   c_double(value)))
+	def from_coordinates(sparse_shape: Sequence[int], indices: np.ndarray, values: np.ndarray) -> DenseSparseArray:
+		""" return an array where each SparseArray has the same number of nonzero values,
+		    and they are located at explicitly known indices
+		    :param sparse_shape: the shapes of the SparseArrays this contains
+		    :param indices: the indices of the nonzero elements.  this should have shape
+		                    (...n)?×m×k, where m is the number of elements in each
+		                    SparseArray and k is the number of sparse dimensions. the
+		                    shape up to that point corresponds to the dense shape.  these
+		                    indices must be sorted and contain no duplicates if the
+		                    DenseSparseArray is to operate elementwise on other
+		                    DenseSparseArrays.  if you only want to operate on np.ndarrays
+		                    or do matrix multiplication, they don't need to be sorted and
+		                    duplicates are fine, but I won't sort them for you.  but watch
+		                    out for that.
+		    :param values: the values of the nonzero elements.  each value corresponds to
+		                   one row of indices.
+		"""
+		if indices.shape[:-1] != values.shape or indices.shape[-1] != len(sparse_shape):
+			raise ValueError("you gave the rong number of indices")
+		return DenseSparseArray(indices.shape[:-2] + tuple(sparse_shape),
+		                        c_lib.new_saa(c_int(indices.ndim - 2),
+		                                      c_int_array(indices.shape[:-2]),
+		                                      c_int(indices.shape[-2]),
+		                                      c_int(indices.shape[-1]),
+		                                      indices,
+		                                      values))
 
 	def __add__(self, other: DenseSparseArray | np.ndarray | float) -> DenseSparseArray:
 		if type(other) is DenseSparseArray:
@@ -249,21 +266,23 @@ class DenseSparseArray:
 
 
 if __name__ == "__main__":
-	array = DenseSparseArray.zeros([1, 3], [10])
-	array += DenseSparseArray.unit([1, 3], [0, 0], [10], [0], 1.)
-	array += DenseSparseArray.unit([1, 3], [0, 0], [10], [1], -1.)
-	array += DenseSparseArray.unit([1, 3], [0, 1], [10], [4], 1.)
-	array += DenseSparseArray.unit([1, 3], [0, 2], [10], [5], -2.)
-	array += DenseSparseArray.unit([1, 3], [0, 2], [10], [0], 3.)
-
-	brray = DenseSparseArray.zeros([1, 3], [10])
-	brray += DenseSparseArray.unit([1, 3], [0, 0], [10], [1], 1.)
-	brray += DenseSparseArray.unit([1, 3], [0, 0], [10], [0], 0.)
-	brray += DenseSparseArray.unit([1, 3], [0, 1], [10], [4], 3.)
-	brray += DenseSparseArray.unit([1, 3], [0, 1], [10], [0], -2.)
-	brray += DenseSparseArray.unit([1, 3], [0, 2], [10], [6], -2.)
-	brray += DenseSparseArray.unit([1, 3], [0, 2], [10], [5], -2.)
-
+	array = DenseSparseArray.from_coordinates(
+		[10],
+		np.array([[[[0], [1]],
+		           [[0], [4]],
+		           [[0], [5]]]]),
+		np.array([[[1., -1.],
+		           [0., 1.],
+		           [3., -2.]]]))
+	brray = DenseSparseArray.from_coordinates(
+		[10],
+		np.array([[[[0], [1]],
+		           [[0], [4]],
+		           [[5], [6]]]]),
+		np.array([[[0., 1.],
+		           [-2., 3.],
+		           [-2., -2.]]])
+	)
 	# brray = np.array([-3, 2, 0]).reshape((1, 3, 1))
 
 	# brray = np.array([[[-3]]])
