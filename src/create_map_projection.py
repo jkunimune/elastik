@@ -283,15 +283,15 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 	map_axes.clear()
 	mesh = all_positions[mesh_index, :]
 	for h in range(mesh.shape[0]):
-		map_axes.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], f"#bbb", linewidth=.4) # TODO: zoom in and stuff?
-		map_axes.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"#bbb", linewidth=.4)
+		map_axes.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], f"#bbb", linewidth=.3) # TODO: zoom in and stuff?
+		map_axes.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"#bbb", linewidth=.3)
 		project = interpolate.RegularGridInterpolator([ф_mesh, λ_mesh], mesh[h, :, :, :],
 		                                              bounds_error=False, fill_value=np.nan)
 		for line in coastlines:
 			projected_line = project(line)
-			plt.plot(projected_line[:, 0], projected_line[:, 1], f"#000", linewidth=.8, zorder=2)
+			map_axes.plot(projected_line[:, 0], projected_line[:, 1], f"#000", linewidth=.8, zorder=2)
 	if not final:
-		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=10,
+		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=2,
 		                 c=-np.linalg.norm(velocity, axis=1),
 		                 cmap=CUSTOM_CMAP["speed"]) # TODO: zoom in and rotate automatically
 	map_axes.axis("equal")
@@ -424,7 +424,7 @@ if __name__ == "__main__":
 		a, b = compute_principal_strains(restored(positions), cell_definitions, cell_scales, dΦ, dΛ)
 		scale_term = (a*b - 1)**2
 		shape_term = (a - b)**2
-		return ((scale_term + 3*shape_term)*cell_weights).sum()
+		return ((scale_term + 4*shape_term)*cell_weights).sum()
 
 	def compute_energy_strict(positions: np.ndarray) -> float:
 		a, b = compute_principal_strains(positions, cell_definitions, cell_scales, dΦ, dΛ)
@@ -433,12 +433,12 @@ if __name__ == "__main__":
 		ab = a*b
 		scale_term = (ab**2 - 1)/2 - np.log(ab)
 		shape_term = (a - b)**2
-		return ((scale_term + 3*shape_term)*cell_weights).sum()
+		return ((scale_term + 2*shape_term)*cell_weights).sum()
 
 	def plot_status(positions: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, final: bool) -> None:
 		values.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
-		if np.random.random() < 1e-1 or final:
+		if len(values) == 1 or np.random.random() < 1e-1 or final:
 			if positions.shape[0] == initial_node_positions.shape[0]:
 				all_positions = np.concatenate([positions, [[np.nan, np.nan]]])
 			else:
@@ -465,8 +465,11 @@ if __name__ == "__main__":
 		raise e
 
 	# this should make the mesh well-behaved
-	assert np.all(np.greater(compute_principal_strains(
-		restored(node_positions), cell_definitions, cell_scales, dΦ, dΛ), 0))
+	if not np.all(np.greater(compute_principal_strains(
+		restored(node_positions), cell_definitions, cell_scales, dΦ, dΛ), 0)):
+		print("Error: the mesh was supposed to be well-behaved now")
+		plt.show()
+		raise RuntimeError("illegal map")
 
 	# then switch to the strict condition and full mesh
 	try:

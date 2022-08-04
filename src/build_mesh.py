@@ -20,7 +20,7 @@ NAME = "mountains" # "basic" | "oceans" | "mountains"
 # filename of the borders to use
 SECTIONS_FILE = f"../spec/cuts_{NAME}.txt"
 # how many cells per 90°
-RESOLUTION = 8#18
+RESOLUTION = 18
 # filename of mesh at which to save it
 MESH_FILE = f"../spec/mesh_{NAME}.h5"
 # locations of various straits that should be shown continuously

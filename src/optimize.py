@@ -268,7 +268,7 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 		# step_size = min(STEP_MAXIMUM, STEP_AUGMENTATION)
 		# keep track of the number of iterations
 		num_line_searches += 1
-		if num_line_searches > 1e6:
+		if num_line_searches > 1e5:
 			raise RuntimeError(f"algorithm did not converge in {num_step_sizes} iterations")
 
 
