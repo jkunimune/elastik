@@ -98,7 +98,6 @@ class Section:
 
 		# then do a simple polygon inclusion test
 		x_centers = bin_centers(x_edges)
-		test = np.zeros((x_centers.size, y_edges.size - 1))
 		for j in range(y_edges.size - 1):
 			y = (y_edges[j] + y_edges[j + 1])/2
 			x_crossings = []
@@ -109,14 +108,13 @@ class Section:
 				if abs(y1 - y0) > math.pi:
 					crosses = not crosses # remember to account for wrapping
 				if crosses:
-					x_crossings.append(np.interp(y, [y0, y1], [x0, x1]))
+					x_crossings.append((y - y0)/(y1 - y0)*(x1 - x0) + x0)
 			x_crossings = np.sort(x_crossings)
 			if self.glue_pole > 0:
 				num_crossings = np.sum(x_crossings[None, :] > x_centers[:, None], axis=1) # count the crossings
 			else:
 				num_crossings = np.sum(x_crossings[None, :] < x_centers[:, None], axis=1) # from the glue pole
 			included[:, j] |= num_crossings%2 == 1 # and apply the even/odd rule
-			test[:, j] = num_crossings
 
 		return included
 
@@ -164,8 +162,8 @@ class Section:
 		"""
 		touched = np.full((x_edges.size - 1, y_edges.size - 1), False)
 		for i in range(path.shape[0] - 1):
-			x0, y0 = path[i, :]
-			x1, y1 = path[i + 1, :]
+			x0, y0 = path[i, :] + 1e-6 # add a tiny amount so there's less roundoff instability
+			x1, y1 = path[i + 1, :] + 1e-6
 			touched[bin_index(x0, x_edges), bin_index(y0, y_edges)] = True
 			if x0 != x1:
 				i_crossings, j_crossings = Section.grid_intersections(x_edges, y_edges[:-1], x0, y0, x1, y1, False, True)

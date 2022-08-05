@@ -6,6 +6,7 @@ generate simple maps of importance as a function of location, to use when optimi
 projections
 """
 import math
+import os
 
 import numpy as np
 import shapefile
@@ -85,9 +86,22 @@ def find_land_mask(ф_grid: np.ndarray, λ_grid: np.ndarray, crop_antarctica: bo
 
 
 if __name__ == "__main__":
+	# define the 1° grid
 	ф_edges = bin_centers(np.linspace(-90, 90, 181))
 	λ_edges = bin_centers(np.linspace(-180, 180, 361))
 	ф, λ = bin_centers(ф_edges), bin_centers(λ_edges)
+
+	# load some cuts, just for reference
+	cut_sets = []
+	for filename in os.listdir("../spec"):
+		if filename.startswith("cuts_"):
+			cut_data = np.loadtxt(os.path.join("../spec", filename))
+			section_indices = np.nonzero(np.all(cut_data == cut_data[0, :], axis=1))[0]
+			section_indices = np.concatenate([section_indices, [None]])
+			cut_set = []
+			for i in range(len(section_indices) - 1):
+				cut_set.append(cut_data[section_indices[i]:section_indices[i + 1]])
+			cut_sets.append(cut_set)
 
 	# iterate thru the four weight files we want to generate
 	for crop_antarctica in [False, True]:
@@ -108,6 +122,11 @@ if __name__ == "__main__":
 			# save and plot
 			tifffile.imwrite(filename, importance)
 			plt.figure()
-			plt.pcolormesh(λ_edges, ф_edges, importance**2)
+			plt.pcolormesh(λ_edges, ф_edges, importance)
+			for cut_set in cut_sets: # show the cut systems, just for reference
+				for cut in cut_set:
+					plt.plot(cut[:, 1], cut[:, 0], f"k", linewidth=1)
+				plt.scatter([cut[-1, 1] for cut in cut_set], [cut[-1, 0] for cut in cut_set], c=f"k", s=10)
+			plt.axis([λ_edges[0], λ_edges[-1], ф_edges[0], ф_edges[-1]])
 
 	plt.show()

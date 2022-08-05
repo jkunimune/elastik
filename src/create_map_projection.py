@@ -159,7 +159,7 @@ def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.nda
 	return cell_definitions[:, -7:], cell_weights, cell_scales
 
 
-def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray,
+def mesh_skeleton(lookup_table: np.ndarray, factor: int, cell_definitions: np.ndarray, ф: np.ndarray,
                   ) -> tuple[Any, Any]:
 	""" create a pair of inverse functions that transform points between the full space of
 	    possible meshes and a reduced space with fewer degrees of freedom. the idea here
@@ -198,18 +198,25 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray,
 	# then decide which nodes should be independently defined in the skeleton
 	has_defined_neibors = np.full(n_full + 1, False) # (this array has an extra False at the end so that -1 works nicely)
 	is_defined = np.full(n_full, False)
+	# start by marking some evenly spaced interior points
 	for h in range(lookup_table.shape[0]):
 		for i in range(lookup_table.shape[1]):
 			east_west_factor = int(round(factor/np.cos(ф[i])))
 			for j in range(lookup_table.shape[2]):
-				if lookup_table[h, i, j] != -1: # start by marking some evenly spaced interior points
+				if lookup_table[h, i, j] != -1:
 					important_row = (min(i, ф.size - 1 - i)%factor == 0)
 					important_col = (j%east_west_factor == 0)
 					has_defined_neibors[lookup_table[h, i, j]] |= important_row
 					is_defined[lookup_table[h, i, j]] |= important_col
-	has_defined_neibors[:-1] |= (north_neibor == -1) | (south_neibor == -1) # then make sure we define enuff points at each edge
-	is_defined |= (~has_defined_neibors[east_neibor]) | (~has_defined_neibors[west_neibor]) # to fully define everything
+	# then make sure we define enuff points at each edge to keep it all fully defined
+	has_defined_neibors[:-1] |= (north_neibor == -1) | (south_neibor == -1)
+	is_defined |= (~has_defined_neibors[east_neibor]) | (~has_defined_neibors[west_neibor])
 	is_defined &= has_defined_neibors[:-1]
+	# then throw in a few extra free agents where the mesh is complicated
+	_, number_of_cell_attached_to = np.unique(cell_definitions[:, -4:], return_counts=True)
+	is_defined |= number_of_cell_attached_to > 16
+	has_defined_neibors[:-1] |= is_defined
+
 	reindex = np.where(is_defined, np.cumsum(is_defined) - 1, -1)
 	n_partial = np.max(reindex) + 1
 
@@ -435,7 +442,7 @@ if __name__ == "__main__":
 	cell_definitions, cell_weights, cell_scales = enumerate_cells(node_indices, weights, scale, dΦ, dΛ)
 
 	# define functions that can define the node positions from a reduced set of them
-	reduced, restored = mesh_skeleton(node_indices, int(round(ф_mesh.size/10)), ф_mesh)
+	reduced, restored = mesh_skeleton(node_indices, int(round(ф_mesh.size/10)), cell_definitions, ф_mesh)
 
 	# load the coastline data from Natural Earth
 	coastlines = load_coastline_data()
