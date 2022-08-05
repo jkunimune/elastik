@@ -94,7 +94,7 @@ def enumerate_nodes(mesh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 	# then remove any nans, which in fact represent the absence of a node
 	nan_index = np.nonzero(np.isnan(node_positions[:, 0]))[0][0]
-	node_positions = node_positions[:nan_index]
+	node_positions = node_positions[:nan_index, :]
 	node_indices[node_indices >= nan_index] = -1
 
 	return node_indices, node_positions
@@ -146,7 +146,7 @@ def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.nda
 
 	# and remove the ones that rely on missingnodes or that rely on the poles too many times
 	missing_node = np.any(cell_definitions[:, -4:] == -1, axis=1)
-	degenerate = cell_definitions[:, -4] == cell_definitions[:, -2]
+	degenerate = cell_definitions[:, -4] == cell_definitions[:, -3]
 	cell_definitions = cell_definitions[~(missing_node | degenerate), :]
 
 	# finally, calculate their areas and stuff
