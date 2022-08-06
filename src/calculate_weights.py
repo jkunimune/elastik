@@ -16,14 +16,14 @@ from matplotlib import pyplot as plt
 from util import bin_centers, to_cartesian
 
 
-COAST_WIDTH = 10 # degrees
+COAST_WIDTH = 4.5 # degrees
 PRECISION = .5 # degrees
 ANTARCTIC_CUTOFF = -56 # degrees
 
 
 def load_coast_vertices(precision) -> list[tuple[float, float]]:
 	""" load the coastline shapefiles, including as many islands as we can, but not being
-	    too precise about the ceastlines' exact shapes.
+	    too precise about the coastlines' exact shapes.
 	"""
 	points = []
 	λ_last, ф_last = np.nan, np.nan
@@ -117,7 +117,7 @@ if __name__ == "__main__":
 			coast_distance = calculate_coast_distance(ф, λ, crop_antarctica=crop_antarctica)
 
 			# combine them
-			importance = np.where(mask, 1, np.exp(-coast_distance/COAST_WIDTH))
+			importance = np.where(mask, 1, np.maximum(0, 1 - (coast_distance/COAST_WIDTH)**2))
 
 			# save and plot
 			tifffile.imwrite(filename, importance)

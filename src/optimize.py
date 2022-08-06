@@ -88,6 +88,9 @@ class Variable:
 		    to the shape of self.gradients
 		"""
 
+		self.ndim = len(self.shape)
+		self.size = np.product(self.shape)
+
 	def __str__(self):
 		return f"{'x'.join(str(i) for i in self.shape)}({'x'.join(str(i) for i in self.space)})"
 
@@ -105,12 +108,16 @@ class Variable:
 		                self.curvatures + other.curvatures)
 
 	def __le__(self, other):
-		other = Variable(other)
-		return self.values <= other.values
+		return self.values <= other
+
+	def __lt__(self, other):
+		return self.values < other
 
 	def __ge__(self, other):
-		other = Variable(other)
-		return self.values >= other.values
+		return self.values >= other
+
+	def __gt__(self, other):
+		return self.values > other
 
 	def __mul__(self, other):
 		other = Variable(other, num_dimensions=len(self.shape))
@@ -177,6 +184,7 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
              tolerance: float,
              bounds: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
              report: Callable[[np.ndarray, float, np.ndarray, np.ndarray, bool], None] = None,
+             backup_func: Callable[[np.ndarray | Variable], float | Variable] = None,
              ) -> np.ndarray:
 	""" find the vector that minimizes a function of a list of points using gradient
 	    descent with a dynamically chosen step size. unlike a more generic minimization
@@ -200,28 +208,52 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 	                   routine is going. it takes as arguments the current state, the
 	                   current value of the function, the current gradient, the previous
 	                   step if any, and whether this is the final value
+	    :param backup_func: an optional additional objective function to use when func is
+	                        nonapplicable. specificly, when the primary objective function
+	                        is only defined in a certain domain but the initial guess may
+	                        be outside of it, the backup can be used to push the state
+	                        vector into that domain. it should return smaller and smaller
+	                        values as the state approaches the valid domain and -inf for
+	                        states inside it. if a -inf in achieved with the backup
+	                        function, it will immediately switch to the primary function.
+	                        if -inf is never returned and the backup function converges,
+	                        that minimum will be returnd.
 	    :return: the optimal n×2 array of points
 	"""
 	if bounds is None:
 		bounds = []
 
+	# if a backup objective function is provided, start with that
+	if backup_func is not None:
+		followup_func = func
+		func = backup_func
+	else:
+		followup_func = None
+
 	# redefine the objective function to have some checks bilt in
 	def get_value(x: np.ndarray) -> float:
 		value = func(x)
-		if value <= 0:
-			raise ValueError("I'm not set up to have objective functions that can go nonpositive")
-		elif np.isnan(value):
-			raise ValueError("there are nan values")
+		if np.isnan(value):
+			raise RuntimeError("there are nan values")
 		return value
 	# define a utility function to use Variable to get the gradient of the value
 	def get_gradient(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 		variable = func(Variable(x, independent=True))
 		if np.any(np.isnan(variable.gradients)):
-			raise ValueError("there are nan gradients")
+			raise RuntimeError("there are nan gradients")
 		return variable.gradients, np.sum(variable.curvatures, axis=-1)
 
-	# start at the inicial gess
+	# use the inicial gess to decide which objective function to use
 	initial_value = get_value(guess)
+
+	# check just in case we instantly fall thru to the followup function
+	if initial_value == -np.inf and followup_func is not None:
+		func = followup_func
+		followup_func = None
+		initial_value = get_value(guess)
+	elif not np.isfinite(initial_value):
+		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_value}")
+
 	value = initial_value
 	state = guess
 	step = np.zeros_like(state)
@@ -253,6 +285,10 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 			step = direction*step_size
 			new_state = state + step
 			new_value = get_value(new_state)
+			# if this is infinitely good, jump to the followup function now
+			if new_value == -np.inf and followup_func is not None:
+				print(f"Reached the valid domain in {num_line_searches} iterations.")
+				return minimize(followup_func, new_state, tolerance, bounds, report, None)
 			# if the line search condition is met, take it
 			if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(step*gradient):
 				break

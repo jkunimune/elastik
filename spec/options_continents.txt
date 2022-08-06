@@ -3,4 +3,5 @@ descript: ...
 cuts: oceans
 weights: land
 scale: uniform
+size: inf,inf
 section_names: Áfrika,Australia,Amérika

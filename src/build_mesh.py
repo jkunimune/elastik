@@ -20,7 +20,7 @@ NAME = "oceans" # "basic" | "oceans" | "mountains"
 # filename of the borders to use
 SECTIONS_FILE = f"../spec/cuts_{NAME}.txt"
 # how many cells per 90°
-RESOLUTION = 18
+RESOLUTION = 20
 # filename of mesh at which to save it
 MESH_FILE = f"../spec/mesh_{NAME}.h5"
 # locations of various straits that should be shown continuously
@@ -355,7 +355,7 @@ if __name__ == "__main__":
 		p_transform, λ_transform = rotated_coordinates(
 			ф_center, λ_center, ф[:, np.newaxis], λ[np.newaxis, :])
 		p_center = ф_center - section.glue_pole*math.pi/2
-		scale = 4*EARTH.R*np.cos(p_center/2)**2
+		scale = 3*EARTH.R*np.cos(p_center/2)**2
 		r, θ = scale*np.tan(p_transform/2), λ_transform + section.glue_pole*λ_center
 		r0, θ0 = scale*np.tan(p_center/2), section.glue_pole*λ_center
 		nodes[h, include_nodes[h, :, :], 0] =  (r*np.sin(θ) - r0*np.sin(θ0))[include_nodes[h, :, :]]

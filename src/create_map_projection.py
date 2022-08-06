@@ -5,6 +5,7 @@ create_map_projection.py
 take a basic mesh and optimize it according to a particular cost function in order to
 create a new Elastic Projection.
 """
+import traceback
 from typing import Any
 
 import h5py
@@ -159,7 +160,7 @@ def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.nda
 	return cell_definitions[:, -7:], cell_weights, cell_scales
 
 
-def mesh_skeleton(lookup_table: np.ndarray, factor: int, cell_definitions: np.ndarray, ф: np.ndarray,
+def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray,
                   ) -> tuple[Any, Any]:
 	""" create a pair of inverse functions that transform points between the full space of
 	    possible meshes and a reduced space with fewer degrees of freedom. the idea here
@@ -212,10 +213,6 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, cell_definitions: np.nd
 	has_defined_neibors[:-1] |= (north_neibor == -1) | (south_neibor == -1)
 	is_defined |= (~has_defined_neibors[east_neibor]) | (~has_defined_neibors[west_neibor])
 	is_defined &= has_defined_neibors[:-1]
-	# then throw in a few extra free agents where the mesh is complicated
-	_, number_of_cell_attached_to = np.unique(cell_definitions[:, -4:], return_counts=True)
-	is_defined |= number_of_cell_attached_to > 16
-	has_defined_neibors[:-1] |= is_defined
 
 	reindex = np.where(is_defined, np.cumsum(is_defined) - 1, -1)
 	n_partial = np.max(reindex) + 1
@@ -247,17 +244,21 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, cell_definitions: np.nd
 	return reduction, restoration
 
 
-def compute_principal_strains(positions: np.ndarray,
+def compute_principal_strains(positions: np.ndarray, position_weits: Any,
                               cell_definitions: np.ndarray, cell_scales: np.ndarray,
                               dΦ: np.ndarray, dΛ: np.ndarray) -> tuple[float, float]:
 	""" take a set of cell definitions and 2D coordinates for each node, and calculate
 	    the Tissot-ellipse semiaxes of each cell.
 	    :param positions: the vector specifying the location of each node in the map plane
+	    :param position_weits: a matrix-multiplier that will expand the positions if we aren't given enuff of them
 	    :param cell_definitions: the list of cells, each defined by seven indices
 	    :param cell_scales: the linear scale factor for each cell
 	    :param dΦ: the distance between adjacent rows of nodes (km)
 	    :param dΛ: the distance between adjacent nodes in each row (km)
 	"""
+	if positions.size != position_weits.shape[0]:
+		positions = position_weits @ positions
+
 	i = cell_definitions[:, 1]
 
 	west = positions[cell_definitions[:, 3], :]
@@ -327,20 +328,32 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 	map_axes.clear()
 	mesh = all_positions[mesh_index, :]
 	for h in range(mesh.shape[0]):
+		# plot the underlying mesh for each section
 		map_axes.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], f"#bbb", linewidth=.3) # TODO: zoom in and stuff?
 		map_axes.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"#bbb", linewidth=.3)
+		# project and plot the coastlines onto each section
 		project = interpolate.RegularGridInterpolator([ф_mesh, λ_mesh], mesh[h, :, :, :],
 		                                              bounds_error=False, fill_value=np.nan)
 		for line in coastlines:
 			projected_line = project(line)
 			map_axes.plot(projected_line[:, 0], projected_line[:, 1], f"#000", linewidth=.8, zorder=2)
 	if not final:
+		# indicate the speed of each node
 		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=2,
 		                 c=-np.linalg.norm(velocity, axis=1),
 		                 cmap=CUSTOM_CMAP["speed"]) # TODO: zoom in and rotate automatically
-	map_axes.axis("equal")
 
 	a, b = compute_principal_strains(all_positions, cell_definitions, cell_scales, dΦ, dΛ)
+
+	# mark any nodes with nonpositive principal strains
+	worst_cells = np.nonzero((a <= 0) | (b <= 0))[0]
+	for cell in worst_cells:
+		h, i, j, east, west, north, south = cell_definitions[cell, :]
+		plt.plot(all_positions[[east, west], 0], all_positions[[east, west], 1], "#ff5f00")
+		plt.plot(all_positions[[north, south], 0], all_positions[[north, south], 1], "#ff5f00")
+	map_axes.axis("equal")
+
+	# histogram the principal strains
 	hist_axes.clear()
 	hist_axes.hist2d(np.concatenate([a, b]),
 	                 np.concatenate([b, a]),
@@ -349,6 +362,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 	                 cmap=CUSTOM_CMAP["density"])
 	hist_axes.axis("square")
 
+	# plot the error function over time
 	valu_axes.clear()
 	valu_axes.plot(values)
 	valu_axes.set_xlim(len(values) - 1000, len(values))
@@ -357,6 +371,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
 	valu_axes.yaxis.set_tick_params(which='both')
 	valu_axes.grid(which="both", axis="y")
 
+	# plot the convergence criteria over time
 	diff_axes.clear()
 	diffs = -np.diff(values)/values[1:]
 	if diffs.size > 0:
@@ -426,9 +441,9 @@ if __name__ == "__main__":
 	print(f"loaded options from {CONFIGURATION_FILE}")
 	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
 	print(f"loaded a {np.sum(np.isfinite(mesh[:, :, :, 0]))}-node mesh")
-	scale = downsample(np.maximum(.1, load_pixel_values(configure["scale"])), mesh.shape[1:3])
-	print(f"loaded the {configure['scale']} map as the scale") # I get best results when weights is
-	weights = downsample(np.maximum(.03, load_pixel_values(configure["weights"])**2), mesh.shape[1:3]) # steeper than scale, hence this ^2
+	scale = downsample(np.maximum(.03, load_pixel_values(configure["scale"])), mesh.shape[1:3])
+	print(f"loaded the {configure['scale']} map as the scale")
+	weights = downsample(np.maximum(.03, load_pixel_values(configure["weights"])), mesh.shape[1:3])
 	print(f"loaded the {configure['weights']} map as the weights")
 
 	# assume the coordinates are more or less evenly spaced
@@ -442,7 +457,7 @@ if __name__ == "__main__":
 	cell_definitions, cell_weights, cell_scales = enumerate_cells(node_indices, weights, scale, dΦ, dΛ)
 
 	# define functions that can define the node positions from a reduced set of them
-	reduced, restored = mesh_skeleton(node_indices, int(round(ф_mesh.size/10)), cell_definitions, ф_mesh)
+	reduce, restore = mesh_skeleton(node_indices, int(round(ф_mesh.size/10)), ф_mesh)
 
 	# load the coastline data from Natural Earth
 	coastlines = load_coastline_data()
@@ -460,19 +475,23 @@ if __name__ == "__main__":
 
 	# define the objective functions
 	def compute_energy_lenient(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(restored @ positions, cell_definitions, cell_scales, dΦ, dΛ)
-		scale_term = (a*b - 1)**2
-		shape_term = (a - b)**2
-		return ((scale_term + 4*shape_term)*cell_weights).sum()
+		a, b = compute_principal_strains(positions, restore, cell_definitions, cell_scales, dΦ, dΛ)
+		if np.all(a > 0) and np.all(b > 0):
+			return -np.inf
+		else:
+			scale_term = (a*b - 1)**2
+			shape_term = (a - b)**2
+			return ((scale_term + 2*shape_term)*cell_weights).sum()
 
 	def compute_energy_strict(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(positions, cell_definitions, cell_scales, dΦ, dΛ)
+		a, b = compute_principal_strains(positions, restore, cell_definitions, cell_scales, dΦ, dΛ)
 		if np.any(a <= 0) or np.any(b <= 0):
 			return np.inf
-		ab = a*b
-		scale_term = (ab**2 - 1)/2 - np.log(ab)
-		shape_term = (a - b)**2
-		return ((scale_term + 2*shape_term)*cell_weights).sum()
+		else:
+			ab = a*b
+			scale_term = (ab**2 - 1)/2 - np.log(ab)
+			shape_term = (a - b)**2
+			return ((scale_term + 2*shape_term)*cell_weights).sum()
 
 	def plot_status(positions: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, final: bool) -> None:
 		values.append(value)
@@ -481,7 +500,7 @@ if __name__ == "__main__":
 			if positions.shape[0] == initial_node_positions.shape[0]:
 				all_positions = np.concatenate([positions, [[np.nan, np.nan]]])
 			else:
-				all_positions = np.concatenate([restored @ positions, [[np.nan, np.nan]]])
+				all_positions = np.concatenate([restore @ positions, [[np.nan, np.nan]]])
 			show_mesh(positions, all_positions, step, values, final,
 			          ф_mesh, λ_mesh, node_indices, coastlines,
 			          map_axes, hist_axes, valu_axes, diff_axes)
@@ -491,34 +510,30 @@ if __name__ == "__main__":
 
 	# then minimize!
 	print("begin fitting process")
-	# start with the lenient condition, since the initial gess is likely to have inside-out cells
 	try:
-		node_positions = minimize(compute_energy_lenient,
-		                          guess=reduced @ initial_node_positions,
+		# start with the reduced mesh for quick approximate convergence
+		node_positions = minimize(func=compute_energy_strict,
+		                          backup_func=compute_energy_lenient,
+		                          guess=reduce @ initial_node_positions,
 		                          bounds=None,
 		                          report=plot_status,
 		                          tolerance=1e-3/EARTH.R)
-	except RuntimeError as e:
-		print(e)
-		plt.show()
-		raise e
 
-	# this should make the mesh well-behaved
-	if not np.all(np.greater(compute_principal_strains(
-		restored @ node_positions, cell_definitions, cell_scales, dΦ, dΛ), 0)):
-		print("Error: the mesh was supposed to be well-behaved now")
-		plt.show()
-		raise RuntimeError("illegal map")
-
-	# then switch to the strict condition and full mesh
-	try:
-		node_positions = minimize(compute_energy_strict,
-		                          guess=restored @ node_positions,
+		# then upgrade to the full mesh for the final pass
+		node_positions = minimize(func=compute_energy_strict,
+		                          backup_func=compute_energy_lenient,
+		                          guess=restore @ node_positions,
 		                          bounds=None,
 		                          report=plot_status,
 		                          tolerance=1e-3/EARTH.R)
+
+		# the mesh should, at some point, become well-behaved
+		if not np.all(np.greater(compute_principal_strains(
+			node_positions, cell_definitions, cell_scales, dΦ, dΛ), 0)):
+			raise RuntimeError("the mesh was supposed to be well-behaved now")
+
 	except RuntimeError as e:
-		print(e)
+		traceback.print_exc()
 		plt.show()
 		raise e
 
