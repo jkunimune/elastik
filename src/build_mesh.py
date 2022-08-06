@@ -15,14 +15,6 @@ from matplotlib import pyplot as plt
 from util import bin_index, bin_centers, wrap_angle, EARTH
 
 
-# the filenames with which to work
-NAME = "oceans" # "basic" | "oceans" | "mountains"
-# filename of the borders to use
-SECTIONS_FILE = f"../spec/cuts_{NAME}.txt"
-# how many cells per 90°
-RESOLUTION = 20
-# filename of mesh at which to save it
-MESH_FILE = f"../spec/mesh_{NAME}.h5"
 # locations of various straits that should be shown continuously
 STRAITS = np.radians([(66.5, -169.0), # Bering
                       (9.1, -79.7), # Panama canal
@@ -311,17 +303,19 @@ def save_mesh(filename: str, ф: np.ndarray, λ: np.ndarray, nodes: np.ndarray, 
 			dset[:, :] = np.degrees(sections[h].border)
 
 
-if __name__ == "__main__":
+def build_mesh(name: str, resolution: int):
+	""" bild a mesh
+	    :param name: "basic" | "oceans" | "mountains"
+	    :param resolution: how many cells per 90°
+	"""
 	# start by defining a grid of Cells
-	ф = np.linspace(-math.pi/2, math.pi/2, 2*RESOLUTION + 1)
-	dф = ф[1] - ф[0]
+	ф = np.linspace(-math.pi/2, math.pi/2, 2*resolution + 1)
 	num_ф = ф.size - 1
-	λ = np.linspace(-math.pi, math.pi, 4*RESOLUTION + 1)
-	dλ = λ[1] - λ[0]
+	λ = np.linspace(-math.pi, math.pi, 4*resolution + 1)
 	num_λ = λ.size - 1
 
 	# load the interruptions
-	sections = load_sections(SECTIONS_FILE)
+	sections = load_sections(f"../spec/cuts_{name}.txt")
 
 	# create the node array
 	nodes = np.full((len(sections), num_ф + 1, num_λ + 1, 2), np.nan)
@@ -361,7 +355,7 @@ if __name__ == "__main__":
 		nodes[h, include_nodes[h, :, :], 0] =  (r*np.sin(θ) - r0*np.sin(θ0))[include_nodes[h, :, :]]
 		nodes[h, include_nodes[h, :, :], 1] = -(r*np.cos(θ) - r0*np.cos(θ0))[include_nodes[h, :, :]]
 
-		plt.figure()
+		plt.figure(f"{name.capitalize()} mesh, section {h}")
 		plt.pcolormesh(λ, ф, np.where(include_cells, np.where(share_cells, 2, 1), 0))
 		plt.plot(section.border[:, 1], section.border[:, 0], "k")
 		plt.scatter(λ_center, ф_center, c="r")
@@ -378,15 +372,17 @@ if __name__ == "__main__":
 	nodes[:, :, -1, :] = nodes[:, :, 0, :]
 
 	# show the result
-	plt.figure()
+	plt.figure(f"{name.capitalize()} mesh")
 	plt.scatter(*nodes.reshape((-1, 2)).T, s=5, color="k")
 	for h in range(nodes.shape[0]):
 		plt.plot(nodes[h, :, :, 0], nodes[h, :, :, 1], f"C{h}", linewidth=1)
 		plt.plot(nodes[h, :, :, 0].T, nodes[h, :, :, 1].T, f"C{h}", linewidth=1)
 	plt.axis("equal")
-	plt.pause(.01)
 
 	# save it to HDF5
-	save_mesh(MESH_FILE, ф, λ, nodes, sections)
+	save_mesh(f"../spec/mesh_{name}.h5", ф, λ, nodes, sections)
 
+
+if __name__ == "__main__":
+	build_mesh("oceans", 20)
 	plt.show()

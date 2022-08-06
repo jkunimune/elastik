@@ -15,6 +15,7 @@
  - `calculate_weights.py` generates greyscale images that can be used as weights for new map projections (requires coastline data; see below)
  - `build_mesh.py` generates a mesh specifying the rough configuration of a new map projection based on a manually specified or pregenerated cut file.
  - `find_drainage_divides.py` generates a cut file based on the borders between watersheds (requires elevation data; see below)
+ - `run_all_scripts.py` executes `build_mesh.py`, `calculate_weights.py`, and `create_map_projections.py` in that order on all of their possible inputs
 
  I've tried to include all dependencies so that PyPI installs and data files are the only things you need to add.
  However, it's worth noting that if you want to edit some of the code *or* run `create_map_projection.py` on an OS other than Windows,

@@ -21,9 +21,6 @@ from sparse import DenseSparseArray
 from util import dilate, h5_str, EARTH, index_grid, Scalar
 
 
-CONFIGURATION_FILE = "continents" # "oceans" | "continents" | "countries"
-
-
 def get_bounding_box(points: np.ndarray) -> np.ndarray:
 	""" compute the maximum and minimums of this set of points and package it as
 	    [[left, bottom], [right, top]]
@@ -315,10 +312,12 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 	return ф, λ, mesh, sections
 
 
-def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray,
-              velocity: np.ndarray, values: list[float],
-              final: bool, ф_mesh: np.ndarray, λ_mesh: np.ndarray,
-              mesh_index: np.ndarray, coastlines: list[np.array],
+def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np.ndarray,
+              values: list[float], grads: list[float], final: bool,
+              ф_mesh: np.ndarray, λ_mesh: np.ndarray, dΦ: np.ndarray, dΛ: np.ndarray,
+              mesh_index: np.ndarray, cell_definitions: np.ndarray,
+              cell_weights: np.ndarray, cell_scales: np.ndarray,
+              coastlines: list[np.array],
               map_axes: plt.Axes, hist_axes: plt.Axes,
               valu_axes: plt.Axes, diff_axes: plt.Axes) -> None:
 	map_axes.clear()
@@ -432,9 +431,12 @@ def save_mesh(name: str, ф: np.ndarray, λ: np.ndarray, mesh: np.ndarray,
 			dset[:, :] = get_bounding_box(mesh[h, :, :, :])
 
 
-if __name__ == "__main__":
-	configure = load_options(CONFIGURATION_FILE)
-	print(f"loaded options from {CONFIGURATION_FILE}")
+def create_map_projection(configuration_file: str):
+	""" create a map projection
+	    :param configuration_file: "oceans" | "continents" | "countries"
+	"""
+	configure = load_options(configuration_file)
+	print(f"loaded options from {configuration_file}")
 	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
 	print(f"loaded a {np.sum(np.isfinite(mesh[:, :, :, 0]))}-node mesh")
 	scale = downsample(np.maximum(.03, load_pixel_values(configure["scale"])), mesh.shape[1:3])
@@ -456,7 +458,6 @@ if __name__ == "__main__":
 	transformations = []
 	progression = np.ceil(np.geomspace(ф_mesh.size/10, 1.,
 	                                   int(math.log2(ф_mesh.size/10)) + 1))
-	print(progression)
 	for factor in progression:
 		transformations.append(mesh_skeleton(node_indices, factor, ф_mesh))
 	transformations.append((Scalar(1), Scalar(1))) # finishing with the full unreduced set
@@ -465,13 +466,13 @@ if __name__ == "__main__":
 	coastlines = load_coastline_data()
 
 	# set up the plotting axes
-	small_fig = plt.figure(figsize=(3, 5))
+	small_fig = plt.figure(figsize=(3, 5), num=f"Elastik-{configuration_file} fitting")
 	gridspecs = (plt.GridSpec(3, 1, height_ratios=[2, 1, 1]),
 	             plt.GridSpec(3, 1, height_ratios=[2, 1, 1], hspace=0))
 	hist_axes = small_fig.add_subplot(gridspecs[0][0, :])
 	valu_axes = small_fig.add_subplot(gridspecs[1][1, :])
 	diff_axes = small_fig.add_subplot(gridspecs[1][2, :], sharex=valu_axes)
-	main_fig, map_axes = plt.subplots(figsize=(7, 5))
+	main_fig, map_axes = plt.subplots(figsize=(7, 5), num=f"Elastik-{configuration_file}")
 
 	values, grads = [], []
 
@@ -502,8 +503,9 @@ if __name__ == "__main__":
 		grads.append(np.linalg.norm(grad)*EARTH.R)
 		if len(values) == 1 or np.random.random() < 1e-1 or final:
 			all_positions = np.concatenate([restore @ positions, [[np.nan, np.nan]]])
-			show_mesh(positions, all_positions, step, values, final,
-			          ф_mesh, λ_mesh, node_indices, coastlines,
+			show_mesh(positions, all_positions, step, values, grads, final,
+			          ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
+			          cell_definitions, cell_weights, cell_scales, coastlines,
 			          map_axes, hist_axes, valu_axes, diff_axes)
 			main_fig.canvas.draw()
 			small_fig.canvas.draw()
@@ -530,6 +532,7 @@ if __name__ == "__main__":
 
 	except RuntimeError as e:
 		traceback.print_exc()
+		small_fig.canvas.set_window_title("Error!")
 		plt.show()
 		raise e
 
@@ -543,5 +546,11 @@ if __name__ == "__main__":
 	          configure["descript"])
 
 	print(f"elastik {configure['name']} projection saved!")
+
+
+if __name__ == "__main__":
+	# create_map_projection("oceans")
+	create_map_projection("continents")
+	# create_map_projection("countries")
 
 	plt.show()
