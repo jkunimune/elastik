@@ -5,8 +5,8 @@ create_map_projection.py
 take a basic mesh and optimize it according to a particular cost function in order to
 create a new Elastic Projection.
 """
+import math
 import traceback
-from typing import Any
 
 import h5py
 import numpy as np
@@ -18,7 +18,7 @@ from scipy import interpolate
 from cmap import CUSTOM_CMAP
 from optimize import minimize
 from sparse import DenseSparseArray
-from util import dilate, h5_str, EARTH, index_grid
+from util import dilate, h5_str, EARTH, index_grid, Scalar
 
 
 CONFIGURATION_FILE = "continents" # "oceans" | "continents" | "countries"
@@ -161,7 +161,7 @@ def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.nda
 
 
 def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray,
-                  ) -> tuple[Any, Any]:
+                  ) -> tuple[np.ndarray | DenseSparseArray | Scalar, np.ndarray | DenseSparseArray | Scalar]:
 	""" create a pair of inverse functions that transform points between the full space of
 	    possible meshes and a reduced space with fewer degrees of freedom. the idea here
 	    is to identify 80% or so of the nodes that can form a skeleton, and from which the
@@ -244,21 +244,17 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray,
 	return reduction, restoration
 
 
-def compute_principal_strains(positions: np.ndarray, position_weits: Any,
+def compute_principal_strains(positions: np.ndarray,
                               cell_definitions: np.ndarray, cell_scales: np.ndarray,
                               dΦ: np.ndarray, dΛ: np.ndarray) -> tuple[float, float]:
 	""" take a set of cell definitions and 2D coordinates for each node, and calculate
 	    the Tissot-ellipse semiaxes of each cell.
 	    :param positions: the vector specifying the location of each node in the map plane
-	    :param position_weits: a matrix-multiplier that will expand the positions if we aren't given enuff of them
 	    :param cell_definitions: the list of cells, each defined by seven indices
 	    :param cell_scales: the linear scale factor for each cell
 	    :param dΦ: the distance between adjacent rows of nodes (km)
 	    :param dΛ: the distance between adjacent nodes in each row (km)
 	"""
-	if positions.size != position_weits.shape[0]:
-		positions = position_weits @ positions
-
 	i = cell_definitions[:, 1]
 
 	west = positions[cell_definitions[:, 3], :]
@@ -451,13 +447,19 @@ if __name__ == "__main__":
 	dΛ = EARTH.a*(1 + (1 - EARTH.e2)*np.tan(ф_mesh)**2)**(-1/2)*(λ_mesh[1] - λ_mesh[0])
 
 	# reformat the nodes into a list without gaps or duplicates
-	node_indices, initial_node_positions = enumerate_nodes(mesh)
+	node_indices, node_positions = enumerate_nodes(mesh)
 
 	# and then do the same thing for cell corners
 	cell_definitions, cell_weights, cell_scales = enumerate_cells(node_indices, weights, scale, dΦ, dΛ)
 
 	# define functions that can define the node positions from a reduced set of them
-	reduce, restore = mesh_skeleton(node_indices, int(round(ф_mesh.size/10)), ф_mesh)
+	transformations = []
+	progression = np.ceil(np.geomspace(ф_mesh.size/10, 1.,
+	                                   int(math.log2(ф_mesh.size/10)) + 1))
+	print(progression)
+	for factor in progression:
+		transformations.append(mesh_skeleton(node_indices, factor, ф_mesh))
+	transformations.append((Scalar(1), Scalar(1))) # finishing with the full unreduced set
 
 	# load the coastline data from Natural Earth
 	coastlines = load_coastline_data()
@@ -475,7 +477,8 @@ if __name__ == "__main__":
 
 	# define the objective functions
 	def compute_energy_lenient(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(positions, restore, cell_definitions, cell_scales, dΦ, dΛ)
+		a, b = compute_principal_strains(restore @ positions,
+		                                 cell_definitions, cell_scales, dΦ, dΛ)
 		if np.all(a > 0) and np.all(b > 0):
 			return -np.inf
 		else:
@@ -484,7 +487,8 @@ if __name__ == "__main__":
 			return ((scale_term + 2*shape_term)*cell_weights).sum()
 
 	def compute_energy_strict(positions: np.ndarray) -> float:
-		a, b = compute_principal_strains(positions, restore, cell_definitions, cell_scales, dΦ, dΛ)
+		a, b = compute_principal_strains(restore @ positions,
+		                                 cell_definitions, cell_scales, dΦ, dΛ)
 		if np.any(a <= 0) or np.any(b <= 0):
 			return np.inf
 		else:
@@ -497,10 +501,7 @@ if __name__ == "__main__":
 		values.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
 		if len(values) == 1 or np.random.random() < 1e-1 or final:
-			if positions.shape[0] == initial_node_positions.shape[0]:
-				all_positions = np.concatenate([positions, [[np.nan, np.nan]]])
-			else:
-				all_positions = np.concatenate([restore @ positions, [[np.nan, np.nan]]])
+			all_positions = np.concatenate([restore @ positions, [[np.nan, np.nan]]])
 			show_mesh(positions, all_positions, step, values, final,
 			          ф_mesh, λ_mesh, node_indices, coastlines,
 			          map_axes, hist_axes, valu_axes, diff_axes)
@@ -511,21 +512,16 @@ if __name__ == "__main__":
 	# then minimize!
 	print("begin fitting process")
 	try:
-		# start with the reduced mesh for quick approximate convergence
-		node_positions = minimize(func=compute_energy_strict,
-		                          backup_func=compute_energy_lenient,
-		                          guess=reduce @ initial_node_positions,
-		                          bounds=None,
-		                          report=plot_status,
-		                          tolerance=1e-3/EARTH.R)
-
-		# then upgrade to the full mesh for the final pass
-		node_positions = minimize(func=compute_energy_strict,
-		                          backup_func=compute_energy_lenient,
-		                          guess=restore @ node_positions,
-		                          bounds=None,
-		                          report=plot_status,
-		                          tolerance=1e-3/EARTH.R)
+		# progress from the coarsest transformd mesh to finer and finer ones
+		for reduce, restore in transformations:
+			node_positions = reduce @ node_positions
+			node_positions = minimize(func=compute_energy_strict,
+			                          backup_func=compute_energy_lenient,
+			                          guess=node_positions,
+			                          bounds=None,
+			                          report=plot_status,
+			                          tolerance=1e-3/EARTH.R)
+			node_positions = restore @ node_positions
 
 		# the mesh should, at some point, become well-behaved
 		if not np.all(np.greater(compute_principal_strains(

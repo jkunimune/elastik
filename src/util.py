@@ -25,6 +25,14 @@ class Ellipsoid:
 		self.e = np.sqrt(self.e2)
 		""" eccentricity """
 
+class Scalar:
+	def __init__(self, value):
+		""" a float with a matmul method """
+		self.value = value
+
+	def __matmul__(self, other):
+		return self.value * other
+
 
 h5_str = h5py.string_dtype(encoding='utf-8')
 """ a str typ compatible with h5py """
