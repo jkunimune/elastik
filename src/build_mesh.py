@@ -118,7 +118,16 @@ class Section:
 		    :param y_edges: the bin edges for axis 1
 		    :return: a boolean grid of True for shared and False for not shared
 		"""
-		return Section.cells_touched(x_edges, y_edges, self.glue_border)
+		# share any cells that are on the glue border
+		shared = Section.cells_touched(x_edges, y_edges, self.glue_border)
+		# except for this one weerd edge case with the poles
+		for x_endpoint, y_endpoint in self.cut_border[[0, -1], :]:
+			j = bin_index(y_endpoint, y_edges)
+			if x_endpoint == -math.pi/2:
+				shared[0, j - 1: j + 2] = False
+			elif x_endpoint == math.pi/2:
+				shared[-1, j - 1: j + 2] = False
+		return shared
 
 
 	def choose_center(self):
@@ -384,5 +393,7 @@ def build_mesh(name: str, resolution: int):
 
 
 if __name__ == "__main__":
-	build_mesh("oceans", 20)
+	build_mesh("basic", 20)
+	# build_mesh("oceans", 20)
+	# build_mesh("mountains", 20)
 	plt.show()

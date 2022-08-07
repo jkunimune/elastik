@@ -157,7 +157,7 @@ def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.nda
 	return cell_definitions[:, -7:], cell_weights, cell_scales
 
 
-def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray,
+def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
                   ) -> tuple[np.ndarray | DenseSparseArray | Scalar, np.ndarray | DenseSparseArray | Scalar]:
 	""" create a pair of inverse functions that transform points between the full space of
 	    possible meshes and a reduced space with fewer degrees of freedom. the idea here
@@ -243,7 +243,7 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray,
 
 def compute_principal_strains(positions: np.ndarray,
                               cell_definitions: np.ndarray, cell_scales: np.ndarray,
-                              dΦ: np.ndarray, dΛ: np.ndarray) -> tuple[float, float]:
+                              dΦ: np.ndarray, dΛ: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 	""" take a set of cell definitions and 2D coordinates for each node, and calculate
 	    the Tissot-ellipse semiaxes of each cell.
 	    :param positions: the vector specifying the location of each node in the map plane
@@ -306,7 +306,7 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 		num_sections = file.attrs["num_sections"]
 		mesh = np.empty((num_sections, ф.size, λ.size, 2))
 		sections = []
-		for h in range(file.attrs["num_sections"]):
+		for h in range(num_sections):
 			mesh[h, :, :, :] = file[f"section{h}/projection"]
 			sections.append(np.radians(file[f"section{h}/border"][:, :]))
 	return ф, λ, mesh, sections
@@ -477,17 +477,29 @@ def create_map_projection(configuration_file: str):
 	values, grads = [], []
 
 	# define the objective functions
-	def compute_energy_lenient(positions: np.ndarray) -> float:
+	def compute_energy_aggressive(positions: np.ndarray) -> float: # one that aggressively pushes the mesh to have all positive strains
+		a, b = compute_principal_strains(restore @ positions,
+		                                 cell_definitions, cell_scales, dΦ, dΛ)
+		if np.all(a > 0) and np.all(b > 0):
+			return -np.inf
+		elif np.any(a < -100) or np.any(b < -100): # make this check to avoid annoying overflow warnings
+			return np.inf
+		else:
+			a_term = np.exp(-6*a)
+			b_term = np.exp(-6*b)
+			return (a_term + b_term).sum()
+
+	def compute_energy_lenient(positions: np.ndarray) -> float: # one that works in all domains
 		a, b = compute_principal_strains(restore @ positions,
 		                                 cell_definitions, cell_scales, dΦ, dΛ)
 		if np.all(a > 0) and np.all(b > 0):
 			return -np.inf
 		else:
-			scale_term = (a*b - 1)**2
+			scale_term = (a + b - 2)**2
 			shape_term = (a - b)**2
 			return ((scale_term + 2*shape_term)*cell_weights).sum()
 
-	def compute_energy_strict(positions: np.ndarray) -> float:
+	def compute_energy_strict(positions: np.ndarray) -> float: # and one that only works when all strains are positive
 		a, b = compute_principal_strains(restore @ positions,
 		                                 cell_definitions, cell_scales, dΦ, dΛ)
 		if np.any(a <= 0) or np.any(b <= 0):
@@ -528,11 +540,17 @@ def create_map_projection(configuration_file: str):
 		# the mesh should, at some point, become well-behaved
 		if not np.all(np.greater(compute_principal_strains(
 			node_positions, cell_definitions, cell_scales, dΦ, dΛ), 0)):
-			raise RuntimeError("the mesh was supposed to be well-behaved now")
+			# if it doesn't do a final pass using the aggressive objective function to whip it into shape
+			node_positions = minimize(func=compute_energy_strict,
+			                          backup_func=compute_energy_aggressive,
+			                          guess=node_positions,
+			                          bounds=None,
+			                          report=plot_status,
+			                          tolerance=1e-3/EARTH.R)
 
 	except RuntimeError as e:
 		traceback.print_exc()
-		small_fig.canvas.set_window_title("Error!")
+		small_fig.canvas.manager.set_window_title("Error!")
 		plt.show()
 		raise e
 
@@ -550,7 +568,7 @@ def create_map_projection(configuration_file: str):
 
 if __name__ == "__main__":
 	# create_map_projection("oceans")
-	create_map_projection("continents")
-	# create_map_projection("countries")
+	# create_map_projection("continents")
+	create_map_projection("countries")
 
 	plt.show()

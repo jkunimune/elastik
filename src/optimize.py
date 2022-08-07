@@ -25,7 +25,7 @@ class Variable:
 	def __init__(self, values: np.ndarray | Variable,
 	             gradients: np.ndarray = None,
 	             curvatures: np.ndarray = None,
-	             independent: bool = False, num_dimensions: int = 0):
+	             independent: bool = False, ndim: int = 0):
 		""" an array of values with gradient information attached, for computing gradients
 		    of vectorized functions
 			:param values: the local value of the quantity
@@ -38,7 +38,7 @@ class Variable:
 			                   if none are specified, it is assumed to be all zero.
 		    :param independent: whether the gradient should be set to an identity matrix
 		                        (otherwise it's zero)
-		    :param num_dimensions: the minimum number of dimensions for the values. if
+		    :param ndim: the minimum number of dimensions for the values. if
 		                           the provided values have fewer dimensions than this,
 		                           then 1s will be added to the end of the shape. it's
 		                           mostly useful for converting scalar constants.
@@ -53,7 +53,7 @@ class Variable:
 		else:
 			# ensure the values have at least num_dimensions dimensions
 			self.values = np.reshape(values,
-				np.shape(values) + (1,)*(num_dimensions - len(np.shape(values))))
+			                         np.shape(values) + (1,)*(ndim - np.ndim(values)))
 			# if gradients are specified
 			if gradients is not None:
 				# make sure the shapes match
@@ -95,6 +95,8 @@ class Variable:
 		return f"{'x'.join(str(i) for i in self.shape)}({'x'.join(str(i) for i in self.space)})"
 
 	def __getitem__(self, item):
+		if type(item) is not tuple:
+			item = (item,)
 		value_index = item
 		gradient_index = (slice(None),)*len(self.space)
 		return Variable(self.values[value_index],
@@ -108,19 +110,23 @@ class Variable:
 		                self.curvatures + other.curvatures)
 
 	def __le__(self, other):
-		return self.values <= other
+		other = Variable(other, ndim=self.ndim)
+		return self.values <= other.values
 
 	def __lt__(self, other):
-		return self.values < other
+		other = Variable(other, ndim=self.ndim)
+		return self.values < other.values
 
 	def __ge__(self, other):
-		return self.values >= other
+		other = Variable(other, ndim=self.ndim)
+		return self.values >= other.values
 
 	def __gt__(self, other):
-		return self.values > other
+		other = Variable(other, ndim=self.ndim)
+		return self.values > other.values
 
 	def __mul__(self, other):
-		other = Variable(other, num_dimensions=len(self.shape))
+		other = Variable(other, ndim=self.ndim)
 		return Variable(values=self.values * other.values,
 		                gradients=self.gradients * other.values[self.bc] +
 		                          other.gradients * self.values[self.bc],
@@ -147,6 +153,9 @@ class Variable:
 	def __truediv__(self, other):
 		return self * other**(-1)
 
+	def __rtruediv__(self, other):
+		return other * self**(-1)
+
 	def __radd__(self, other):
 		return self + other
 
@@ -167,12 +176,17 @@ class Variable:
 		                self.gradients / self.values[self.bc],
 		                self.curvatures / self.values[self.bc] - self.gradients**2 / self.values[self.bc]**2)
 
+	def exp(self):
+		return Variable(np.exp(self.values),
+		                self.gradients * np.exp(self.values[self.bc]),
+		                (self.curvatures + self.gradients**2) * np.exp(self.values[self.bc]))
+
 	def sum(self, axis=None):
 		if axis is None:
-			axis = tuple(np.arange(len(self.shape)))
+			axis = tuple(np.arange(self.ndim))
 		else:
 			axis = np.atleast_1d(axis)
-			axis = (axis + len(self.shape))%len(self.shape)
+			axis = (axis + self.ndim)%self.ndim
 			axis = tuple(axis)
 		return Variable(self.values.sum(axis=axis),
 		                self.gradients.sum(axis=axis),

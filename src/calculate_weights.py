@@ -29,7 +29,8 @@ def load_coast_vertices(precision) -> list[tuple[float, float]]:
 					edge_length = math.hypot(
 						ф - ф_last, (λ - λ_last)*np.cos(math.radians((ф + ф_last)/2)))
 					if math.isnan(λ_last) or edge_length > precision:
-						points.append((λ, ф))
+						if abs(ф + 6) > 2 or abs(λ - 72) > 2: # exclude the chagos archipelago because it's awkwardly situated
+							points.append((λ, ф))
 						λ_last, ф_last = λ, ф
 	return points
 
@@ -44,7 +45,7 @@ def calculate_coast_distance(ф: np.ndarray, λ: np.ndarray, precision: float, s
 	points = load_coast_vertices(precision)
 	minimum_distance = np.full((ф.size, λ.size), np.inf)
 
-	for λ_0, ф_0 in points: # TODO: it would be good if this maskd out points that are across cuts
+	for λ_0, ф_0 in points: # TODO: ideally it would generate the weits for a given mesh
 		if southern_cutoff is None or ф_0 > southern_cutoff:
 			x_0, y_0, z_0 = to_cartesian(ф_0, λ_0)
 			minimum_distance = np.minimum(minimum_distance,
