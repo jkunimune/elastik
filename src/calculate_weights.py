@@ -6,14 +6,13 @@ generate simple maps of importance as a function of location, to use when optimi
 projections
 """
 import math
-import os
 
 import numpy as np
 import shapefile
 import tifffile
 from matplotlib import pyplot as plt
 
-from util import bin_centers, to_cartesian
+from util import bin_centers, to_cartesian, inside_region
 
 
 def load_coast_vertices(precision) -> list[tuple[float, float]]:
@@ -30,27 +29,45 @@ def load_coast_vertices(precision) -> list[tuple[float, float]]:
 						ф - ф_last, (λ - λ_last)*np.cos(math.radians((ф + ф_last)/2)))
 					if math.isnan(λ_last) or edge_length > precision:
 						if abs(ф + 6) > 2 or abs(λ - 72) > 2: # exclude the chagos archipelago because it's awkwardly situated
-							points.append((λ, ф))
+							points.append((ф, λ))
 						λ_last, ф_last = λ, ф
 	return points
 
 
-def calculate_coast_distance(ф: np.ndarray, λ: np.ndarray, precision: float, southern_cutoff: float) -> np.ndarray:
+def calculate_coast_distance(ф: np.ndarray, λ: np.ndarray, coast: list[tuple[float, float]],
+                             section: np.ndarray, southern_cutoff: float) -> np.ndarray:
 	""" take a set of latitudes and longitudes and calculate the angular distance from
 	    each point to the nearest shoreline (in degrees)
 	"""
 	фф, λλ = np.meshgrid(ф, λ, indexing="ij")
 	xx, yy, zz = to_cartesian(фф, λλ)
 
-	points = load_coast_vertices(precision)
+	# first crop the coasts inside this section
+	points = np.array(coast)
+	points = points[inside_region(points[:, 0], points[:, 1], section), :]
 	minimum_distance = np.full((ф.size, λ.size), np.inf)
 
-	for λ_0, ф_0 in points: # TODO: ideally it would generate the weits for a given mesh
+	# then calculate the distances
+	for ф_0, λ_0 in points:
 		if southern_cutoff is None or ф_0 > southern_cutoff:
 			x_0, y_0, z_0 = to_cartesian(ф_0, λ_0)
 			minimum_distance = np.minimum(minimum_distance,
 			                              np.degrees(np.arccos(x_0*xx + y_0*yy + z_0*zz)))
 	return minimum_distance
+
+
+def load_cut_file(filename: str) -> list[np.ndarray]:
+	""" load the borders of the sections for a given map projection """
+	cut_data = np.loadtxt(filename)
+	section_indices = np.nonzero(np.all(cut_data == cut_data[0, :], axis=1))[0]
+	section_indices = np.concatenate([section_indices, [None]])
+	cuts = []
+	for h in range(len(section_indices) - 1):
+		cuts.append(cut_data[section_indices[h]:section_indices[h + 1]])
+	sections = []
+	for h in range(len(section_indices) - 1):
+		sections.append(np.concatenate([cuts[h - 1][::-1], cuts[h]]))
+	return sections
 
 
 def load_land_polygons() -> list[list[tuple[float, float]]]:
@@ -82,22 +99,13 @@ def find_land_mask(ф_grid: np.ndarray, λ_grid: np.ndarray, southern_cutoff: fl
 
 
 def calculate_weights(coast_width: float, precision: float, antarctic_cutoff=-56.):
-	# define the 1° grid
-	ф_edges = bin_centers(np.linspace(-90, 90, 181))
-	λ_edges = bin_centers(np.linspace(-180, 180, 361))
+	# define the grid
+	ф_edges = bin_centers(np.linspace(-90, 90, 188)) # (these are intentionally weerd numbers to reduce roundoff issues)
+	λ_edges = bin_centers(np.linspace(-180, 180, 375))
 	ф, λ = bin_centers(ф_edges), bin_centers(λ_edges)
 
-	# load some cuts, just for reference
-	cut_sets = []
-	for filename in os.listdir("../spec"):
-		if filename.startswith("cuts_"):
-			cut_data = np.loadtxt(os.path.join("../spec", filename))
-			section_indices = np.nonzero(np.all(cut_data == cut_data[0, :], axis=1))[0]
-			section_indices = np.concatenate([section_indices, [None]])
-			cut_set = []
-			for i in range(len(section_indices) - 1):
-				cut_set.append(cut_data[section_indices[i]:section_indices[i + 1]])
-			cut_sets.append(cut_set)
+	# load the coast data
+	coast_vertices = load_coast_vertices(precision)
 
 	# iterate thru the four weight files we want to generate
 	for crop_antarctica in [False, True]:
@@ -105,28 +113,34 @@ def calculate_weights(coast_width: float, precision: float, antarctic_cutoff=-56
 		cutoff = antarctic_cutoff if crop_antarctica else None
 		land = find_land_mask(ф, λ, cutoff)
 
-		# get the distance of each point from the nearest coast
-		coast_distance = calculate_coast_distance(ф, λ, precision, cutoff)
-
-		for value_land in [False, True]:
-			filename = f"../spec/pixels{'_land' if value_land else '_sea'}{'_sinATA' if crop_antarctica else ''}.tif"
-			print(filename)
+		for cut_file, value_land in [("basic", True), ("oceans", True), ("mountains", False)]:
+			# load the cut file
+			sections = load_cut_file(f"../spec/cuts_{cut_file}.txt")
 
 			# get the set of points that are uniformly important
-			mask = land if value_land else ~land
+			global_mask = land if value_land else ~land
 
-			# combine them
-			importance = np.where(mask, 1, np.maximum(0, 1 - (coast_distance/coast_width)**2))
+			for h, section in enumerate(sections):
+				filename = f"../spec/pixels_{cut_file}_{h}{'_land' if value_land else '_sea'}{'_sinATA' if crop_antarctica else ''}.tif"
+				print(filename)
 
-			# save and plot
-			tifffile.imwrite(filename, importance)
-			plt.figure(f"Weightmap {2*crop_antarctica + value_land}")
-			plt.pcolormesh(λ_edges, ф_edges, importance)
-			for cut_set in cut_sets: # show the cut systems, just for reference
-				for cut in cut_set:
-					plt.plot(cut[:, 1], cut[:, 0], f"k", linewidth=1)
-				plt.scatter([cut[-1, 1] for cut in cut_set], [cut[-1, 0] for cut in cut_set], c=f"k", s=10)
-			plt.axis([λ_edges[0], λ_edges[-1], ф_edges[0], ф_edges[-1]])
+				# get the distance of each point from the nearest contained coast
+				coast_distance = calculate_coast_distance(ф, λ, coast_vertices, section, cutoff)
+
+				# get the points on the mesh inside this section
+				in_section = inside_region(ф, λ, section)
+
+				# combine everything
+				mask = global_mask & in_section
+				importance = np.where(mask, 1, np.maximum(0, 1 - coast_distance/coast_width))
+
+				# save and plot
+				tifffile.imwrite(filename, importance)
+				plt.figure(f"Weightmap {cut_file}-{h}-{2*crop_antarctica + value_land}")
+				plt.pcolormesh(λ_edges, ф_edges, importance)
+				plt.plot(section[:, 1], section[:, 0], f"k", linewidth=1)
+				plt.plot(section[:, 1], section[:, 0], f"w--", linewidth=1)
+				plt.axis([λ_edges[0], λ_edges[-1], ф_edges[0], ф_edges[-1]])
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ STRAITS = np.radians([(66.5, -169.0), # Bering
                       (-9, 102.4), # Sunda (offset to make it aline with adjacent ones)
                       (-9, 114.4), # various indonesian straits
                       (-9, 142.4), # Torres (offset to make it aline with adjacent ones)
+                      (-60, -65), # Drake
                       ])
 # the distance around a strait that should be duplicated for clarity
 STRAIT_RADIUS = 1800/EARTH.R # (radians)
@@ -341,8 +342,8 @@ def build_mesh(name: str, resolution: int):
 		ф_border, λ_border = resolve_path(section.cut_border[:, 0], section.cut_border[:, 1], STRAIT_RADIUS)
 		for ф_strait, λ_strait in STRAITS:
 			border_near_strait =\
-				(abs(ф_border - ф_strait) < STRAIT_RADIUS) &\
-				(abs(wrap_angle(λ_border - λ_strait)) < STRAIT_RADIUS/np.cos(ф_strait))
+				(abs(ф_border - ф_strait) < STRAIT_RADIUS/2) &\
+				(abs(wrap_angle(λ_border - λ_strait)) < STRAIT_RADIUS/2/np.cos(ф_strait))
 			if np.any(border_near_strait):
 				ф_grid = bin_centers(ф)[:, np.newaxis]
 				λ_grid = bin_centers(λ)[np.newaxis, :]

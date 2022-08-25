@@ -98,7 +98,7 @@ def enumerate_nodes(mesh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 	return node_indices, node_positions
 
 
-def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.ndarray,
+def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray], scales: list[np.ndarray],
                     dΦ: np.ndarray, dΛ: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 	""" take an array of nodes and generate the list of cells in which the elastic energy
 	    should be calculated.
@@ -118,12 +118,19 @@ def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.nda
 	             cell_scales: the desired relative linear scale factor for each cell
 
 	"""
+	# start off by resampling these in a useful way
+	for h in range(node_indices.shape[0]):
+		values[h] = downsample(values[h], node_indices.shape[1:])
+		scales[h] = downsample(scales[h], node_indices.shape[1:])
+	values = np.stack(values)
+	scales = np.stack(scales)
+
 	# assemble a list of all possible cells
 	h, i, j = index_grid((node_indices.shape[0],
 	                      node_indices.shape[1] - 1,
 	                      node_indices.shape[2] - 1))
 	h, i, j = h.ravel(), i.ravel(), j.ravel()
-	cell_definitions = np.empty((0, 11), dtype=int)
+	cell_definitions = np.empty((0, 12), dtype=int)
 	for di in range(0, 2):
 		for dj in range(0, 2):
 			# define them by their indices and neiboring node indices
@@ -133,7 +140,7 @@ def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.nda
 			north_node = node_indices[h, i + 1, j + dj]
 			cell_definitions = np.concatenate([
 				cell_definitions,
-				np.stack([i, j, i + di, i + 1 - di, # these first four will get chopd off once I'm done with them
+				np.stack([h, i, j, i + di, i + 1 - di, # these first five will get chopd off once I'm done with them
 					      h, i + di, j + dj, # these middle three are for generic spacially dependent stuff
 				          west_node, east_node, # these bottom four are the really important indices
 				          south_node, north_node], axis=-1)])
@@ -147,14 +154,23 @@ def enumerate_cells(node_indices: np.ndarray, values: np.ndarray, scales: np.nda
 	degenerate = cell_definitions[:, -4] == cell_definitions[:, -3]
 	cell_definitions = cell_definitions[~(missing_node | degenerate), :]
 
-	# finally, calculate their areas and stuff
-	A_1 = dΦ[cell_definitions[:, 2]]*dΛ[cell_definitions[:, 2]]
-	A_2 = dΦ[cell_definitions[:, 3]]*dΛ[cell_definitions[:, 3]]
-	cell_areas = (3*A_1 + A_2)/16/(4*np.pi*EARTH.R**2)
-	cell_weights = cell_areas*values[cell_definitions[:, 0], cell_definitions[:, 1]]
-	cell_scales = np.sqrt(scales[cell_definitions[:, 0], cell_definitions[:, 1]]) # this sqrt converts it from areal scale to linear
+	# you can pull apart the cell definitions now
+	cell_hs = cell_definitions[:, 0]
+	cell_is = cell_definitions[:, 1]
+	cell_js = cell_definitions[:, 2]
+	cell_node1_is = cell_definitions[:, 3]
+	cell_node2_is = cell_definitions[:, 4]
+	cell_definitions = cell_definitions[:, 5:]
 
-	return cell_definitions[:, -7:], cell_weights, cell_scales
+	# finally, calculate their areas and stuff
+	A_1 = dΦ[cell_node1_is]*dΛ[cell_node1_is]
+	A_2 = dΦ[cell_node2_is]*dΛ[cell_node2_is]
+	cell_areas = (3*A_1 + A_2)/16/(4*np.pi*EARTH.R**2)
+
+	cell_weights = cell_areas*values[cell_hs, cell_is, cell_js]
+	cell_scales = np.sqrt(scales[cell_hs, cell_is, cell_js]) # this sqrt converts it from areal scale to linear
+
+	return cell_definitions, cell_weights, cell_scales
 
 
 def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
@@ -279,12 +295,16 @@ def load_options(filename: str) -> dict[str, str]:
 	return options
 
 
-def load_pixel_values(filename: str) -> np.ndarray:
+def load_pixel_values(filename: str, cut_set: str, num_sections: int, minimum=-inf) -> list[np.ndarray]:
 	""" load and resample a generic 2D raster image """
 	if filename == "uniform":
-		return np.array(1.)
+		return [np.array(1.)]*num_sections
 	else:
-		return tifffile.imread(f"../spec/pixels_{filename}.tif")
+		values = []
+		for h in range(num_sections):
+			values.append(np.maximum(
+				minimum, tifffile.imread(f"../spec/pixels_{cut_set}_{h}_{filename}.tif")))
+		return values
 
 
 def load_coastline_data(reduction=2) -> list[np.ndarray]:
@@ -439,10 +459,12 @@ def create_map_projection(configuration_file: str):
 	print(f"loaded options from {configuration_file}")
 	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
 	print(f"loaded a {np.sum(np.isfinite(mesh[:, :, :, 0]))}-node mesh")
-	scale = downsample(np.maximum(.03, load_pixel_values(configure["scale"])), mesh.shape[1:3])
+	scale = load_pixel_values(configure["scale"], configure["cuts"], mesh.shape[0], .03)
 	print(f"loaded the {configure['scale']} map as the scale")
-	weights = downsample(np.maximum(.03, load_pixel_values(configure["weights"])), mesh.shape[1:3])
+	weights = load_pixel_values(configure["weights"], configure["cuts"], mesh.shape[0], .03)
 	print(f"loaded the {configure['weights']} map as the weights")
+	width, height = (float(value) for value in configure["size"].split(","))
+	print(f"setting the maximum map size to {width}×{height} km")
 
 	# assume the coordinates are more or less evenly spaced
 	dΦ = EARTH.a*(1 - EARTH.e2)*(1 - EARTH.e2*np.sin(ф_mesh)**2)**(3/2)*(ф_mesh[1] - ф_mesh[0])
@@ -568,7 +590,7 @@ def create_map_projection(configuration_file: str):
 
 if __name__ == "__main__":
 	# create_map_projection("oceans")
-	# create_map_projection("continents")
-	create_map_projection("countries")
+	create_map_projection("continents")
+	# create_map_projection("countries")
 
 	plt.show()
