@@ -41,15 +41,6 @@ class Scalar:
 		return self.value * other
 
 
-h5_str = h5py.string_dtype(encoding='utf-8')
-""" a str type compatible with h5py """
-
-h5_xy_tuple = [("x", float), ("y", float)]
-""" an (x, y) type compatible with h5py """
-
-h5_фλ_tuple = [("latitude", float), ("longitude", float)]
-""" a (ф, λ) type compatible with h5py """
-
 EARTH = Ellipsoid(6_378.137, 1/298.257_223_563)
 """ the figure of the earth as given by WGS 84 """
 

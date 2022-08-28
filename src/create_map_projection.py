@@ -19,8 +19,13 @@ from cmap import CUSTOM_CMAP
 from elastik import gradient, smooth_interpolate
 from optimize import minimize
 from sparse import DenseSparseArray
-from util import dilate, h5_str, EARTH, index_grid, Scalar, inside_region, inside_polygon, interp, h5_xy_tuple, \
-	h5_фλ_tuple, simplify_path, refine_path
+from util import dilate, EARTH, index_grid, Scalar, inside_region, inside_polygon, interp, \
+	simplify_path, refine_path
+
+
+# some useful custom h5 datatypes
+h5_xy_tuple = [("x", float), ("y", float)]
+h5_фλ_tuple = [("latitude", float), ("longitude", float)]
 
 
 def get_bounding_box(points: np.ndarray) -> np.ndarray:
@@ -545,12 +550,11 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 		file.attrs["name"] = name
 		file.attrs["description"] = descript
 		file.attrs["num_sections"] = len(section_borders)
-		bbox_dset = file.create_dataset("bounding_box", shape=(2,), dtype=h5_xy_tuple)
-		bbox_dset.attrs["units"] = "km"
-		bbox_dset["x"] = [left, right]
-		bbox_dset["y"] = [bottom, top]
-		section_dset = file.create_dataset("sections", shape=(len(section_borders),), dtype=h5_str)
-		section_dset[:] = [f"section{i}" for i in range(len(section_borders))]
+		file.create_dataset("bounding_box", shape=(2,), dtype=h5_xy_tuple)
+		file["bounding_box"]["x"] = [left, right]
+		file["bounding_box"]["y"] = [bottom, top]
+		file["bounding_box"].attrs["units"] = "km"
+		file["sections"] = [f"section{i}" for i in range(len(section_borders))]
 
 		for h in range(len(section_borders)):
 			i_relevant = dilate(np.any(~np.isnan(mesh[h, :, :, 0]), axis=1), 1)
@@ -560,29 +564,27 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 
 			group = file.create_group(f"section{h}")
 			group.attrs["name"] = section_names[h]
-			ф_dset = group.create_dataset("latitude", shape=(num_ф,), dtype=float) # TODO: internationalize
-			ф_dset.make_scale("latitude")
-			ф_dset.attrs["units"] = "°"
-			ф_dset[:] = np.degrees(ф[i_relevant])
-			λ_dset = group.create_dataset("longitude", shape=(num_λ,), dtype=float)
-			λ_dset.make_scale("longitude")
-			λ_dset.attrs["units"] = "°"
-			λ_dset[:] = np.degrees(λ[j_relevant])
-			xy_dset = group.create_dataset("projection", shape=(num_ф, num_λ), dtype=h5_xy_tuple)
-			xy_dset.dims[0].attach_scale(ф_dset)
-			xy_dset.dims[1].attach_scale(λ_dset)
-			xy_dset.attrs["units"] = "km"
-			xy_dset["x"] = mesh[h, i_relevant][:, j_relevant, 0]
-			xy_dset["y"] = mesh[h, i_relevant][:, j_relevant, 1]
-			edge_dset = group.create_dataset("border", shape=section_borders[h].shape[0], dtype=h5_фλ_tuple)
-			edge_dset.attrs["units"] = "°"
-			edge_dset["latitude"] = np.degrees(section_borders[h][:, 0])
-			edge_dset["longitude"] = np.degrees(section_borders[h][:, 1])
+			group["latitude"] = np.degrees(ф[i_relevant]) # TODO: internationalize
+			group["latitude"].attrs["units"] = "°"
+			group["latitude"].make_scale()
+			group["longitude"] = np.degrees(λ[j_relevant])
+			group["longitude"].make_scale()
+			group["longitude"].attrs["units"] = "°"
+			group.create_dataset("projection", shape=(num_ф, num_λ), dtype=h5_xy_tuple)
+			group["projection"]["x"] = mesh[h, i_relevant][:, j_relevant, 0]
+			group["projection"]["y"] = mesh[h, i_relevant][:, j_relevant, 1]
+			group["projection"].attrs["units"] = "km"
+			group["projection"].dims[0].attach_scale(group["latitude"])
+			group["projection"].dims[1].attach_scale(group["longitude"])
+			group.create_dataset("border", shape=(section_borders[h].shape[0],), dtype=h5_фλ_tuple)
+			group["border"]["latitude"] = np.degrees(section_borders[h][:, 0])
+			group["border"]["longitude"] = np.degrees(section_borders[h][:, 1])
+			group["border"].attrs["units"] = "°"
 			((left, bottom), (right, top)) = get_bounding_box(mesh[h, :, :, :])
-			bbox_dset = group.create_dataset("bounding_box", shape=(2,), dtype=h5_xy_tuple)
-			bbox_dset.attrs["units"] = "km"
-			bbox_dset["x"] = [left, right]
-			bbox_dset["y"] = [bottom, top]
+			group.create_dataset("bounding_box", shape=(2,), dtype=h5_xy_tuple)
+			group["bounding_box"]["x"] = [left, right]
+			group["bounding_box"]["y"] = [bottom, top]
+			group["bounding_box"].attrs["units"] = "km"
 
 	# then save a simpler but larger and less explanatory txt file
 	raster_resolution = mesh.shape[1]
