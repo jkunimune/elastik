@@ -363,23 +363,41 @@ __declspec(dllexport) struct SparseArrayArray zeros(
  * create a SparseArrayArray where each element has a single 1 at an index matching its own index
  * @param ndim the number of dense dimensions and the number of sparse dimensions (half the total number of dimensions)
  * @param shape the shape of the SparseArrayArray, which is also the shape of each of its elements
+ * @param add_zero if the array is 1d, this will add an extra zero element
  */
 __declspec(dllexport) struct SparseArrayArray identity(
-        int ndim, const int shape[]) {
-    struct SparseArrayArray a = {.ndim=ndim};
+        int ndim, const int shape[], _Bool add_zero) {
+    int original_size = product(shape, ndim);
+
+    struct SparseArrayArray a = {.ndim=ndim, .size=original_size};
     a.shape = copy_of_ia(shape, ndim);
-    a.size = product(shape, ndim);
+
+    if (add_zero) {
+        if (ndim == 1) {
+            a.shape[0] += 1;
+            a.size += 1;
+        }
+        else
+            printf("Error! add_zero can only be used on 1d inputs.\n");
+    }
 
     // keep track of the index we're on as we iterate thru the SparseArrayArray
     a.elements = malloc(a.size*sizeof(struct SparseArray));
     int* index = calloc(a.ndim, sizeof(int));
     for (int i = 0; i < a.size; i ++) {
-        // create the single-value SparseArray
-        struct SparseArray element = {.ndim=ndim, .nitems=1};
-        element.indices = copy_of_ia(index, a.ndim);
-        element.values = malloc(sizeof(double));
-        element.values[0] = 1.;
-        a.elements[i] = element;
+        if (i < original_size) {
+		        // create the single-value SparseArray
+		        struct SparseArray element = {.ndim=ndim, .nitems=1};
+		        element.indices = copy_of_ia(index, a.ndim);
+		        element.values = malloc(sizeof(double));
+		        element.values[0] = 1.;
+		        a.elements[i] = element;
+        }
+        else {
+            // or create the null array if we're at that point
+            struct SparseArray zero = {.ndim=ndim, .nitems=0};
+            a.elements[i] = zero;
+        }
 
         // increment the index
         for (int k = a.ndim - 1; k >= 0; k --) {
@@ -394,6 +412,39 @@ __declspec(dllexport) struct SparseArrayArray identity(
     }
     free(index);
 
+    return a;
+}
+
+/**
+ * stack a series of 1dx1d SparseArrayArray verticly to create a new larger SparseArrayArray
+ * @param ndim the number of dense dimensions and the number of sparse dimensions (half the total number of dimensions)
+ * @param shape the shape of the SparseArrayArray, which is also the shape of each of its elements
+ */
+__declspec(dllexport) struct SparseArrayArray concatenate(
+        const struct SparseArrayArray* elements, int length) {
+    for (int j = 0; j < length; j ++) {
+        if (elements[j].ndim != 1) {
+            printf("Error!  concatenate only works with 1d SparseArrayArrays!\n");
+            struct SparseArrayArray null = {.ndim=0};
+            return null;
+        }
+    }
+    struct SparseArrayArray a = {.ndim=1};
+    a.shape = malloc(sizeof(int));
+    a.shape[0] = 0;
+    for (int j = 0; j < length; j ++)
+        a.shape[0] += elements[j].shape[0];
+    a.size = product(a.shape, a.ndim);
+
+    // keep track of the index we're on as we iterate thru the SparseArrayArray
+    a.elements = malloc(a.size*sizeof(struct SparseArray));
+    int i = 0;
+    for (int j = 0; j < length; j ++) {
+        for (int k = 0; k < elements[j].shape[0]; k ++) {
+	          a.elements[i] = copy_of_sa(elements[j].elements[k]);
+	          i ++;
+	      }
+	  }
     return a;
 }
 

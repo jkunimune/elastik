@@ -5,6 +5,12 @@
  interpolation on a mesh to minimize and control the distortion in maps of the
  whole Earth like never before.
 
+## Using the maps
+
+ The maps are defined, not with equations like most maps are, but with tables of coordinates that must be interpolated.
+ The tables are stored in two different formats.
+ The first format, which I recommend using, is HDF5. HDF5 (hierarchial data format) is a self-explanatory 
+
 ## Using the code
 
  Most of the code is python scripts that you can just run.

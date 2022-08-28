@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
-from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, cast
+from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, cast, c_bool
 from typing import Callable, Sequence, Collection
 
 import numpy as np
@@ -33,8 +33,13 @@ class c_SparseArrayArray(Structure):
 	            ("elements", c_void_p),
 	            ]
 
+c_SparseArrayArray_p = POINTER(c_SparseArrayArray)
+
 def c_int_array(lst: Sequence[int]) -> Array:
 	return (c_int*len(lst))(*lst)
+
+def c_SparseArrayArray_array(lst: Sequence[c_SparseArrayArray]) -> Array:
+	return (c_SparseArrayArray*len(lst))(*lst)
 
 def ndarray_from_c(data: c_ndarray, shape: Sequence[int]) -> np.ndarray:
 	c_array = np.ctypeslib.as_array(cast(data, POINTER(c_double)), shape=shape) # bild a np.ndarray around the existing memory
@@ -54,7 +59,8 @@ declare_c_func(c_lib.subtract_saa, [c_SparseArrayArray, c_SparseArrayArray], c_S
 declare_c_func(c_lib.multiply_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.matmul_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.zeros, [c_int, c_int_p, c_int], c_SparseArrayArray)
-declare_c_func(c_lib.identity, [c_int, c_int_p], c_SparseArrayArray)
+declare_c_func(c_lib.identity, [c_int, c_int_p, c_bool], c_SparseArrayArray)
+declare_c_func(c_lib.concatenate, [c_SparseArrayArray_p, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.new_saa, [c_int, c_int_p, c_int, c_int, c_int_ndarray, c_ndarray], c_SparseArrayArray)
 declare_c_func(c_lib.multiply_nda, [c_SparseArrayArray, c_ndarray, c_int_p], c_SparseArrayArray)
 declare_c_func(c_lib.divide_nda, [c_SparseArrayArray, c_ndarray, c_int_p], c_SparseArrayArray)
@@ -74,13 +80,17 @@ declare_c_func(c_lib.get_reindex_saa, [c_SparseArrayArray, c_int_p, c_int, c_int
 class DenseSparseArray:
 	def __init__(self, shape: Sequence[int], c_struct: c_SparseArrayArray):
 		""" an array that is dense on the first few axes and sparse on the others. """
-		self.shape = tuple(shape)
+		if tuple(shape[:c_struct.ndim]) != tuple(c_struct.shape[i] for i in range(c_struct.ndim)):
+			raise ValueError(f"the specified shape does not match the c object: {shape} vs {tuple(c_struct.shape[i] for i in range(c_struct.ndim))}")
 		self.ndim = len(shape)
+		self.shape = tuple(shape)
 		self.size = np.product(shape)
 		self.dense_ndim = c_struct.ndim
 		self.dense_shape = self.shape[:self.dense_ndim]
+		self.dense_size = np.product(self.dense_shape)
 		self.sparse_ndim = self.ndim - self.dense_ndim
 		self.sparse_shape = self.shape[self.dense_ndim:]
+		self.sparse_size = np.product(self.sparse_shape)
 		self._as_parameter_ = c_struct
 
 	def __del__(self):
@@ -95,18 +105,28 @@ class DenseSparseArray:
 		                                    c_int(len(sparse_shape))))
 
 	@staticmethod
-	def identity(shape: int | Sequence[int]) -> DenseSparseArray:
+	def identity(shape: int | Sequence[int], add_zero=False) -> DenseSparseArray:
 		""" return an array where the dense part of the shape is the same as the sparse
 		    part of the shape, and each sparse array contains a single 1 in the position
 		    corresponding to its own position in the dense array.  this is the output
 		    you would expect from identity(product(shape)).reshape((*shape, *shape)), but
 		    I don't want to implement reshape.
+		    :param shape: half the shape of the desired array (the shape of the space on which it operates)
+		    :param add_zero: if set to True, an extra row will be added that's just zeros
+		                     hey, sometimes that's useful!
 		"""
 		try:
 			shape = tuple(shape)
 		except TypeError:
 			shape = (shape,)
-		return DenseSparseArray(tuple(shape)*2, c_lib.identity(c_int(len(shape)), c_int_array(shape)))
+		if add_zero:
+			if len(shape) != 1:
+				raise ValueError("add_zero can only be set if the identity matrix is 2d")
+			return DenseSparseArray((shape[0] + 1, shape[0]),
+			                        c_lib.identity(c_int(1), c_int_array(shape), c_bool(True)))
+		else:
+			return DenseSparseArray(shape*2,
+			                        c_lib.identity(c_int(len(shape)), c_int_array(shape), c_bool(False)))
 
 	@staticmethod
 	def from_coordinates(sparse_shape: Sequence[int], indices: np.ndarray, values: np.ndarray) -> DenseSparseArray:
@@ -135,6 +155,28 @@ class DenseSparseArray:
 		                                      c_int(indices.shape[-1]),
 		                                      indices,
 		                                      values))
+
+	@staticmethod
+	def concatenate(elements: Sequence[DenseSparseArray]) -> DenseSparseArray:
+		""" create a densesparsearray by stacking some existing ones verticly """
+		corrected_elements = []
+		for element in elements:
+			if element.sparse_ndim != 1:
+				raise NotImplementedError("I only concatenate arrays with 1 sparse dim")
+			if element.ndim == 1:
+				corrected_elements.append(element.expand_dims(1))
+			elif element.ndim == 2:
+				corrected_elements.append(element)
+			else:
+				raise NotImplementedError("I only concatenate 2d arrays")
+		shape = [0, corrected_elements[0].shape[1]]
+		for element in corrected_elements:
+			shape[0] += element.shape[0]
+			if element.shape[1] != shape[1]:
+				raise ValueError("you can't stack matrices unless they have matching shapes.")
+		return DenseSparseArray(shape, c_lib.concatenate(
+			c_SparseArrayArray_array([element._as_parameter_ for element in corrected_elements]),
+			c_int(len(corrected_elements))))
 
 	def __add__(self, other: DenseSparseArray | np.ndarray | float) -> DenseSparseArray:
 		if type(other) is DenseSparseArray:
@@ -175,6 +217,9 @@ class DenseSparseArray:
 		else:
 			return NotImplemented
 
+	def __rmul__(self, other: DenseSparseArray | np.ndarray | float) -> DenseSparseArray:
+		return self * other
+
 	def __truediv__(self, other: np.ndarray | float) -> DenseSparseArray:
 		other = self.convert_arg_for_c(other)
 		if type(other) is np.ndarray:
@@ -208,12 +253,14 @@ class DenseSparseArray:
 				return c_double(other[()])
 			else:
 				raise IndexError(f"array shapes do not match: {self.shape} and {other.shape}")
-		elif type(other) is int or type(other) is float:
+		elif np.issubdtype(type(other), np.number):
 			return c_double(other)
 		else:
 			return NotImplemented
 
 	def __matmul__(self, other: DenseSparseArray | np.ndarray) -> DenseSparseArray | np.ndarray:
+		if not hasattr(other, "shape"):
+			return NotImplemented
 		if self.sparse_ndim != 1:
 			raise ValueError("I've only implemented matrix multiplication for matrices with exactly 1 sparse dim")
 		if self.shape[-1] != other.shape[0]:
@@ -234,7 +281,8 @@ class DenseSparseArray:
 
 	def __getitem__(self, index: tuple) -> DenseSparseArray:
 		if type(index) is not tuple:
-			raise NotImplementedError(f"this index is too complicated, {index!r}")
+			index = (index,)
+
 		# start by expanding any ...
 		for i in range(len(index)):
 			if index[i] is Ellipsis:
@@ -246,14 +294,19 @@ class DenseSparseArray:
 		shape = self.shape
 		result = self
 		for k in range(self.ndim - 1, -1, -1):
+			# slices do noting
 			if type(index[k]) is slice and index[k] == slice(None):
 				pass
+			# non-slices on sparse dims thro an error
 			elif k >= self.dense_ndim:
 				raise NotImplementedError(f"this SparseArray implementation does not support indexing on the sparse axis: {index}")
+			# int arrays rearrange an axis
 			elif type(index[k]) == np.ndarray:
 				if index[k].ndim == 1:
-					if np.issubdtype(index[k].dtype, np.bool):
-						indices = np.arange(self.shape[k])[index[k]]
+					if np.issubdtype(index[k].dtype, bool):
+						if index[k].size != shape[k]:
+							raise ValueError(f"the boolean array of length {index[k].size} doesn't match the axis length")
+						indices = np.nonzero(index[k])[0]
 					elif np.issubdtype(index[k].dtype, np.integer):
 						indices = index[k]
 					else:
@@ -262,10 +315,13 @@ class DenseSparseArray:
 					result = DenseSparseArray(shape, c_lib.get_reindex_saa(
 						result, c_int_array(indices), c_int(indices.size), c_int(k)))
 				else:
-					raise NotImplementedError("only 1D numpy ndarrays may be used to index")
-			elif type(index[k]) == int:
+					raise NotImplementedError("only 1d numpy ndarrays may be used to index")
+			# integers pull out particular slices/items
+			elif np.issubdtype(type(index[k]), np.integer):
+				item = np.core.multiarray.normalize_axis_index(index[k], shape[k])
 				shape = shape[:k] + shape[k+1:]
-				result = DenseSparseArray(shape, c_lib.get_slice_saa(result, c_int(index[k]), c_int(k)))
+				result = DenseSparseArray(shape, c_lib.get_slice_saa(result, c_int(item), c_int(k)))
+			# anything else is illegal
 			else:
 				raise NotImplementedError(f"I can't do this index, {index[k]!r}")
 		return result
@@ -277,9 +333,21 @@ class DenseSparseArray:
 	def __array__(self) -> np.ndarray:
 		return ndarray_from_c(c_lib.to_dense(self, c_int_array(self.sparse_shape)), self.shape)
 
+	def to_array_array(self) -> np.ndarray:
+		""" convert all of the dense axes to numpy axes. the result is a numpy object array with dtype=DenseSparseArray
+		    where each of the elements has no dense axes. this is useful for using more numpy syntax that I don't want
+		    to program, but will be much slower than either a pure DenseSparseArray or a pure numpy ndarray.
+		"""
+		array = np.empty(self.dense_shape, dtype=DenseSparseArray)
+		for i in range(self.dense_size):
+			index = np.unravel_index(i, self.dense_shape)
+			array[index] = self[(*index, ...)]
+		return array
+
 	def expand_dims(self, ndim: int):
-		""" add several new dimensions to the front of this's shape.  all new dimensions
-		    will have shape zero
+		""" add several new dense dimensions to the front of this's shape.  all new
+		    dimensions will have shape 1.
+		    :param ndim: the number of dimensions to add to the front.
 		"""
 		if ndim == 0:
 			return self
@@ -287,7 +355,7 @@ class DenseSparseArray:
 			return DenseSparseArray((1,)*ndim + self.shape, c_lib.expand_dims(self, ndim))
 
 	def sum(self, axis: Collection[int] | int | None) -> DenseSparseArray | np.ndarray:
-		if type(axis) is int:
+		if np.issubdtype(type(axis), np.integer):
 			axis = [axis]
 		if np.any(np.less(axis, 0)) or np.any(np.greater_equal(axis, self.ndim)):
 			raise ValueError("all of the axes must be nonnegative (sorry)")
@@ -374,5 +442,7 @@ if __name__ == "__main__":
 	print("(AB)C = ", (amatrix @ bmatrix) @ cmatrix)
 	print("A(BC) = ", amatrix @ (bmatrix @ cmatrix))
 
-	eyes = DenseSparseArray.identity(([4, 2]))
+	eyes = DenseSparseArray.identity([4, 2])
 	print(eyes)
+
+	print(DenseSparseArray.identity(3, add_zero=True))

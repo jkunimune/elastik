@@ -196,7 +196,7 @@ class Variable:
 def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
              guess: np.ndarray,
              tolerance: float,
-             bounds: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
+             bounds: list[tuple[np.ndarray, np.ndarray | list[float], np.ndarray | list[float]]] = None,
              report: Callable[[np.ndarray, float, np.ndarray, np.ndarray, bool], None] = None,
              backup_func: Callable[[np.ndarray | Variable], float | Variable] = None,
              ) -> np.ndarray:
@@ -271,7 +271,7 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 	value = initial_value
 	state = guess
 	step = np.zeros_like(state)
-	# and with the step size parameter set to unity
+	# and with the step size parameter set
 	step_size = STEP_MAXIMUM
 	# descend until we can't descend any further
 	num_line_searches = 0

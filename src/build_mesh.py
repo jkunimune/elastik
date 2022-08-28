@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 
-from util import bin_index, bin_centers, wrap_angle, EARTH
+from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, interp
 
 
 # locations of various straits that should be shown continuously
@@ -90,24 +90,7 @@ class Section:
 		included = Section.cells_touched(x_edges, y_edges, self.border)
 
 		# then do a simple polygon inclusion test
-		x_centers = bin_centers(x_edges)
-		for j in range(y_edges.size - 1):
-			y = (y_edges[j] + y_edges[j + 1])/2
-			x_crossings = []
-			for k in range(self.border.shape[0] - 1): # check each segment
-				x0, y0 = self.border[k, :]
-				x1, y1 = self.border[k + 1, :]
-				crosses = (y0 >= y) != (y1 >= y) # to see if it crosses this ray
-				if abs(y1 - y0) > math.pi:
-					crosses = not crosses # remember to account for wrapping
-				if crosses:
-					x_crossings.append((y - y0)/(y1 - y0)*(x1 - x0) + x0)
-			x_crossings = np.sort(x_crossings)
-			if self.glue_pole > 0:
-				num_crossings = np.sum(x_crossings[None, :] > x_centers[:, None], axis=1) # count the crossings
-			else:
-				num_crossings = np.sum(x_crossings[None, :] < x_centers[:, None], axis=1) # from the glue pole
-			included[:, j] |= num_crossings%2 == 1 # and apply the even/odd rule
+		included |= inside_region(bin_centers(x_edges), bin_centers(y_edges), self.border, period=2*math.pi)
 
 		return included
 
@@ -224,7 +207,7 @@ class Section:
 			i1 = bin_index(x1, x_values)
 			i_crossings = np.arange(i0, i1 + 1)
 			x_crossings = x_values[i_crossings]
-			y_crossings = np.interp(x_crossings, [x0, x1], [y0, y1])
+			y_crossings = interp(x_crossings, x0, x1, y0, y1)
 			j_crossings = bin_index(y_crossings, y_edges)
 			return i_crossings, j_crossings
 		else:

@@ -13,6 +13,8 @@ import numpy as np
 import shapefile
 from matplotlib import pyplot as plt
 
+from sparse import DenseSparseArray
+
 
 Line = list[tuple[float, float]]
 
@@ -62,9 +64,9 @@ def inverse_project(points: np.ndarray, mesh: list[Section]) -> list[Line]:
 	pass
 
 
-def interpolate(xs: Sequence[float], x_grids: Sequence[np.ndarray],
-                z_grid: np.ndarray, dzdx_grids: Sequence[np.ndarray],
-                differentiate=None) -> float:
+def smooth_interpolate(xs: Sequence[float | np.ndarray], x_grids: Sequence[np.ndarray],
+                       z_grid: np.ndarray | DenseSparseArray, dzdx_grids: Sequence[np.ndarray | DenseSparseArray],
+                       differentiate=None) -> float | np.ndarray | DenseSparseArray:
 	""" perform a bi-cubic interpolation of some quantity on a grid, using precomputed gradients
 	    :param xs: the location vector that specifies where on the grid we want to look
 	    :param x_grids: the x values at which the output is defined (each x_grid should be 1d)
@@ -82,9 +84,9 @@ def interpolate(xs: Sequence[float], x_grids: Sequence[np.ndarray],
 	ndim = len(xs)
 	key = [np.interp(x, x_grid, np.arange(x_grid.size)) for x, x_grid in zip(xs, x_grids)]
 	value_weits, slope_weits = [], []
-	for k, i in enumerate(key):
-		ξ, ξ2, ξ3 = i%1., (i%1.)**2, (i%1.)**3
-		i = key[k] = np.floor(i).astype(int)
+	for k, i_full in enumerate(key):
+		i = key[k] = np.minimum(np.floor(i_full).astype(int), x_grids[k].size - 2)
+		ξ, ξ2, ξ3 = i_full - i, (i_full - i)**2, (i_full - i)**3
 		dx = x_grids[k][i + 1] - x_grids[k][i]
 		if differentiate is None or differentiate != k:
 			value_weits.append([2*ξ3 - 3*ξ2 + 1, -2*ξ3 + 3*ξ2])
@@ -119,34 +121,40 @@ def gradient(Y: np.ndarray, x: np.ndarray, where: np.ndarary, axis: int) -> np.n
 	                  centerd at such points will be markd as nan.
 	    :param axis: the axis along which to take the gradient
 	"""
-	if Y.shape != where.shape:
+	if Y.shape[:where.ndim] != where.shape:
 		raise ValueError("where must have the same shape as Y")
 	# get ready for some numpy nonsense
 	i = np.arange(x.size)
 	# I roll the axes of Y such that the desired axis is axis 0
-	where = where.transpose(np.roll(np.arange(Y.ndim), -axis))
-	Y = Y.transpose(np.roll(np.arange(Y.ndim), -axis))
+	new_axis_order = np.roll(np.arange(where.ndim), -axis)
+	where = where.transpose(new_axis_order)
+	Y = Y.transpose(np.concatenate([new_axis_order, np.arange(where.ndim, Y.ndim)]))
 	# I add some nans to the end of axis 0 so that I don't haff to worry about index issues
-	where = np.pad(where, [(0, 2), *[(0, 0)]*(Y.ndim - 1)], constant_values=False)
+	where = np.pad(where, [(0, 2), *[(0, 0)]*(where.ndim - 1)], constant_values=False)
 	Y = np.pad(Y, [(0, 2), *[(0, 0)]*(Y.ndim - 1)], constant_values=np.nan)
 	x = np.pad(x, [(0, 2)], constant_values=np.nan)
 	# I set it up to broadcast properly
 	while x.ndim < Y.ndim:
 		x = np.expand_dims(x, axis=1)
+
 	# then do this colossal nested where-statement
-	grad = np.where(where[i - 1, ...],
-	                np.where(where[i + 1, ...],
-	                         (Y[i + 1, ...] - Y[i - 1, ...])/(x[i + 1] - x[i - 1]),
-	                         np.where(where[i - 2, ...],
-	                                  (3*Y[i, ...] - 4*Y[i - 1, ...] + Y[i - 2, ...])/(x[i] - x[i - 2]),
-	                                  (Y[i, ...] - Y[i - 1, ...])/(x[i] - x[i - 1]))),
-	                np.where(where[i + 1, ...],
-	                         np.where(where[i + 2, ...],
-	                                  (3*Y[i, ...] - 4*Y[i + 1, ...] + Y[i + 2, ...])/(x[i] - x[i + 2]),
-	                                  (Y[i, ...] - Y[i + 1, ...])/(x[i] - x[i + 1])),
-	                         np.nan))
-	grad = grad.transpose(np.roll(np.arange(Y.ndim), axis))
-	return grad
+	centered_2nd = where[i, ...] &  where[i - 1, ...] &  where[i + 1, ...]
+	backward_2nd = where[i, ...] &  where[i - 1, ...] & ~where[i + 1, ...] &  where[i - 2, ...]
+	backward_1st = where[i, ...] &  where[i - 1, ...] & ~where[i + 1, ...] & ~where[i - 2, ...]
+	forward_2nd =  where[i, ...] & ~where[i - 1, ...] &  where[i + 1, ...] &  where[i + 2, ...]
+	forward_1st =  where[i, ...] & ~where[i - 1, ...] &  where[i + 1, ...] & ~where[i + 2, ...]
+	grad = np.empty(Y[i, ...].shape, dtype=Y.dtype)
+	methods = [(centered_2nd, (Y[i + 1, ...] - Y[i - 1, ...])/(x[i + 1] - x[i - 1])),
+	           (backward_2nd, (3*Y[i, ...] - 4*Y[i - 1, ...] + Y[i - 2, ...])/(x[i] - x[i - 2])),
+	           (backward_1st, (Y[i, ...] - Y[i - 1, ...])/(x[i] - x[i - 1])),
+	           (forward_2nd, (3*Y[i, ...] - 4*Y[i + 1, ...] + Y[i + 2, ...])/(x[i] - x[i + 2])),
+	           (forward_1st, (Y[i, ...] - Y[i + 1, ...])/(x[i] - x[i + 1]))]
+	for condition, formula in methods:
+		grad[condition, ...] = formula[condition, ...]
+
+	# finally, reset the axes
+	old_axis_order = np.roll(np.arange(where.ndim), axis)
+	return grad.transpose(np.concatenate([old_axis_order, np.arange(where.ndim, Y.ndim)]))
 
 
 def product(values: Iterable[np.ndarray | float | int]) -> np.ndarray | float | int:
@@ -196,10 +204,10 @@ class Section:
 
 	def get_planar_coordinates(self, ф: np.ndarray | float, λ: np.ndarray | float) -> tuple[np.ndarray | float, np.ndarray | float]:
 		""" take a point on the sphere and smoothly interpolate it to x and y """
-		return (interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-		                    self.x_nodes, (self.dxdф_nodes, self.dxdλ_nodes)),
-		        interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-		                    self.y_nodes, (self.dydф_nodes, self.dydλ_nodes)))
+		return (smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
+		                           self.x_nodes, (self.dxdф_nodes, self.dxdλ_nodes)),
+		        smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
+		                           self.y_nodes, (self.dydф_nodes, self.dydλ_nodes)))
 
 
 	def get_planar_gradients(self, ф: np.ndarray | float, λ: np.ndarray | float) -> np.ndarray:
@@ -207,14 +215,14 @@ class Section:
 		    coordinates with respect to its spherical ones
 		"""
 		return np.array([[
-			interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-			            self.x_nodes, (self.dxdф_nodes, self.dxdλ_nodes), differentiate=0),
-			interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-			            self.x_nodes, (self.dxdф_nodes, self.dxdλ_nodes), differentiate=1),
-			interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-			            self.y_nodes, (self.dydф_nodes, self.dydλ_nodes), differentiate=0),
-			interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-			            self.y_nodes, (self.dydф_nodes, self.dydλ_nodes), differentiate=1)]])
+			smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
+			                   self.x_nodes, (self.dxdф_nodes, self.dxdλ_nodes), differentiate=0),
+			smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
+			                   self.x_nodes, (self.dxdф_nodes, self.dxdλ_nodes), differentiate=1),
+			smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
+			                   self.y_nodes, (self.dydф_nodes, self.dydλ_nodes), differentiate=0),
+			smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
+			                   self.y_nodes, (self.dydф_nodes, self.dydλ_nodes), differentiate=1)]])
 
 	def contains(self, ф: np.ndarray | float, λ: np.ndarray | float) -> np.ndarray | bool:
 		nearest_segment = np.full(np.shape(ф), np.inf)

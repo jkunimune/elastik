@@ -14,7 +14,8 @@ import numpy as np
 import os
 import tifffile
 
-from util import bin_centers, bin_index
+from util import bin_centers, bin_index, simplify_path
+
 
 # how many pixels per degree
 RESOLUTION = 5
@@ -59,19 +60,6 @@ def index_of(pair: tuple, x: np.ndarray, y: np.ndarray) -> int:
 		return np.nonzero((pair[0] == x) & (pair[1] == y))[0][0]
 	else:
 		return -1
-
-
-def simplify(path: Path) -> None:
-	""" simplify a path in-place such that strait segments have no redundant midpoints
-	    marked in them
-	"""
-	for k in range(path.len - 2, 0, -1):
-		direction1 = np.arctan2(path.j[k + 1] - path.j[k], path.i[k + 1] - path.i[k])
-		direction0 = np.arctan2(path.j[k] - path.j[k - 1], path.i[k] - path.i[k - 1])
-		if direction1 == direction0:
-			path.i.pop(k)
-			path.j.pop(k)
-			path.len -= 1
 
 
 def check_wrapping(points: np.ndarray) -> np.ndarray:
@@ -165,7 +153,7 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | np.nd
 		# if it reached a goal, we're all done here
 		if index_of(path.end, i_ends, j_ends) != -1:
 			plt.close("all")
-			simplify(path)
+			simplify_path([(i, j) for i, j in zip(path.i, path.j)])
 			return np.stack([x_nodes[path.i], y_nodes[path.j]], axis=-1)
 		# otherwise, check that no one has beat it here
 		i, j = path.end
