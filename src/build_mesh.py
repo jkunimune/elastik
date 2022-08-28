@@ -255,15 +255,13 @@ def load_sections(filename: str) -> list[Section]:
 	data = np.radians(np.loadtxt(filename))
 	cut_tripoint = data[0, :]
 	starts = np.nonzero((data[:, 0] == cut_tripoint[0]) & (data[:, 1] == cut_tripoint[1]))[0]
+	endpoints = np.concatenate([starts, [None]])
 	cuts = []
-	for l in range(starts.size):
-		try:
-			cuts.append(data[starts[l]:starts[l + 1]])
-		except IndexError:
-			cuts.append(data[starts[l]:])
+	for h in range(starts.size):
+		cuts.append(data[endpoints[h]:endpoints[h + 1]])
 	sections = []
-	for l in range(len(cuts)):
-		sections.append(Section(cuts[l], cuts[(l + 1)%len(cuts)], cut_tripoint[0] < 0))
+	for h in range(len(cuts)):
+		sections.append(Section(cuts[h - 1], cuts[h], cut_tripoint[0] < 0))
 	return sections
 
 
@@ -377,7 +375,7 @@ def build_mesh(name: str, resolution: int):
 
 
 if __name__ == "__main__":
-	build_mesh("basic", 20)
-	# build_mesh("oceans", 20)
+	# build_mesh("basic", 20)
+	build_mesh("oceans", 20)
 	# build_mesh("mountains", 20)
 	plt.show()
