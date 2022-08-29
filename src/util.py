@@ -101,19 +101,20 @@ def simplify_path(path: list[Iterable[float]] | np.ndarray | DenseSparseArray) -
 			return len(path)
 
 	for i in range(num_points() - 2, 0, -1):
-		r0 = path[i - 1, ...]
-		r1 = path[i, ...]
-		r2 = path[i + 1, ...]
+		if i + 1 < num_points():
+			r0 = path[i - 1, ...]
+			r1 = path[i, ...]
+			r2 = path[i + 1, ...]
 
-		# start by looking for retraced segments
-		if np.array_equal(r0, r2):
-			index = np.concatenate([np.arange(i), np.arange(i + 2, num_points())])
-			path = path[index, ...]
+			# start by looking for retraced segments
+			if np.array_equal(r0, r2):
+				index = np.concatenate([np.arange(i), np.arange(i + 2, num_points())])
+				path = path[index, ...]
 
-		# then try to simplify the lines
-		elif np.array_equal(normalize(np.subtract(r2, r1)), normalize(np.subtract(r1, r0))):
-			index = np.concatenate([np.arange(i), np.arange(i + 1, num_points())])
-			path = path[index, ...]
+			# then try to simplify the lines
+			elif np.array_equal(normalize(np.subtract(r2, r1)), normalize(np.subtract(r1, r0))):
+				index = np.concatenate([np.arange(i), np.arange(i + 1, num_points())])
+				path = path[index, ...]
 
 	return path
 

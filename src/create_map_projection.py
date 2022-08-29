@@ -6,7 +6,7 @@ take a basic mesh and optimize it according to a particular cost function in ord
 create a new Elastic Projection.
 """
 import traceback
-from math import inf, pi, log2
+from math import inf, pi, log2, nan
 
 import h5py
 import numpy as np
@@ -359,7 +359,7 @@ def project(points: list[tuple[float, float]] | np.ndarray, ф_mesh: np.ndarray,
 
 
 def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray,
-                    nodes: np.ndarray, section_borders: np.ndarray = None, section_index: int = None) -> DenseSparseArray | np.ndarray:
+                    nodes: np.ndarray, section_borders: list[np.ndarray] = None, section_index: int = None) -> DenseSparseArray | np.ndarray:
 	""" take some points, specifying a section of the map projection, and project them from the plane back to the globe,
 	    representing the result as the resulting latitudes and longitudes
 	    :param ф_mesh: the latitudes at which the map position is defined
@@ -378,9 +378,10 @@ def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray
 		hs = range(nodes.shape[0])
 
 	# do each point one at a time, since this doesn't need to be super fast
-	result = np.full(points.shape, np.nan)
+	sectioned_results = np.full((len(hs),) + points.shape, nan)
 	for point_index, point in enumerate(points.reshape((-1, 2))):
-		print(f"{point_index}/{points.size//2}")
+		point_index = np.unravel_index(point_index, points.shape[:-1])
+		print(f"{point_index}/{points.shape[:-1]}")
 		for h in hs:
 			for i in range(1, nodes.shape[1]):
 				for j in range(1, nodes.shape[2]):
@@ -392,19 +393,35 @@ def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray
 						ne = nodes[h, i, j]
 						if inside_polygon(*point, np.array([ne, nw, sw, se]), convex=True):
 							# do inverse 2d linear interpolation (it's harder than one mite expect!)
-							coords = [np.nan, np.nan]
-							for d in [0, 1]:
-								for f, axis, index, corners in [(0, ф_mesh, i, [[sw, se], [nw, ne]]), (1, λ_mesh, j, [[sw, nw], [se, ne]])]:
-									if not axis[index - 1] < coords[0] < axis[index]:
-										y0 = interp(point[d], corners[0][0][d], corners[0][1][d], corners[0][0][1 - d], corners[0][1][1 - d])
-										y1 = interp(point[d], corners[1][0][d], corners[1][1][d], corners[1][0][1 - d], corners[1][1][1 - d])
-										coords[f] = interp(point[1 - d], y0, y1, ф_mesh[i - 1], ф_mesh[i])
-							ф, λ = coords
-							# make sure the result is in this section
-							if section_borders is not None and inside_region(ф, λ, section_borders[h], period=2*pi):
-								result[np.reshape_index(point_index, points.shape[:-1]), :] = [ф, λ]
+							coords = [nan, nan]
+							things = [(0, ф_mesh, i, [[sw, se], [nw, ne]]), (1, λ_mesh, j, [[sw, nw], [se, ne]])]
+							for f, axis, index, corners in things:
+								for g in [0, 1]:
+									x, y = point[g], point[1 - g]
+									y0 = interp(x,
+									            corners[0][0][    g], corners[0][1][    g],
+									            corners[0][0][1 - g], corners[0][1][1 - g])
+									y1 = interp(x,
+									            corners[1][0][    g], corners[1][1][    g],
+									            corners[1][0][1 - g], corners[1][1][1 - g])
+									if (y0 < y) != (y1 < y):
+										coords[f] = interp(y, y0, y1, axis[index - 1], axis[index])
+										break
+							sectioned_results[h, point_index, :] = coords
 							break
-	return result.reshape(points.shape)
+
+	# deal with multiple possible projections for each point, if there were multiple sections given
+	if section_borders is not None:
+		result = np.full(points.shape, nan)
+		for h in hs:
+			inside_h = inside_region(sectioned_results[h, ..., 0],
+			                         sectioned_results[h, ..., 1],
+			                         section_borders[h], period=2*pi)
+			result[inside_h, :] = sectioned_results[h, inside_h, :]
+	else:
+		result = sectioned_results[0, ...]
+
+	return result
 
 
 def load_options(filename: str) -> dict[str, str]:
@@ -464,14 +481,14 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
               valu_axes: plt.Axes, diff_axes: plt.Axes) -> None:
 	map_axes.clear()
 	mesh = np.where(mesh_index[:, :, :, np.newaxis] != -1,
-	                all_positions[mesh_index, :], np.nan)
+	                all_positions[mesh_index, :], nan)
 	for h in range(mesh.shape[0]):
 		# plot the underlying mesh for each section
 		map_axes.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], f"#bbb", linewidth=.3) # TODO: zoom in and stuff?
 		map_axes.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, f"#bbb", linewidth=.3)
 		# project and plot the coastlines onto each section
 		project = RegularGridInterpolator([ф_mesh, λ_mesh], mesh[h, :, :, :],
-		                                  bounds_error=False, fill_value=np.nan)
+		                                  bounds_error=False, fill_value=nan)
 		for line in coastlines:
 			projected_line = project(line)
 			map_axes.plot(projected_line[:, 0], projected_line[:, 1], f"#000", linewidth=.8, zorder=2)
@@ -590,36 +607,34 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 	raster_resolution = mesh.shape[1]
 	x_raster = np.linspace(left, right, raster_resolution)
 	y_raster = np.linspace(bottom, top, raster_resolution)
-	projected_raster = np.full((raster_resolution, raster_resolution, 2), np.nan)
-	for h, section_border in enumerate(section_borders):
-		section = inverse_project(
-			np.transpose(np.meshgrid(x_raster, y_raster)),
-			ф, λ, mesh, section_index=h) # TODO: this needs to be a *lot* faster
-		inside = inside_region(section[:, :, 0], section[:, :, 1], section_border, period=2*pi)
-		projected_raster[inside, :] = section[inside, :]
+	projected_raster = inverse_project(
+		np.transpose(np.meshgrid(x_raster, y_raster)),
+		ф, λ, mesh, section_borders=section_borders) # TODO: this needs to be a *lot* faster
+	plt.pcolormesh(projected_raster[:, :, 0])
+	plt.show()
 
 	with open(f"../projection/elastik-{name}.csv", "w") as f:
 		f.write(f"elastik {name} projection ({mesh.shape[0]} sections):\n") # the number of sections
 		for h in range(mesh.shape[0]):
 			f.write(f"boundary ({section_borders[h].shape[0]} vertices):\n") # the number of section border vertices
 			for i in range(section_borders[h].shape[0]):
-				f.write(f"{section_borders[h][i, 0]:.10g},{section_borders[h][i, 1]:.10g}\n") # the section border vertices (°)
+				f.write(f"{section_borders[h][i, 0]:.6f},{section_borders[h][i, 1]:.6f}\n") # the section border vertices (°)
 			f.write(f"projection ({mesh.shape[1]}x{mesh.shape[2]} points):\n") # the shape of the section mesh
 			for i in range(mesh.shape[1]):
 				for j in range(mesh.shape[2]):
-					f.write(f"{mesh[h, i, j, 0]:.10g},{mesh[h, i, j, 1]:.10g}") # the section mesh points (km)
+					f.write(f"{mesh[h, i, j, 0]:.3f},{mesh[h, i, j, 1]:.3f}") # the section mesh points (km)
 					if j != mesh.shape[2] - 1:
 						f.write(", ")
 				f.write("\n")
 		f.write(f"projected boundary ({projected_border.shape[0]} vertices):\n") # the number of map edge vertices
 		for i in range(projected_border.shape[0]):
-			f.write(f"{projected_border[i, 0]:.10g},{projected_border[i, 1]:.10g}\n") # the map edge vertices (km)
+			f.write(f"{projected_border[i, 0]:.3f},{projected_border[i, 1]:.3f}\n") # the map edge vertices (km)
 		f.write(f"projected raster ({projected_raster.shape[0]}x{projected_raster.shape[1]}):\n") # the shape of the sample raster
 		f.write(f"{left}-{right}, {bottom}-{top}\n") # the bounding box of the sample raster
-		for i in range(projected_raster.shape[0]):
-			for j in range(projected_raster.shape[1]):
-				f.write(f"{projected_raster[i, j, 0]:.10g},{projected_raster[i, j, 1]:.10g}") # the sample raster (°)
-				if j != projected_raster.shape[1] - 1:
+		for j in range(projected_raster.shape[1]):
+			for i in range(projected_raster.shape[0]):
+				f.write(f"{projected_raster[i, j, 0]:.6f},{projected_raster[i, j, 1]:.6f}") # the sample raster (°)
+				if i != projected_raster.shape[0] - 1:
 					f.write(", ")
 			f.write("\n")
 
@@ -660,6 +675,8 @@ def create_map_projection(configuration_file: str):
 	# set up the fitting constraints that will force the map to fit inside a box
 	border_points = []
 	for h, border in enumerate(section_borders):
+		pole_index = np.nonzero(abs(border[:, 0]) == pi/2)[0][-1]
+		border = np.concatenate([border[pole_index:], border[:pole_index]])
 		border_points.append(project(refine_path(border, pi/10, period=2*pi),
 		                             ф_mesh, λ_mesh, node_indices, section_index=h))
 	plt.show()
@@ -762,7 +779,7 @@ def create_map_projection(configuration_file: str):
 
 	# apply the optimized vector back to the mesh
 	mesh = node_positions[node_indices, :]
-	mesh[node_indices == -1, :] = np.nan
+	mesh[node_indices == -1, :] = nan
 
 	# and save it!
 	save_mesh(configure["name"], configure["descript"],
