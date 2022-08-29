@@ -379,10 +379,10 @@ def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray
 
 	# do each point one at a time, since this doesn't need to be super fast
 	sectioned_results = np.full((len(hs),) + points.shape, nan)
-	for point_index, point in enumerate(points.reshape((-1, 2))):
-		point_index = np.unravel_index(point_index, points.shape[:-1])
-		print(f"{point_index}/{points.shape[:-1]}")
-		for h in hs:
+	for h in hs:
+		for point_index, point in enumerate(points.reshape((-1, 2))):
+			point_index = np.unravel_index(point_index, points.shape[:-1])
+			print(f"{point_index}/{points.shape[:-1]}")
 			for i in range(1, nodes.shape[1]):
 				for j in range(1, nodes.shape[2]):
 					# look for a cell that contains it
@@ -407,7 +407,7 @@ def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray
 									if (y0 < y) != (y1 < y):
 										coords[f] = interp(y, y0, y1, axis[index - 1], axis[index])
 										break
-							sectioned_results[h, point_index, :] = coords
+							sectioned_results[(h, *point_index, slice(None))] = coords
 							break
 
 	# deal with multiple possible projections for each point, if there were multiple sections given
@@ -417,6 +417,7 @@ def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray
 			inside_h = inside_region(sectioned_results[h, ..., 0],
 			                         sectioned_results[h, ..., 1],
 			                         section_borders[h], period=2*pi)
+			print(inside_h.shape)
 			result[inside_h, :] = sectioned_results[h, inside_h, :]
 	else:
 		result = sectioned_results[0, ...]
@@ -608,9 +609,9 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 	x_raster = np.linspace(left, right, raster_resolution)
 	y_raster = np.linspace(bottom, top, raster_resolution)
 	projected_raster = inverse_project(
-		np.transpose(np.meshgrid(x_raster, y_raster)),
+		np.transpose(np.meshgrid(x_raster, y_raster, indexing="xy")),
 		ф, λ, mesh, section_borders=section_borders) # TODO: this needs to be a *lot* faster
-	plt.pcolormesh(projected_raster[:, :, 0])
+	plt.pcolormesh(x_raster, y_raster, projected_raster[:, :, 0])
 	plt.show()
 
 	with open(f"../projection/elastik-{name}.csv", "w") as f:
@@ -631,8 +632,8 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 			f.write(f"{projected_border[i, 0]:.3f},{projected_border[i, 1]:.3f}\n") # the map edge vertices (km)
 		f.write(f"projected raster ({projected_raster.shape[0]}x{projected_raster.shape[1]}):\n") # the shape of the sample raster
 		f.write(f"{left}-{right}, {bottom}-{top}\n") # the bounding box of the sample raster
-		for j in range(projected_raster.shape[1]):
-			for i in range(projected_raster.shape[0]):
+		for i in range(projected_raster.shape[0]):
+			for j in range(projected_raster.shape[1]):
 				f.write(f"{projected_raster[i, j, 0]:.6f},{projected_raster[i, j, 1]:.6f}") # the sample raster (°)
 				if i != projected_raster.shape[0] - 1:
 					f.write(", ")
