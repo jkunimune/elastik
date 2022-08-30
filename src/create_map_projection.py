@@ -34,7 +34,7 @@ def get_bounding_box(points: np.ndarray) -> np.ndarray:
 	"""
 	return np.array([
 		[np.nanmin(points[..., 0]), np.nanmin(points[..., 1])],
-		[np.nanmax(points[..., 0]), np.nanmax(points[..., 1])], # TODO: account for the border, and for spline interpolation
+		[np.nanmax(points[..., 0]), np.nanmax(points[..., 1])],
 	])
 
 
@@ -417,7 +417,6 @@ def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray
 			inside_h = inside_region(sectioned_results[h, ..., 0],
 			                         sectioned_results[h, ..., 1],
 			                         section_borders[h], period=2*pi)
-			print(inside_h.shape)
 			result[inside_h, :] = sectioned_results[h, inside_h, :]
 	else:
 		result = sectioned_results[0, ...]
@@ -598,21 +597,19 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 			group["border"]["latitude"] = np.degrees(section_borders[h][:, 0])
 			group["border"]["longitude"] = np.degrees(section_borders[h][:, 1])
 			group["border"].attrs["units"] = "°"
-			((left, bottom), (right, top)) = get_bounding_box(mesh[h, :, :, :])
+			((left_h, bottom_h), (right_h, top_h)) = get_bounding_box(mesh[h, :, :, :])
 			group.create_dataset("bounding_box", shape=(2,), dtype=h5_xy_tuple)
-			group["bounding_box"]["x"] = [left, right]
-			group["bounding_box"]["y"] = [bottom, top]
+			group["bounding_box"]["x"] = [max(left, left_h), min(right, right_h)]
+			group["bounding_box"]["y"] = [max(bottom, bottom_h), min(top, top_h)]
 			group["bounding_box"].attrs["units"] = "km"
 
 	# then save a simpler but larger and less explanatory txt file
 	raster_resolution = mesh.shape[1]
 	x_raster = np.linspace(left, right, raster_resolution)
 	y_raster = np.linspace(bottom, top, raster_resolution)
-	projected_raster = inverse_project(
-		np.transpose(np.meshgrid(x_raster, y_raster, indexing="xy")),
-		ф, λ, mesh, section_borders=section_borders) # TODO: this needs to be a *lot* faster
-	plt.pcolormesh(x_raster, y_raster, projected_raster[:, :, 0])
-	plt.show()
+	projected_raster = np.degrees(inverse_project(
+		np.transpose(np.meshgrid(x_raster, y_raster, indexing="xy"), (1, 2, 0)),
+		ф, λ, mesh, section_borders=section_borders)) # TODO: this needs to be a *lot* faster
 
 	with open(f"../projection/elastik-{name}.csv", "w") as f:
 		f.write(f"elastik {name} projection ({mesh.shape[0]} sections):\n") # the number of sections
@@ -635,7 +632,7 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 		for i in range(projected_raster.shape[0]):
 			for j in range(projected_raster.shape[1]):
 				f.write(f"{projected_raster[i, j, 0]:.6f},{projected_raster[i, j, 1]:.6f}") # the sample raster (°)
-				if i != projected_raster.shape[0] - 1:
+				if j != projected_raster.shape[1] - 1:
 					f.write(", ")
 			f.write("\n")
 
