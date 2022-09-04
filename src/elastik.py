@@ -82,7 +82,11 @@ def smooth_interpolate(xs: Sequence[float | np.ndarray], x_grids: Sequence[np.nd
 	if len(xs) != len(x_grids) or len(x_grids) != len(dzdx_grids):
 		raise ValueError("the number of dimensions is not consistent")
 	ndim = len(xs)
+
+	# choose a cell in the grid
 	key = [np.interp(x, x_grid, np.arange(x_grid.size)) for x, x_grid in zip(xs, x_grids)]
+
+	# calculate the cubic-interpolation weits for the adjacent values and gradients
 	value_weits, slope_weits = [], []
 	for k, i_full in enumerate(key):
 		i = key[k] = np.minimum(np.floor(i_full).astype(int), x_grids[k].size - 2)
@@ -96,12 +100,16 @@ def smooth_interpolate(xs: Sequence[float | np.ndarray], x_grids: Sequence[np.nd
 			slope_weits.append([3*ξ2 - 4*ξ + 1, 3*ξ2 - 2*ξ])
 	value_weits = np.meshgrid(*value_weits, indexing="ij", sparse=True)
 	slope_weits = np.meshgrid(*slope_weits, indexing="ij", sparse=True)
-	index = tuple(np.meshgrid(*([i, i + 1] for i in key), indexing="ij", sparse=True))
 
-	weits = product(value_weits)
+	# get the indexing all set up correctly
+	index = tuple(np.meshgrid(*([i, i + 1] for i in key), indexing="ij", sparse=True))
+	full = (slice(None),)*len(xs) + (np.newaxis,)*(z_grid.ndim - len(xs))
+
+	# then multiply and combine all the things
+	weits = product(value_weits)[full]
 	result = np.sum(weits*z_grid[index], axis=tuple(range(ndim)))
 	for k in range(ndim):
-		weits = product(value_weits[:k] + [slope_weits[k]] + value_weits[k+1:])
+		weits = product(value_weits[:k] + [slope_weits[k]] + value_weits[k+1:])[full]
 		result += np.sum(weits*dzdx_grids[k][index], axis=tuple(range(ndim)))
 	return result
 
@@ -143,12 +151,14 @@ def gradient(Y: np.ndarray, x: np.ndarray, where: np.ndarary, axis: int) -> np.n
 	backward_1st = where[i, ...] &  where[i - 1, ...] & ~where[i + 1, ...] & ~where[i - 2, ...]
 	forward_2nd =  where[i, ...] & ~where[i - 1, ...] &  where[i + 1, ...] &  where[i + 2, ...]
 	forward_1st =  where[i, ...] & ~where[i - 1, ...] &  where[i + 1, ...] & ~where[i + 2, ...]
-	grad = np.empty(Y[i, ...].shape, dtype=Y.dtype)
+	impossible =  ~where[i, ...] | (~where[i - 1, ...] & ~where[i + 1, ...])
 	methods = [(centered_2nd, (Y[i + 1, ...] - Y[i - 1, ...])/(x[i + 1] - x[i - 1])),
 	           (backward_2nd, (3*Y[i, ...] - 4*Y[i - 1, ...] + Y[i - 2, ...])/(x[i] - x[i - 2])),
 	           (backward_1st, (Y[i, ...] - Y[i - 1, ...])/(x[i] - x[i - 1])),
 	           (forward_2nd, (3*Y[i, ...] - 4*Y[i + 1, ...] + Y[i + 2, ...])/(x[i] - x[i + 2])),
-	           (forward_1st, (Y[i, ...] - Y[i + 1, ...])/(x[i] - x[i + 1]))]
+	           (forward_1st, (Y[i, ...] - Y[i + 1, ...])/(x[i] - x[i + 1])),
+	           (impossible, np.nan*Y[i, ...])]
+	grad = np.empty(Y[i, ...].shape, dtype=Y.dtype)
 	for condition, formula in methods:
 		grad[condition, ...] = formula[condition, ...]
 

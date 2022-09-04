@@ -326,8 +326,18 @@ class DenseSparseArray:
 				raise NotImplementedError(f"I can't do this index, {index[k]!r}")
 		return result
 
+	def __len__(self) -> int:
+		if self.ndim > 0:
+			return self.shape[0]
+		else:
+			raise ValueError("this array is not an array and has no len")
+
 	def __str__(self) -> str:
-		indented = str(np.array(self)).replace('\n', '\n ')
+		if self.sparse_size < 100:
+			indented = str(np.array(self)).replace('\n', '\n ')
+		else:
+			raise NotImplementedError("I would like to have an abbreviated way to print out large matrices in the "
+			                          "future but don't just now.")
 		return f"{self.dense_shape}x{self.sparse_shape}:\n {indented}"
 
 	def __array__(self) -> np.ndarray:

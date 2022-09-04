@@ -90,45 +90,52 @@ def dilate(x: np.ndarray, distance: int) -> np.ndarray:
 		x[1:] |= x[:-1]
 	return x
 
-def simplify_path(path: list[Iterable[float]] | np.ndarray | DenseSparseArray) -> list[Iterable[float]] | np.ndarray | DenseSparseArray:
+def simplify_path(path: list[Iterable[float]] | np.ndarray | DenseSparseArray, cyclic=False) -> list[Iterable[float]] | np.ndarray | DenseSparseArray:
 	""" simplify a path in-place such that strait segments have no redundant midpoints
 	    marked in them, and it does not retrace itself
 	"""
-	def num_points():
-		try:
-			return path.shape[0]
-		except TypeError:
-			return len(path)
+	index = np.arange(len(path)) # instead of modifying the path directly, save some memory by just handling this index vector
 
-	for i in range(num_points() - 2, 0, -1):
-		if i + 1 < num_points():
-			r0 = path[i - 1, ...]
-			r1 = path[i, ...]
-			r2 = path[i + 1, ...]
+	# start by looking for simple duplicates
+	for i in range(index.size - 2, -1, -1):
+		if np.array_equal(path[index[i], ...],
+		                  path[index[i + 1], ...]):
+			index = np.concatenate([index[:i], index[i + 1:]])
+	while cyclic and np.array_equal(path[index[0], ...],
+	                                path[index[-1], ...]):
+		index = index[:-1]
 
-			# start by looking for retraced segments
-			if np.array_equal(r0, r2):
-				index = np.concatenate([np.arange(i), np.arange(i + 2, num_points())])
-				path = path[index, ...]
+	# then check for retraced segments
+	for i in range(index.size - 3, -1, -1):
+		if i + 1 < index.size:
+			if np.array_equal(path[index[i], ...],
+			                  path[index[i + 2], ...]):
+				index = np.concatenate([index[:i], index[i + 2:]])
+	while cyclic and np.array_equal(path[index[1], ...],
+	                                path[index[-1], ...]):
+		index = index[1:-1]
 
-			# then try to simplify the lines
-			elif np.array_equal(normalize(np.subtract(r2, r1)), normalize(np.subtract(r1, r0))):
-				index = np.concatenate([np.arange(i), np.arange(i + 1, num_points())])
-				path = path[index, ...]
+	# finally try to simplify over-resolved strait lines
+	for i in range(index.size - 3, -1, -1):
+		r0 = path[index[i], ...]
+		r1 = path[index[i + 1], ...]
+		r2 = path[index[i + 2], ...]
+		if np.array_equal(normalize(np.subtract(r2, r1)), normalize(np.subtract(r1, r0))):
+			index = np.concatenate([index[:i + 1], index[i + 2:]])
 
-	return path
+	return path[index, ...]
 
 
 def refine_path(path: list[tuple[float, float]] | np.ndarray, resolution: float, period=np.inf) -> np.ndarray:
 	""" add points to a path such that it has no segments longer than resolution """
-	i = 0
+	i = 1
 	while i < len(path):
 		x0, y0 = path[i - 1]
 		x1, y1 = path[i]
 		if abs(y1 - y0) <= period/2:
 			length = hypot(x1 - x0, y1 - y0)
 			if length > resolution:
-				path = np.concatenate([path[:i], [((x0 + x1)/2, (y0 + y1)/2)], path[i:]])
+				path = np.concatenate([path[:i], [((min(x0, x1) + max(x0, x1))/2, (min(y0, y1) + max(y0, y1))/2)], path[i:]])
 				i -= 1
 		i += 1
 	return path

@@ -284,14 +284,10 @@ def save_mesh(filename: str, ф: np.ndarray, λ: np.ndarray, nodes: np.ndarray, 
 	with h5py.File(filename, "w") as file:
 		file.attrs["num_sections"] = num_sections
 		for h in range(num_sections):
-			dset = file.create_dataset(f"section{h}/latitude", shape=(num_ф + 1))
-			dset[:] = np.degrees(ф)
-			dset = file.create_dataset(f"section{h}/longitude", shape=(num_λ + 1))
-			dset[:] = np.degrees(λ)
-			dset = file.create_dataset(f"section{h}/projection", shape=(num_ф + 1, num_λ + 1, 2))
-			dset[:, :, :] = nodes[h, :, :, :]
-			dset = file.create_dataset(f"section{h}/border", shape=sections[h].border.shape)
-			dset[:, :] = np.degrees(sections[h].border)
+			file.create_dataset(f"section{h}/latitude", data=np.degrees(ф))
+			file.create_dataset(f"section{h}/longitude", data=np.degrees(λ))
+			file.create_dataset(f"section{h}/projection", data=nodes[h, :, :, :])
+			file.create_dataset(f"section{h}/border", data=np.degrees(sections[h].border))
 
 
 def build_mesh(name: str, resolution: int):
