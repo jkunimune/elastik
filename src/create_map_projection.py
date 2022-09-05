@@ -20,7 +20,7 @@ from elastik import gradient, smooth_interpolate
 from optimize import minimize
 from sparse import DenseSparseArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, inside_polygon, interp, \
-	simplify_path, refine_path
+	simplify_path, refine_path, decimate_path
 
 
 # some useful custom h5 datatypes
@@ -491,7 +491,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 		                                  bounds_error=False, fill_value=nan)
 		for line in coastlines:
 			projected_line = project(line)
-			map_axes.plot(projected_line[:, 0], projected_line[:, 1], f"#063", linewidth=.8, zorder=2)
+			map_axes.plot(projected_line[:, 0], projected_line[:, 1], f"#000", linewidth=.8, zorder=2)
 		# plot the outline of the mesh
 		border_points = border @ all_positions
 		loop = np.arange(-1, border_points.shape[0])
@@ -561,7 +561,8 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 	assert len(section_borders) == len(section_names)
 
 	# start by calculating some things
-	((left, bottom), (right, top)) = get_bounding_box(projected_border) # TODO maybe reduce the number of points in the border where the curvature is small
+	projected_border = decimate_path(projected_border, resolution=10)
+	((left, bottom), (right, top)) = get_bounding_box(projected_border)
 
 	# do the self-explanatory HDF5 file
 	with h5py.File(f"../projection/elastik-{name}.h5", "w") as file:

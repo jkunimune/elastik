@@ -7,7 +7,6 @@ some handy utility functions that are used in multiple places
 from math import hypot, pi
 from typing import Sequence, Iterable
 
-import h5py
 import numpy as np
 
 from sparse import DenseSparseArray
@@ -68,8 +67,8 @@ def normalize(vector: Sequence[float]) -> Sequence[float]:
 		return np.divide(vector, abs(vector[np.argmax(np.abs(vector))]))
 
 def wrap_angle(x: float | np.ndarray) -> float | np.ndarray: # TODO: come up with a better name
-	""" wrap an angular value into the range [-np.pi, np.pi) """
-	return x - np.floor((x + np.pi)/(2*np.pi))*2*np.pi
+	""" wrap an angular value into the range [-pi, pi) """
+	return x - np.floor((x + pi)/(2*pi))*2*pi
 
 def to_cartesian(ф: float | np.ndarray, λ: float | np.ndarray) -> tuple[float | np.ndarray, float | np.ndarray, float | np.ndarray]:
 	""" convert spherical coordinates in degrees to unit-sphere cartesian coordinates """
@@ -89,6 +88,29 @@ def dilate(x: np.ndarray, distance: int) -> np.ndarray:
 		x[:-1] |= x[1:]
 		x[1:] |= x[:-1]
 	return x
+
+def decimate_path(path: list[tuple[float, float]] | np.ndarray, resolution: float) -> list[tuple[float, float]] | np.ndarray:
+	""" simplify a path in-place such that the number of nodes on each segment is only as
+	    many as needed to make the curves look nice, using Ramer-Douglas
+	"""
+	if len(path) <= 2:
+		return path
+	path = np.array(path)
+	xA, yA = path[0, :]
+	xB, yB = path[1:-1, :].T
+	xC, yC = path[-1, :]
+	ab = np.hypot(xB - xA, yB - yA)
+	ac = np.hypot(xC - xA, yC - yA)
+	ab_ac = (xB - xA)*(xC - xA) + (yB - yA)*(yC - yA)
+	distance = np.sqrt(np.maximum(0, ab**2 - (ab_ac/ac)**2))
+	if np.max(distance) < resolution:
+		return [(xA, yA), (xC, yC)]
+	else:
+		furthest = np.argmax(distance) + 1
+		decimated_head = decimate_path(path[:furthest + 1, :], resolution)
+		decimated_tail = decimate_path(path[furthest:, :], resolution)
+		return np.concatenate([decimated_head, decimated_tail])
+
 
 def simplify_path(path: list[Iterable[float]] | np.ndarray | DenseSparseArray, cyclic=False) -> list[Iterable[float]] | np.ndarray | DenseSparseArray:
 	""" simplify a path in-place such that strait segments have no redundant midpoints
