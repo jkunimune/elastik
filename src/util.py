@@ -59,7 +59,7 @@ def index_grid(shape: Sequence[int]) -> Sequence[np.ndarray]:
 	indices = [np.arange(length) for length in shape]
 	return np.meshgrid(*indices, indexing="ij")
 
-def normalize(vector: Sequence[float]) -> Sequence[float]:
+def normalize(vector: np.ndarray) -> Sequence[float]:
 	""" normalize a vector such that it can be compared to other vectors on the basis of direction alone """
 	if np.all(np.equal(vector, 0)):
 		return vector

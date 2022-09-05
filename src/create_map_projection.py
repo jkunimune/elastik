@@ -494,6 +494,8 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 			map_axes.plot(projected_line[:, 0], projected_line[:, 1], f"#000", linewidth=.8, zorder=2)
 		# plot the outline of the mesh
 		border_points = border @ all_positions
+		if final:
+			border_points = decimate_path(border_points, resolution=10)
 		loop = np.arange(-1, border_points.shape[0])
 		map_axes.plot(border_points[loop, 0], border_points[loop, 1], f"#000", linewidth=1.3, zorder=2)
 	if not final:
@@ -525,7 +527,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 	valu_axes.clear()
 	valu_axes.plot(values)
 	valu_axes.set_xlim(len(values) - 1000, len(values))
-	valu_axes.set_ylim(0, 3*values[-1])
+	valu_axes.set_ylim(0, 6*values[-1])
 	valu_axes.minorticks_on()
 	valu_axes.yaxis.set_tick_params(which='both')
 	valu_axes.grid(which="both", axis="y")
@@ -778,6 +780,7 @@ def create_map_projection(configuration_file: str):
 		raise e
 
 	print("end fitting process.")
+	small_fig.canvas.manager.set_window_title("Done!")
 
 	# apply the optimized vector back to the mesh
 	mesh = node_positions[node_indices, :]
@@ -793,8 +796,8 @@ def create_map_projection(configuration_file: str):
 
 
 if __name__ == "__main__":
-	# create_map_projection("oceans")
-	create_map_projection("continents")
+	create_map_projection("oceans")
+	# create_map_projection("continents")
 	# create_map_projection("countries")
 
 	plt.show()
