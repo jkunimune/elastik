@@ -15,6 +15,9 @@ from matplotlib import pyplot as plt
 from util import bin_centers, to_cartesian, inside_region
 
 
+FUDGE_FACTOR = 2 # some extra padding to put on the contiguus joints of the sections
+
+
 def load_coast_vertices(precision) -> list[tuple[float, float]]:
 	""" load the coastline shapefiles, including as many islands as we can, but not being
 	    too precise about the coastlines' exact shapes.
@@ -64,9 +67,15 @@ def load_cut_file(filename: str) -> list[np.ndarray]:
 	cuts = []
 	for h in range(len(section_indices) - 1):
 		cuts.append(cut_data[section_indices[h]:section_indices[h + 1]])
+	margin = FUDGE_FACTOR if cut_data[0][0] > 0 else -FUDGE_FACTOR
 	sections = []
 	for h in range(len(section_indices) - 1):
-		sections.append(np.concatenate([cuts[h - 1][::-1], cuts[h]]))
+		sections.append(np.concatenate([
+			[cuts[h - 1][-1, :] + [0, margin]],
+			cuts[h - 1][::-1],
+			cuts[h],
+			[cuts[h][-1, :] - [0, margin]],
+		]))
 	return sections
 
 

@@ -111,6 +111,15 @@ class Section:
 				shared[0, j - 1: j + 2] = False
 			elif x_endpoint == math.pi/2:
 				shared[-1, j - 1: j + 2] = False
+		# and this other edge case with cuts that pass in and out of the shared region
+		i = bin_index(self.cut_border[:, 0], x_edges)
+		j = bin_index(self.cut_border[:, 1], y_edges)
+		shared_points = shared[i, j]
+		emerging = np.nonzero(shared_points[:-1] & ~shared_points[1:])[0]
+		entering = np.nonzero(~shared_points[:-1] & shared_points[1:])[0] + 1
+		shared[i[emerging[1:]], j[emerging[1:]]] = False # (strike all re-exiting cells)
+		shared[i[entering[:-1]], j[entering[:-1]]] = False # (and all early-entering cells)
+
 		return shared
 
 
@@ -345,7 +354,8 @@ def build_mesh(name: str, resolution: int):
 		plt.figure(f"{name.capitalize()} mesh, section {h}")
 		plt.pcolormesh(λ, ф, np.where(include_cells, np.where(share_cells, 2, 1), 0))
 		plt.plot(section.border[:, 1], section.border[:, 0], "k")
-		plt.scatter(λ_center, ф_center, c="r")
+		plt.scatter(section.cut_border[[0, -1], 1], section.cut_border[[0, -1], 0], c="k", s=20)
+		plt.scatter(λ_center, ф_center, c="k", s=50)
 
 	share_nodes = expand_bool_array(share_cells)
 

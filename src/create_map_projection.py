@@ -120,7 +120,7 @@ def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray], scales: 
 	                               indices (the section index, the two indices specifying
 	                               its location the matrix, and the indices of the four
 	                               vertex nodes (two of them are probably the same node)
-	                               in the node vector
+	                               in the node vector in the order: west, east, south, north
 	             cell_weights: the volume of each cell for elastic-energy-summing porpoises
 	             cell_scales: the desired relative linear scale factor for each cell
 
@@ -138,6 +138,7 @@ def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray], scales: 
 	                      node_indices.shape[2] - 1))
 	h, i, j = h.ravel(), i.ravel(), j.ravel()
 	cell_definitions = np.empty((0, 12), dtype=int)
+	cell_values = np.empty((0,), dtype=float)
 	for di in range(0, 2):
 		for dj in range(0, 2):
 			# define them by their indices and neiboring node indices
@@ -151,15 +152,21 @@ def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray], scales: 
 					      h, i + di, j + dj, # these middle three are for generic spacially dependent stuff
 				          west_node, east_node, # these bottom four are the really important indices
 				          south_node, north_node], axis=-1)])
+			cell_values = np.concatenate([
+				cell_values,
+				values[h, i, j]
+			])
 
 	# then remove all duplicates
-	_, unique_indices = np.unique(cell_definitions[:, -4:], axis=0, return_index=True)
+	_, unique_indices, final_indices = np.unique(cell_definitions[:, -4:], axis=0, return_index=True, return_inverse=True)
+	cell_values, _ = np.histogram(final_indices, np.arange(final_indices.max() + 2), weights=cell_values) # make sure to add corresponding cell values
 	cell_definitions = cell_definitions[unique_indices, :]
 
 	# and remove the ones that rely on missingnodes or that rely on the poles too many times
 	missing_node = np.any(cell_definitions[:, -4:] == -1, axis=1)
 	degenerate = cell_definitions[:, -4] == cell_definitions[:, -3]
 	cell_definitions = cell_definitions[~(missing_node | degenerate), :]
+	cell_values = cell_values[~(missing_node | degenerate)]
 
 	# you can pull apart the cell definitions now
 	cell_hs = cell_definitions[:, 0]
@@ -174,7 +181,7 @@ def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray], scales: 
 	A_2 = dΦ[cell_node2_is]*dΛ[cell_node2_is]
 	cell_areas = (3*A_1 + A_2)/16/(4*np.pi*EARTH.R**2)
 
-	cell_weights = cell_areas*values[cell_hs, cell_is, cell_js]
+	cell_weights = cell_areas*np.minimum(1, cell_values)
 	cell_scales = np.sqrt(scales[cell_hs, cell_is, cell_js]) # this sqrt converts it from areal scale to linear
 
 	return cell_definitions, cell_weights, cell_scales
