@@ -7,6 +7,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// I think that this is necessary to make it portable?  idk; if Python was bilt on any half-
+// decent programming language then these simple calculations would be portable by default.
+#ifdef _WIN32
+#   define EXPORT __declspec(dllexport)
+#else
+#   define EXPORT
+#endif
+
 /**
  * a binary operator that works on array-likes
  */
@@ -74,6 +82,26 @@ __declspec(dllexport) void free_saa(
  */
 __declspec(dllexport) void free_nda(double* a) {
     free(a);
+}
+
+/**
+ * this is just the free function, but I want to have it in my own library
+ */
+EXPORT void free_char_p(char* data) {
+	  free(data);
+}
+
+/**
+ * concatenate two strings, automaticly allocating enough space for their combination,
+ * and automaticly freeing the inputs.
+ */
+char* concatenate_and_free_strings(char* first, char* twoth) {
+    char* output = malloc((strlen(first) + strlen(twoth) + 1)*sizeof(char));
+    strcpy(output, first);
+    free(first);
+    strcat(output, twoth);
+    free(twoth);
+    return output;
 }
 
 /**
@@ -272,17 +300,17 @@ struct SparseArrayArray elementwise_saa(enum Operator operator,
     return c;
 }
 
-__declspec(dllexport) struct SparseArrayArray add_saa(
+EXPORT struct SparseArrayArray add_saa(
         struct SparseArrayArray a, struct SparseArrayArray b) {
     return elementwise_saa(ADD, a, b);
 }
 
-__declspec(dllexport) struct SparseArrayArray subtract_saa(
+EXPORT struct SparseArrayArray subtract_saa(
         struct SparseArrayArray a, struct SparseArrayArray b) {
     return elementwise_saa(SUBTRACT, a, b);
 }
 
-__declspec(dllexport) struct SparseArrayArray multiply_saa(
+EXPORT struct SparseArrayArray multiply_saa(
         struct SparseArrayArray a, struct SparseArrayArray b) {
     return elementwise_saa(MULTIPLY, a, b);
 }
@@ -292,7 +320,7 @@ __declspec(dllexport) struct SparseArrayArray multiply_saa(
  * @param a a SparseArrayArray with a single sparse dimension
  * @param b a SparseArrayArray with a single dense dimension
  */
-__declspec(dllexport) struct SparseArrayArray matmul_saa(
+EXPORT struct SparseArrayArray matmul_saa(
         struct SparseArrayArray a, struct SparseArrayArray b) {
     if (b.ndim < 1) {
         printf("Error! the second matrix needs at least one dense dim that I can line up with a's sparse dim.\n");
@@ -346,7 +374,7 @@ __declspec(dllexport) struct SparseArrayArray matmul_saa(
  * @param sparse_shape
  * @return
  */
-__declspec(dllexport) struct SparseArrayArray zeros(
+EXPORT struct SparseArrayArray zeros(
         int dense_ndim, int dense_shape[], int sparse_ndim) {
     struct SparseArrayArray a = {.ndim=dense_ndim};
     a.shape = copy_of_ia(dense_shape, dense_ndim);
@@ -365,7 +393,7 @@ __declspec(dllexport) struct SparseArrayArray zeros(
  * @param shape the shape of the SparseArrayArray, which is also the shape of each of its elements
  * @param add_zero if the array is 1d, this will add an extra zero element
  */
-__declspec(dllexport) struct SparseArrayArray identity(
+EXPORT struct SparseArrayArray identity(
         int ndim, const int shape[], _Bool add_zero) {
     int original_size = product(shape, ndim);
 
@@ -420,7 +448,7 @@ __declspec(dllexport) struct SparseArrayArray identity(
  * @param ndim the number of dense dimensions and the number of sparse dimensions (half the total number of dimensions)
  * @param shape the shape of the SparseArrayArray, which is also the shape of each of its elements
  */
-__declspec(dllexport) struct SparseArrayArray concatenate(
+EXPORT struct SparseArrayArray concatenate(
         const struct SparseArrayArray* elements, int length) {
     for (int j = 0; j < length; j ++) {
         if (elements[j].ndim != 1) {
@@ -453,7 +481,7 @@ __declspec(dllexport) struct SparseArrayArray concatenate(
  * @param indices the indices of every nonzero item as an ndarray with shape dense_shape + nelements + sparse_ndim
  * @param values the value of every nonzero item as an ndarray with shape dense_shape + nelements
  */
-__declspec(dllexport) struct SparseArrayArray new_saa(
+EXPORT struct SparseArrayArray new_saa(
         int dense_ndim, const int dense_shape[], int nitems, int sparse_ndim,
         const int* indices, const double* values) {
     struct SparseArrayArray a = {.ndim=dense_ndim};
@@ -537,12 +565,12 @@ struct SparseArrayArray elementwise_nda(enum Operator operator, struct SparseArr
     return c;
 }
 
-__declspec(dllexport) struct SparseArrayArray multiply_nda(
+EXPORT struct SparseArrayArray multiply_nda(
         struct SparseArrayArray a, const double* b, const int shape[]) {
     return elementwise_nda(MULTIPLY, a, b, shape);
 }
 
-__declspec(dllexport) struct SparseArrayArray divide_nda(
+EXPORT struct SparseArrayArray divide_nda(
         struct SparseArrayArray a, const double* b, const int shape[]) {
     return elementwise_nda(DIVIDE, a, b, shape);
 }
@@ -551,7 +579,7 @@ __declspec(dllexport) struct SparseArrayArray divide_nda(
  * perform matrix multiplication between a 2d SparseArrayArray and a plain dense array
  * @param a a SparseArrayArray with a single sparse dimension
  */
-__declspec(dllexport) double* matmul_nda(
+EXPORT double* matmul_nda(
         struct SparseArrayArray a, const double* b, const int b_shape[], int b_ndim) {
     // start by defining the output based on its known size and shape
     int c_ndim = a.ndim + b_ndim - 1;
@@ -619,17 +647,17 @@ struct SparseArrayArray elementwise_f(enum Operator operator, struct SparseArray
     return c;
 }
 
-__declspec(dllexport) struct SparseArrayArray multiply_f(
+EXPORT struct SparseArrayArray multiply_f(
         struct SparseArrayArray a, double factor) {
     return elementwise_f(MULTIPLY, a, factor);
 }
 
-__declspec(dllexport) struct SparseArrayArray divide_f(
+EXPORT struct SparseArrayArray divide_f(
         struct SparseArrayArray a, double divisor) {
     return elementwise_f(DIVIDE, a, divisor);
 }
 
-__declspec(dllexport) struct SparseArrayArray power_f(
+EXPORT struct SparseArrayArray power_f(
         struct SparseArrayArray a, double power) {
     return elementwise_f(POWER, a, power);
 }
@@ -640,7 +668,7 @@ __declspec(dllexport) struct SparseArrayArray power_f(
  * @param axis the axis of the array along wihch to perform the sum
  * @return the resulting array
  */
-__declspec(dllexport) struct SparseArrayArray sum_along_axis(
+EXPORT struct SparseArrayArray sum_along_axis(
         struct SparseArrayArray a, int axis) {
     if (axis < 0 || axis >= a.ndim) {
         printf("Error! the specified axis (%d out of %d) does not exist.\n", axis, a.ndim);
@@ -691,7 +719,7 @@ __declspec(dllexport) struct SparseArrayArray sum_along_axis(
 /**
  * sum along all of the sparse axes of a SparseArrayArray
  */
-__declspec(dllexport) double* sum_all_sparse(
+EXPORT double* sum_all_sparse(
         struct SparseArrayArray a) {
     // set up the ndarray
     double* values = calloc(a.size, sizeof(double));
@@ -705,7 +733,7 @@ __declspec(dllexport) double* sum_all_sparse(
 /**
  * sum along all of the dense axes of a SparseArrayArray
  */
-__declspec(dllexport) double* sum_all_dense(
+EXPORT double* sum_all_dense(
         struct SparseArrayArray a, const int shape[]) {
     // calculate the size
     int size = product(shape, a.elements[0].ndim);
@@ -732,50 +760,10 @@ __declspec(dllexport) double* sum_all_dense(
 }
 
 /**
- * convert a SparseArrayArray to a plain dense ndarray (flattend)
- */
-__declspec(dllexport) double* to_dense(
-        struct SparseArrayArray a, const int sparse_shape[]) {
-    // first, you must determine the shape
-    int total_ndim = a.ndim + a.elements[0].ndim;
-    int* shape = malloc(total_ndim*sizeof(int));
-    for (int k = 0; k < a.ndim; k ++)
-        shape[k] = a.shape[k];
-    for (int k = a.ndim; k < total_ndim; k ++)
-        shape[k] = sparse_shape[k - a.ndim];
-
-    // calculate the size
-    int size = product(shape, total_ndim);
-
-    // finally, set the values
-    double* values = calloc(size, sizeof(double));
-    for (int i = 0; i < a.size; i ++) {
-        struct SparseArray element = a.elements[i];
-        // for each element of each element
-        for (int j = 0; j < element.nitems; j ++) {
-            int* index = element.indices + j*element.ndim;
-            int l = i;
-            for (int k = a.ndim; k < total_ndim; k ++) {
-                if (index[k - a.ndim] < 0 || index[k - a.ndim] >= shape[k]) {
-                    printf("Error! a SparseArray had an index outside of the given shape (%d out of %d).\n", index[k - a.ndim], shape[k]);
-                    return NULL;
-                }
-                l = l*shape[k] + index[k - a.ndim]; // find the index
-            }
-            values[l] += element.values[j]; // and add it there
-        }
-    }
-
-    free(shape);
-
-    return values;
-}
-
-/**
  * modify the shape of a SparseArrayArray by adding dimensions to the beginning of its
  * shape, without changing its size or altering its values.
  */
-__declspec(dllexport) struct SparseArrayArray expand_dims(
+EXPORT struct SparseArrayArray expand_dims(
         struct SparseArrayArray a, int new_ndim) {
     struct SparseArrayArray c = {.ndim = a.ndim + new_ndim, .size=a.size};
 
@@ -796,7 +784,7 @@ __declspec(dllexport) struct SparseArrayArray expand_dims(
  * index the array on one axis, extracting a slice that is all of the elements where the
  * index on that axis matches what's given
  */
-__declspec(dllexport) struct SparseArrayArray get_slice_saa(
+EXPORT struct SparseArrayArray get_slice_saa(
         struct SparseArrayArray a, int index, int axis) {
     if (axis < 0 || axis >= a.ndim || index < 0 || index >= a.shape[axis]) {
         printf("Error! the specified slice (%d on axis %d out of %d) is out of bounds.\n", index, axis, a.ndim);
@@ -856,7 +844,7 @@ __declspec(dllexport) struct SparseArrayArray get_slice_saa(
  * @param length the number of values in index
  * @param axis the values of index represent indices along this axis
  */
-__declspec(dllexport) struct SparseArrayArray get_reindex_saa(
+EXPORT struct SparseArrayArray get_reindex_saa(
         struct SparseArrayArray a, const int index[], int length, int axis) {
     if (axis < 0 || axis >= a.ndim) {
         printf("Error! the specified axis (%d out of %d) does not exist.\n", axis, a.ndim);
@@ -904,4 +892,69 @@ __declspec(dllexport) struct SparseArrayArray get_reindex_saa(
     free(c_index);
 
     return c;
+}
+
+/**
+ * convert a SparseArrayArray to a plain dense ndarray (flattend)
+ */
+EXPORT double* to_dense(
+        struct SparseArrayArray a, const int sparse_shape[]) {
+    // first, you must determine the shape
+    int total_ndim = a.ndim + a.elements[0].ndim;
+    int* shape = malloc(total_ndim*sizeof(int));
+    for (int k = 0; k < a.ndim; k ++)
+        shape[k] = a.shape[k];
+    for (int k = a.ndim; k < total_ndim; k ++)
+        shape[k] = sparse_shape[k - a.ndim];
+
+    // calculate the size
+    int size = product(shape, total_ndim);
+
+    // finally, set the values
+    double* values = calloc(size, sizeof(double));
+    for (int i = 0; i < a.size; i ++) {
+        struct SparseArray element = a.elements[i];
+        // for each element of each element
+        for (int j = 0; j < element.nitems; j ++) {
+            int* index = element.indices + j*element.ndim;
+            int l = i;
+            for (int k = a.ndim; k < total_ndim; k ++) {
+                if (index[k - a.ndim] < 0 || index[k - a.ndim] >= shape[k]) {
+                    printf("Error! a SparseArray had an index outside of the given shape (%d out of %d).\n", index[k - a.ndim], shape[k]);
+                    return NULL;
+                }
+                l = l*shape[k] + index[k - a.ndim]; // find the index
+            }
+            values[l] += element.values[j]; // and add it there
+        }
+    }
+
+    free(shape);
+
+    return values;
+}
+
+/**
+ * print out a SparseArrayArray (don't forget to free the output after you're done with it)
+ */
+EXPORT char* to_string(struct SparseArrayArray a) {
+    char* output = calloc(1, sizeof(char));
+    for (int i = 0; i < a.size; i ++) {
+        for (int j = 0; j < a.elements[i].nitems; j ++) {
+            for (int k = 0; k < a.elements[i].ndim; k ++) {
+                int index = a.elements[i].indices[j*a.elements[i].ndim + k];
+                char* new_string = malloc(9*sizeof(char));
+                snprintf(new_string, 9, "%d,", index);
+                output = concatenate_and_free_strings(output, new_string);
+            }
+            double value = a.elements[i].values[j];
+            char* new_string = malloc(20*sizeof(char));
+            snprintf(new_string, 20, ": %g,  ", value);
+            output = concatenate_and_free_strings(output, new_string);
+        }
+        char* new_string = malloc(3*sizeof(char));
+        strcpy(new_string, ";\n");
+        output = concatenate_and_free_strings(output, new_string);
+    }
+    return output;
 }

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
-from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, cast, c_bool
+from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, cast, c_bool, c_char_p, c_char
 from typing import Callable, Sequence, Collection
 
 import numpy as np
@@ -23,6 +23,7 @@ else:
 
 
 c_int_p = POINTER(c_int)
+c_mut_char_p = POINTER(c_char) # does not automaticly copy to a Python bytes object, unlike c_char_p
 c_ndarray = np.ctypeslib.ndpointer(dtype=c_double, flags='C_CONTIGUOUS')
 c_int_ndarray = np.ctypeslib.ndpointer(dtype=c_int, flags='C_CONTIGUOUS')
 
@@ -41,17 +42,12 @@ def c_int_array(lst: Sequence[int]) -> Array:
 def c_SparseArrayArray_array(lst: Sequence[c_SparseArrayArray]) -> Array:
 	return (c_SparseArrayArray*len(lst))(*lst)
 
-def ndarray_from_c(data: c_ndarray, shape: Sequence[int]) -> np.ndarray:
-	c_array = np.ctypeslib.as_array(cast(data, POINTER(c_double)), shape=shape) # bild a np.ndarray around the existing memory
-	py_array = c_array.copy() # transcribe it to a python-ownd block of memory
-	c_lib.free_nda(c_array) # then delete the old memory from c, since Python won't do it for us
-	return py_array
-
 def declare_c_func(func: Callable, args: list[type], res: type | None):
 	func.argtypes = args
 	func.restype = res
 
 # declare all of the C functions we plan to use and their parameters' types
+declare_c_func(c_lib.free_char_p, [c_mut_char_p], None)
 declare_c_func(c_lib.free_saa, [c_SparseArrayArray], None)
 declare_c_func(c_lib.free_nda, [c_ndarray], None)
 declare_c_func(c_lib.add_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
@@ -72,9 +68,25 @@ declare_c_func(c_lib.sum_along_axis, [c_SparseArrayArray, c_int], c_SparseArrayA
 declare_c_func(c_lib.sum_all_sparse, [c_SparseArrayArray], c_ndarray)
 declare_c_func(c_lib.sum_all_dense, [c_SparseArrayArray, c_int_p], c_ndarray)
 declare_c_func(c_lib.to_dense, [c_SparseArrayArray, c_int_p], c_ndarray)
+declare_c_func(c_lib.to_string, [c_SparseArrayArray], c_mut_char_p)
 declare_c_func(c_lib.expand_dims, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_slice_saa, [c_SparseArrayArray, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_reindex_saa, [c_SparseArrayArray, c_int_p, c_int, c_int], c_SparseArrayArray)
+
+
+def ndarray_from_c(data: c_ndarray, shape: Sequence[int]) -> np.ndarray:
+	c_array = np.ctypeslib.as_array(cast(data, POINTER(c_double)), shape=shape) # bild a np.ndarray around the existing memory
+	py_array = c_array.copy() # transcribe it to a python-ownd block of memory
+	c_lib.free_nda(c_array) # then delete the old memory from c, since Python won't do it for us
+	return py_array
+
+def str_from_c(data: c_mut_char_p | bytes) -> str:
+	length = 0
+	while data[length] != b"\0":
+		length += 1
+	string = bytes(data[:length]).decode("utf-8") # decode the existing memory
+	c_lib.free_char_p(data) # then delete the old memory from c, since Python won't do it for us
+	return string
 
 
 class DenseSparseArray:
@@ -334,11 +346,12 @@ class DenseSparseArray:
 
 	def __str__(self) -> str:
 		if self.sparse_size < 100:
-			indented = str(np.array(self)).replace('\n', '\n ')
+			values = str(np.array(self))
 		else:
-			raise NotImplementedError("I would like to have an abbreviated way to print out large matrices in the "
-			                          "future but don't just now.")
-		return f"{self.dense_shape}x{self.sparse_shape}:\n {indented}"
+			res = c_lib.to_string(self)
+			values = str_from_c(res)
+		values = values.replace('\n', '\n  ')
+		return f"{self.dense_shape}x{self.sparse_shape}:\n  {values}"
 
 	def __array__(self) -> np.ndarray:
 		return ndarray_from_c(c_lib.to_dense(self, c_int_array(self.sparse_shape)), self.shape)
@@ -395,7 +408,7 @@ if __name__ == "__main__":
 		[10],
 		np.array([[[[0], [1]],
 		           [[0], [4]],
-		           [[0], [5]]]]),
+		           [[5], [6]]]]),
 		np.array([[[1., -1.],
 		           [0., 1.],
 		           [3., -2.]]]))
@@ -403,7 +416,7 @@ if __name__ == "__main__":
 		[10],
 		np.array([[[[0], [1]],
 		           [[0], [4]],
-		           [[5], [6]]]]),
+		           [[0], [5]]]]),
 		np.array([[[0., 1.],
 		           [-2., 3.],
 		           [-2., -2.]]])
