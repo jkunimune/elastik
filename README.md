@@ -29,7 +29,7 @@
  There's a CMakeLists file if that's your jam, but I don't really know how to use it;
  it's just left over from when I briefly used CLion.
  When I recompile the C library, I go to the root directory in VS Developer Command Prompt and use
- ~~~
+ ~~~bash
  cl /D_USR_DLL /D_WINDLL src/sparse.c /link /DLL /OUT:lib/libsparse.dll
  ~~~
  Naturally, if you're not on Windows, it'll be something different.

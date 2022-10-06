@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 from util import bin_centers, to_cartesian, inside_region
 
 
-FUDGE_FACTOR = 2 # some extra padding to put on the contiguus joints of the sections
+FUDGE_FACTOR = 4 # some extra padding to put on the contiguus joints of the sections
 
 
 def load_coast_vertices(precision) -> list[tuple[float, float]]:

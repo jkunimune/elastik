@@ -28,9 +28,8 @@ def load_elastik_projection(name: str) -> list[Section]:
 		for h in range(file.attrs["num_sections"]):
 			sections.append(Section(file[f"section{h}/latitude"][:],
 			                        file[f"section{h}/longitude"][:],
-			                        file[f"section{h}/projection"][:, :, 0],
-			                        file[f"section{h}/projection"][:, :, 1],
-			                        file[f"section{h}/border"][:, :],
+			                        file[f"section{h}/projection"][:, :],
+			                        file[f"section{h}/border"][:],
 			                        ))
 	return sections
 
@@ -114,7 +113,7 @@ def smooth_interpolate(xs: Sequence[float | np.ndarray], x_grids: Sequence[np.nd
 	return result
 
 
-def gradient(Y: np.ndarray, x: np.ndarray, where: np.ndarary, axis: int) -> np.ndarray:
+def gradient(Y: np.ndarray, x: np.ndarray, where: np.ndarary, axis: int) -> (np.ndarray[float], np.ndarray[bool]):
 	""" Return the gradient of an N-dimensional array.
 
 	    The gradient is computed using second ordre accurate central differences in the
@@ -128,6 +127,8 @@ def gradient(Y: np.ndarray, x: np.ndarray, where: np.ndarary, axis: int) -> np.n
 	                  corresponding to a falsy in where will be ignored, and gradients
 	                  centerd at such points will be markd as nan.
 	    :param axis: the axis along which to take the gradient
+	    :return: an array with the gradient values, as well as a boolean mask indicating
+	             which of the returnd values are invalid (because there were not enuff valid inputs in the vicinity)
 	"""
 	if Y.shape[:where.ndim] != where.shape:
 		raise ValueError("where must have the same shape as Y")
@@ -164,7 +165,8 @@ def gradient(Y: np.ndarray, x: np.ndarray, where: np.ndarary, axis: int) -> np.n
 
 	# finally, reset the axes
 	old_axis_order = np.roll(np.arange(where.ndim), axis)
-	return grad.transpose(np.concatenate([old_axis_order, np.arange(where.ndim, Y.ndim)]))
+	return (grad.transpose(np.concatenate([old_axis_order, np.arange(where.ndim, Y.ndim)])),
+            impossible.transpose(old_axis_order)) # I could use a maskedarray here, but it feels weerd to import the whole module just for this
 
 
 def product(values: Iterable[np.ndarray | float | int]) -> np.ndarray | float | int:
@@ -191,33 +193,30 @@ def load_geographic_data(filename: str) -> list[Line]:
 
 class Section:
 	def __init__(self, ф_nodes: np.ndarray, λ_nodes: np.ndarray,
-	             x_nodes: np.ndarray, y_nodes: np.ndarray,
-	             border: np.ndarray):
+	             xy_nodes: np.ndarray, border: np.ndarray):
 		""" one lobe of an Elastik projection, containing a grid of latitudes and
 		    longitudes as well as the corresponding x and y coordinates
 		    :param ф_nodes: the node latitudes (deg)
 		    :param λ_nodes: the node longitudes (deg)
-		    :param x_nodes: the grid of x-values at each ф and λ (km)
-		    :param y_nodes: the grid of y-values at each ф and λ (km)
+		    :param xy_nodes: the grid of x- and y-values at each ф and λ (km)
 		    :param border: the path that encloses the region this section defines (deg)
 		"""
 		self.ф_nodes = ф_nodes
 		self.λ_nodes = λ_nodes
-		self.x_nodes = x_nodes
-		self.y_nodes = y_nodes
-		self.dxdф_nodes = gradient(x_nodes, ф_nodes, where=np.isfinite(x_nodes), axis=0)
-		self.dxdλ_nodes = gradient(x_nodes, λ_nodes, where=np.isfinite(x_nodes), axis=1)
-		self.dydф_nodes = gradient(y_nodes, ф_nodes, where=np.isfinite(y_nodes), axis=0)
-		self.dydλ_nodes = gradient(y_nodes, λ_nodes, where=np.isfinite(y_nodes), axis=1)
+		self.xy_nodes = xy_nodes
+		self.dxdф_nodes, _ = gradient(xy_nodes["x"], ф_nodes, where=np.isfinite(xy_nodes["x"]), axis=0)
+		self.dxdλ_nodes, _ = gradient(xy_nodes["x"], λ_nodes, where=np.isfinite(xy_nodes["x"]), axis=1) # TODO: account for shared nodes, rite?
+		self.dydф_nodes, _ = gradient(xy_nodes["y"], ф_nodes, where=np.isfinite(xy_nodes["y"]), axis=0)
+		self.dydλ_nodes, _ = gradient(xy_nodes["y"], λ_nodes, where=np.isfinite(xy_nodes["y"]), axis=1)
 		self.border = border
 
 
 	def get_planar_coordinates(self, ф: np.ndarray | float, λ: np.ndarray | float) -> tuple[np.ndarray | float, np.ndarray | float]:
 		""" take a point on the sphere and smoothly interpolate it to x and y """
 		return (smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-		                           self.x_nodes, (self.dxdф_nodes, self.dxdλ_nodes)),
+		                           self.xy_nodes["x"], (self.dxdф_nodes, self.dxdλ_nodes)),
 		        smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-		                           self.y_nodes, (self.dydф_nodes, self.dydλ_nodes)))
+		                           self.xy_nodes["y"], (self.dydф_nodes, self.dydλ_nodes)))
 
 
 	def get_planar_gradients(self, ф: np.ndarray | float, λ: np.ndarray | float) -> np.ndarray:
@@ -226,20 +225,20 @@ class Section:
 		"""
 		return np.array([[
 			smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-			                   self.x_nodes, (self.dxdф_nodes, self.dxdλ_nodes), differentiate=0),
+			                   self.xy_nodes["x"], (self.dxdф_nodes, self.dxdλ_nodes), differentiate=0),
 			smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-			                   self.x_nodes, (self.dxdф_nodes, self.dxdλ_nodes), differentiate=1),
+			                   self.xy_nodes["x"], (self.dxdф_nodes, self.dxdλ_nodes), differentiate=1),
 			smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-			                   self.y_nodes, (self.dydф_nodes, self.dydλ_nodes), differentiate=0),
+			                   self.xy_nodes["y"], (self.dydф_nodes, self.dydλ_nodes), differentiate=0),
 			smooth_interpolate((ф, λ), (self.ф_nodes, self.λ_nodes),
-			                   self.y_nodes, (self.dydф_nodes, self.dydλ_nodes), differentiate=1)]])
+			                   self.xy_nodes["y"], (self.dydф_nodes, self.dydλ_nodes), differentiate=1)]])
 
 	def contains(self, ф: np.ndarray | float, λ: np.ndarray | float) -> np.ndarray | bool:
 		nearest_segment = np.full(np.shape(ф), np.inf)
 		inside = np.full(np.shape(ф), False)
 		for i in range(1, self.border.shape[0]):
-			ф0, λ0 = self.border[i - 1, :]
-			ф1, λ1 = self.border[i, :]
+			ф0, λ0 = self.border[i - 1]
+			ф1, λ1 = self.border[i]
 			if λ1 != λ0 and abs(λ1 - λ0) <= 180:
 				straddles = (λ0 <= λ) != (λ1 <= λ)
 				фX = (λ - λ0)/(λ1 - λ0)*(ф1 - ф0) + ф0

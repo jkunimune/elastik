@@ -9,11 +9,13 @@ progress as it goes.
 """
 from __future__ import annotations
 
+from math import sqrt
 from typing import Callable
+
 import numpy as np
+from numpy._typing import NDArray
 
 from sparse import DenseSparseArray
-
 
 STEP_REDUCTION = 5.
 STEP_AUGMENTATION = STEP_REDUCTION**2.6
@@ -22,9 +24,9 @@ LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
 
 class Variable:
-	def __init__(self, values: np.ndarray | Variable,
-	             gradients: np.ndarray = None,
-	             curvatures: np.ndarray = None,
+	def __init__(self, values: NDArray[float] | Variable,
+	             gradients: NDArray[float] = None,
+	             curvatures: NDArray[float] = None,
 	             independent: bool = False, ndim: int = 0):
 		""" an array of values with gradient information attached, for computing gradients
 		    of vectorized functions
@@ -193,12 +195,13 @@ class Variable:
 		                self.curvatures.sum(axis=axis))
 
 
-def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
-             guess: np.ndarray,
+def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
+             guess: NDArray[float],
              tolerance: float,
-             bounds: list[tuple[np.ndarray, np.ndarray | list[float], np.ndarray | list[float]]] = None,
-             report: Callable[[np.ndarray, float, np.ndarray, np.ndarray, bool], None] = None,
-             backup_func: Callable[[np.ndarray | Variable], float | Variable] = None,
+             bounds_matrix: DenseSparseArray = None,
+             bounds_limits: NDArray[float] | list[float] = None,
+             report: Callable[[NDArray[float], float, NDArray[float], NDArray[float], bool], None] = None,
+             backup_func: Callable[[NDArray[float] | Variable], float | Variable] = None,
              ) -> np.ndarray:
 	""" find the vector that minimizes a function of a list of points using gradient
 	    descent with a dynamically chosen step size. unlike a more generic minimization
@@ -209,14 +212,12 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 	    :param guess: the initial input to the function, from which the gradients will descend.
 	    :param tolerance: the absolute tolerance. when the magnitude of the gradient at
 	                      any given point dips below this, we are done.
-	    :param bounds: a list of inequality constraints on various linear combinations.
-	                   each item of the list should comprise a m×n matrix that multiplies
-	                   by the state array to produce a m×2 vector of tracer particle
-	                   positions, a 2-vector representing the upper-left corner of the
-	                   allowable bounding box, and a 2-vector representing the lower-right
-	                   corner of the allowable bounding box. the algorithm will ensure
-	                   that all of the tracer particles will remain inside the
-	                   corresponding bounding box in the final solution.
+	    :param bounds_matrix: a list of inequality constraints on various linear combinations.
+	                          it should be some object that matrix-multiplies by the state array to
+	                          produce a m×2 vector of tracer particle positions
+	    :param bounds_limits: the values of the inequality constraints. should be a 2-vector
+	                          representing the maximum allowable x and y coordinates of those tracer
+	                          particles.
 	    :param report: an optional function that will be called each time a line search
 	                   is completed, to provide real-time information on how the fitting
 	                   routine is going. it takes as arguments the current state, the
@@ -234,8 +235,18 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 	                        that minimum will be returnd.
 	    :return: the optimal n×2 array of points
 	"""
-	if bounds is None:
-		bounds = []
+	# start by checking the guess agenst the bounds
+	if bounds_matrix is None:
+		if bounds_limits is not None:
+			raise ValueError("you mustn't pass bounds_limits without bounds_matrix")
+	else:
+		if bounds_limits is None:
+			raise ValueError("you mustn't pass bounds_matrix without bounds_limits")
+		if np.any(bounds_matrix @ guess > bounds_limits[np.newaxis, :]):
+			guess = polytope_project(guess, bounds_matrix, bounds_limits)
+		if np.all(np.isinf(bounds_limits)): # go ahead and remove any pointless bounds
+			bounds_matrix = None
+			bounds_limits = None
 
 	# if a backup objective function is provided, start with that
 	if backup_func is not None:
@@ -257,7 +268,6 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 			raise RuntimeError("there are nan gradients")
 		return variable.gradients, np.sum(variable.curvatures, axis=-1)
 
-	# use the inicial gess to decide which objective function to use
 	initial_value = get_value(guess)
 
 	# check just in case we instantly fall thru to the followup function
@@ -268,9 +278,10 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 	elif not np.isfinite(initial_value):
 		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_value}")
 
+	# instantiate the loop state variables
+	fast_mode = True
 	value = initial_value
 	state = guess
-	step = np.zeros_like(state)
 	# and with the step size parameter set
 	step_size = STEP_MAXIMUM
 	# descend until we can't descend any further
@@ -280,29 +291,36 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 		gradient, curvature = get_gradient(state)
 		assert gradient.shape == state.shape
 
-		# if the termination condition is met, finish
-		if np.linalg.norm(gradient) > tolerance:
-			report(state, value, gradient, step, False)
+		# descend the gradient
+		if fast_mode: # well, gradient scaled with curvature if possible
+			curvature_cutoff = np.quantile(abs(curvature), .01)
+			direction = -gradient/np.maximum(curvature, curvature_cutoff)[:, np.newaxis]
 		else:
-			report(state, value, gradient, step, True)
-			print(f"Completed in {num_line_searches} iterations.")
-			return state
-
-		# otherwise, descend the gradient
-		curvature_cutoff = np.quantile(abs(curvature), .01)
-		direction = -gradient/np.maximum(curvature, curvature_cutoff)[:, np.newaxis]
+			direction = -gradient
 
 		# do a line search to choose a good step size
 		num_step_sizes = 0
 		while True:
 			# step according to the gradient and step size for this inner loop
-			step = direction*step_size
-			new_state = state + step
+			new_state = state + step_size*direction
+			# projecting onto the legal subspace if necessary
+			if bounds_limits is not None:
+				for k in range(bounds_limits.size):
+					new_state[:, k] = polytope_project(new_state[:, k],
+					                                   bounds_matrix, bounds_limits[k])
+			step = new_state - state
 			new_value = get_value(new_state)
+			# if we're going in the wrong direction, disable fast mode and try again
+			if np.sum(step*gradient) > 0:
+				assert fast_mode, "projection caused it to step uphill"
+				print("fast mode 起動")
+				fast_mode = False
+				new_state, new_value = state, value
+				break
 			# if this is infinitely good, jump to the followup function now
 			if new_value == -np.inf and followup_func is not None:
 				print(f"Reached the valid domain in {num_line_searches} iterations.")
-				return minimize(followup_func, new_state, tolerance, bounds, report, None)
+				return minimize(followup_func, new_state, tolerance, bounds_matrix, bounds_limits, report, None)
 			# if the line search condition is met, take it
 			if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(step*gradient):
 				break
@@ -313,17 +331,63 @@ def minimize(func: Callable[[np.ndarray | Variable], float | Variable],
 			if num_step_sizes > 100:
 				raise RuntimeError("line search did not converge")
 
+		# if the termination condition is met, finish
+		if -np.sum(gradient*step)/np.linalg.norm(step) > tolerance:
+			report(state, value, gradient, step, False)
+		else:
+			report(state, value, gradient, step, True)
+			print(f"Completed in {num_line_searches} iterations.")
+			return polytope_project(state, bounds_matrix, bounds_limits, tolerance=1e-6)
+
 		# take the new state and error value
 		state = new_state
 		value = new_value
 		# set the step size back a bit
 		step_size *= STEP_AUGMENTATION
-		# step_size = min(STEP_MAXIMUM, STEP_AUGMENTATION)
 		# keep track of the number of iterations
 		num_line_searches += 1
 		if num_line_searches > 1e5:
 			raise RuntimeError(f"algorithm did not converge in {num_step_sizes} iterations")
 
+
+def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, polytope_lim: float | NDArray[float],
+                     tolerance=1e-4) -> NDArray[float]:
+	""" project a given point onto a polytope defined by the inequality
+	        all(ploytope_mat@point <= polytope_lim + tolerance)
+	    I learned this fast dual-based proximal gradient strategy from
+	        Beck, A. & Teboulle, M. "A fast dual proximal gradient algorithm for
+	        convex minimization and applications", <i>Operations Research Letters</i> <b>42</b> 1
+	        (2014), p. 1–6. doi:10.1016/j.orl.2013.10.007,
+	    but I put a little twist on it.
+	"""
+	if point.ndim == 2:
+		if point.shape[1] != polytope_lim.size:
+			raise ValueError(f"if you want this fancy functionality, the shapes must match")
+		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[k], tolerance)
+		                 for k in range(point.shape[1])]).T
+	elif point.ndim != 1 or np.ndim(polytope_lim) != 0:
+		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
+	if polytope_mat.ndim != 2:
+		raise ValueError(f"the matrix should be a (2d) matrix, not a {polytope_mat.ndim}d-array")
+	if point.shape[0] != polytope_mat.shape[1]:
+		raise ValueError("these polytope definitions don't jive")
+	# check to see if we're already done
+	if np.all(polytope_mat@point <= polytope_lim):
+		return point
+
+	L = np.linalg.norm(polytope_mat, ord=2)**2
+	w_old = y_old = np.zeros(polytope_mat.shape[0])
+	t_old = 1
+	for i in range(100_000):
+		grad_F = polytope_mat@(point + polytope_mat.T@w_old)
+		prox_G = np.minimum(polytope_lim, grad_F - L*w_old)
+		y_new = w_old - (grad_F - prox_G)/L
+		t_new = (1 + sqrt(1 + 4*t_old**2))/2
+		w_new = y_new + (t_old - 1)/t_new*(y_new - y_old)
+		if i > 0 and np.linalg.norm(y_new - y_old)/np.linalg.norm(y_old) < tolerance:
+			return point + polytope_mat.T@y_new
+		t_old, w_old, y_old = t_new, w_new, y_new
+	raise RuntimeError("the polytope projection took too many iterations for some reason")
 
 if __name__ == "__main__":
 	import matplotlib.pyplot as plt

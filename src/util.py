@@ -89,6 +89,9 @@ def dilate(x: np.ndarray, distance: int) -> np.ndarray:
 		x[1:] |= x[:-1]
 	return x
 
+def erode_2d(x: np.ndarray, distance: int) -> np.ndarray:
+	""" take a 2D boolean array and make it so that any Trues near Falses become True. """
+
 def decimate_path(path: list[tuple[float, float]] | np.ndarray, resolution: float) -> list[tuple[float, float]] | np.ndarray:
 	""" simplify a path in-place such that the number of nodes on each segment is only as
 	    many as needed to make the curves look nice, using Ramer-Douglas

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import os
 import sys
-from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, cast, c_bool, c_char_p, c_char
+from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, cast, c_bool, c_char
+from functools import cached_property
 from typing import Callable, Sequence, Collection
 
 import numpy as np
@@ -23,6 +24,7 @@ else:
 
 
 c_int_p = POINTER(c_int)
+c_double_p = POINTER(c_double)
 c_mut_char_p = POINTER(c_char) # does not automaticly copy to a Python bytes object, unlike c_char_p
 c_ndarray = np.ctypeslib.ndpointer(dtype=c_double, flags='C_CONTIGUOUS')
 c_int_ndarray = np.ctypeslib.ndpointer(dtype=c_int, flags='C_CONTIGUOUS')
@@ -68,14 +70,15 @@ declare_c_func(c_lib.sum_along_axis, [c_SparseArrayArray, c_int], c_SparseArrayA
 declare_c_func(c_lib.sum_all_sparse, [c_SparseArrayArray], c_ndarray)
 declare_c_func(c_lib.sum_all_dense, [c_SparseArrayArray, c_int_p], c_ndarray)
 declare_c_func(c_lib.to_dense, [c_SparseArrayArray, c_int_p], c_ndarray)
-declare_c_func(c_lib.to_string, [c_SparseArrayArray], c_mut_char_p)
+declare_c_func(c_lib.transpose, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.expand_dims, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_slice_saa, [c_SparseArrayArray, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_reindex_saa, [c_SparseArrayArray, c_int_p, c_int, c_int], c_SparseArrayArray)
+declare_c_func(c_lib.to_string, [c_SparseArrayArray], c_mut_char_p)
 
 
 def ndarray_from_c(data: c_ndarray, shape: Sequence[int]) -> np.ndarray:
-	c_array = np.ctypeslib.as_array(cast(data, POINTER(c_double)), shape=shape) # bild a np.ndarray around the existing memory
+	c_array = np.ctypeslib.as_array(cast(data, c_double_p), shape=shape) # bild a np.ndarray around the existing memory
 	py_array = c_array.copy() # transcribe it to a python-ownd block of memory
 	c_lib.free_nda(c_array) # then delete the old memory from c, since Python won't do it for us
 	return py_array
@@ -190,6 +193,14 @@ class DenseSparseArray:
 			c_SparseArrayArray_array([element._as_parameter_ for element in corrected_elements]),
 			c_int(len(corrected_elements))))
 
+	@cached_property
+	def T(self) -> DenseSparseArray:
+		""" the transpose of the array """
+		if self.dense_ndim != 1 or self.sparse_ndim != 1:
+			raise ValueError("this is only designed to work for matmulable matrices")
+		thing = c_lib.transpose(self, self.shape[1])
+		return DenseSparseArray(self.shape[::-1], thing)
+
 	def __add__(self, other: DenseSparseArray | np.ndarray | float) -> DenseSparseArray:
 		if type(other) is DenseSparseArray:
 			if self.dense_shape == other.dense_shape and self.sparse_shape == other.sparse_shape:
@@ -217,6 +228,9 @@ class DenseSparseArray:
 				raise TypeError("DenseSparseArrays cannot be subtracted from normal arrays (unless the normal array is just 0)")
 		else:
 			return NotImplemented
+
+	def __neg__(self) -> DenseSparseArray:
+		return self * -1
 
 	def __mul__(self, other: DenseSparseArray | np.ndarray | float) -> DenseSparseArray:
 		other = self.convert_arg_for_c(other)
@@ -283,7 +297,8 @@ class DenseSparseArray:
 			return DenseSparseArray(self.shape[:-1] + other.shape[1:], c_lib.matmul_saa(self, other))
 		elif type(other) is np.ndarray:
 			return ndarray_from_c(
-				c_lib.matmul_nda(self, other, c_int_array(other.shape), c_int(other.ndim)),
+				c_lib.matmul_nda(self, np.ascontiguousarray(other), # TODO: it sounds like I can silence this warning by passing a preallocated empty array to project_nda, matmul_nda, and to_dense
+				                 c_int_array(other.shape), c_int(other.ndim)),
 				self.shape[:-1] + other.shape[1:])
 		else:
 			return NotImplemented
@@ -366,6 +381,19 @@ class DenseSparseArray:
 			index = np.unravel_index(i, self.dense_shape)
 			array[index] = self[(*index, ...)]
 		return array
+
+	# def project(self, vector: np.ndarray) -> np.ndarray:
+	# 	""" calculate
+	# 	        self.T @ diag(self^2)^-1 @ self @ vector
+	# 	    but while taking up less memory than doing that directly normally would """
+	# 	if self.sparse_ndim != 1 or self.dense_ndim != 1:
+	# 		raise ValueError("I've only implemented projection for matrices with exactly 1 sparse dim")
+	# 	if self.shape[-1] != vector.shape[0]:
+	# 		raise ValueError(f"the given shapes ({self.shape} and {vector.shape}) aren't matrix-multiplication compatible")
+	# 	return ndarray_from_c(
+	# 		c_lib.project_nda(self, np.ascontiguousarray(vector),
+	# 		                  c_int_array(vector.shape), c_int(vector.ndim)),
+	# 		vector.shape)
 
 	def expand_dims(self, ndim: int):
 		""" add several new dense dimensions to the front of this's shape.  all new

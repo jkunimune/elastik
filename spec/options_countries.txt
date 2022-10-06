@@ -3,5 +3,5 @@ descript: ...
 cuts: basic
 weights: land_sinATA
 scale: uniform
-size: 30_000,21_000
+size: 24_000,17_000
 section_names: veste,carik
