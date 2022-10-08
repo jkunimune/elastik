@@ -19,7 +19,7 @@ from sparse import DenseSparseArray
 
 STEP_REDUCTION = 5.
 STEP_AUGMENTATION = STEP_REDUCTION**2.6
-STEP_MAXIMUM = 1e6#STEP_REDUCTION
+STEP_MAXIMUM = 1e3
 LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
 
@@ -239,11 +239,12 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	if bounds_matrix is None:
 		if bounds_limits is not None:
 			raise ValueError("you mustn't pass bounds_limits without bounds_matrix")
+		bounds_tolerance = None
 	else:
 		if bounds_limits is None:
 			raise ValueError("you mustn't pass bounds_matrix without bounds_limits")
-		if np.any(bounds_matrix @ guess > bounds_limits[np.newaxis, :]):
-			guess = polytope_project(guess, bounds_matrix, bounds_limits)
+		guess = polytope_project(guess, bounds_matrix, bounds_limits, tolerance=0, certainty=60)
+		bounds_tolerance = np.min(bounds_limits)*1e-3
 		if np.all(np.isinf(bounds_limits)): # go ahead and remove any pointless bounds
 			bounds_matrix = None
 			bounds_limits = None
@@ -283,7 +284,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	value = initial_value
 	state = guess
 	# and with the step size parameter set
-	step_size = STEP_MAXIMUM
+	step_size = 1e2#STEP_MAXIMUM
 	# descend until we can't descend any further
 	num_line_searches = 0
 	while True:
@@ -307,13 +308,13 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			if bounds_limits is not None:
 				for k in range(bounds_limits.size):
 					new_state[:, k] = polytope_project(new_state[:, k],
-					                                   bounds_matrix, bounds_limits[k])
+					                                   bounds_matrix, bounds_limits[k],
+					                                   bounds_tolerance)
 			step = new_state - state
 			new_value = get_value(new_state)
 			# if we're going in the wrong direction, disable fast mode and try again
 			if np.sum(step*gradient) > 0:
 				assert fast_mode, "projection caused it to step uphill"
-				print("fast mode 起動")
 				fast_mode = False
 				new_state, new_value = state, value
 				break
@@ -337,7 +338,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		else:
 			report(state, value, gradient, step, True)
 			print(f"Completed in {num_line_searches} iterations.")
-			return polytope_project(state, bounds_matrix, bounds_limits, tolerance=1e-6)
+			return polytope_project(state, bounds_matrix, bounds_limits, 0, 100)
 
 		# take the new state and error value
 		state = new_state
@@ -351,19 +352,27 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 
 
 def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, polytope_lim: float | NDArray[float],
-                     tolerance=1e-4) -> NDArray[float]:
+                     tolerance: float, certainty: float = 20) -> NDArray[float]:
 	""" project a given point onto a polytope defined by the inequality
 	        all(ploytope_mat@point <= polytope_lim + tolerance)
 	    I learned this fast dual-based proximal gradient strategy from
 	        Beck, A. & Teboulle, M. "A fast dual proximal gradient algorithm for
 	        convex minimization and applications", <i>Operations Research Letters</i> <b>42</b> 1
 	        (2014), p. 1–6. doi:10.1016/j.orl.2013.10.007,
-	    but I put a little twist on it.
+	    :param point: the point to project
+	    :param polytope_mat: the matrix that defines the normals of the polytope faces
+	    :param polytope_lim: the quantity that defines the size of the polytope.  it may be an array
+	                         if point is 2d.  a point is in the polytope iff
+	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
+	    :param tolerance: how far outside of the polytope a returned point may be
+	    :param certainty: how many iterations it should try once it's within the tolerance to ensure
+	                      it's finding the best point
 	"""
 	if point.ndim == 2:
 		if point.shape[1] != polytope_lim.size:
 			raise ValueError(f"if you want this fancy functionality, the shapes must match")
-		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[k], tolerance)
+		# if there are multiple dimensions, do each dimension one at a time
+		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[k], tolerance, certainty)
 		                 for k in range(point.shape[1])]).T
 	elif point.ndim != 1 or np.ndim(polytope_lim) != 0:
 		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
@@ -375,19 +384,29 @@ def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, poly
 	if np.all(polytope_mat@point <= polytope_lim):
 		return point
 
+	# establish the parameters and persisting variables
 	L = np.linalg.norm(polytope_mat, ord=2)**2
+	x_new = None
 	w_old = y_old = np.zeros(polytope_mat.shape[0])
 	t_old = 1
-	for i in range(100_000):
+	candidates = []
+	# loop thru the proximal gradient descent of the dual problem
+	for i in range(10_000):
 		grad_F = polytope_mat@(point + polytope_mat.T@w_old)
 		prox_G = np.minimum(polytope_lim, grad_F - L*w_old)
 		y_new = w_old - (grad_F - prox_G)/L
-		t_new = (1 + sqrt(1 + 4*t_old**2))/2
+		t_new = (1 + sqrt(1 + 4*t_old**2))/2  # this inertia term is what makes it fast
 		w_new = y_new + (t_old - 1)/t_new*(y_new - y_old)
-		if i > 0 and np.linalg.norm(y_new - y_old)/np.linalg.norm(y_old) < tolerance:
-			return point + polytope_mat.T@y_new
+		x_new = point + polytope_mat.T@y_new
+		# save any points that are close enuff to being in
+		if np.all(polytope_mat@x_new <= polytope_lim + tolerance):
+			candidates.append(x_new)
+			# and terminate once we get enuff of them
+			if len(candidates) >= certainty:
+				best = np.argmin(np.linalg.norm(np.array(candidates) - point, axis=1))
+				return candidates[best]
 		t_old, w_old, y_old = t_new, w_new, y_new
-	raise RuntimeError("the polytope projection took too many iterations for some reason")
+	return x_new
 
 if __name__ == "__main__":
 	import matplotlib.pyplot as plt

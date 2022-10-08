@@ -500,7 +500,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 		# plot the outline of the mesh
 		border_points = border @ all_positions
 		loop = np.arange(-1, border_points.shape[0])
-		map_axes.plot(border_points[loop, 0], border_points[loop, 1], "k-o", linewidth=1.3, zorder=2)
+		map_axes.plot(border_points[loop, 0], border_points[loop, 1], "#000", linewidth=1.3, zorder=2)
 
 	map_axes.plot(np.multiply([-1, 1, 1, -1, -1], map_width/2),
 	              np.multiply([-1, -1, 1, 1, -1], map_hite/2), "#000", linewidth=.3, zorder=2)
@@ -718,7 +718,8 @@ def create_map_projection(configuration_file: str):
 	values, grads = [], []
 
 	# define the objective functions
-	def compute_energy_aggressive(positions: np.ndarray) -> float: # one that aggressively pushes the mesh to have all positive strains
+	def compute_energy_lenient(positions: np.ndarray) -> float:
+		# one that aggressively pushes the mesh to have all positive strains
 		a, b = compute_principal_strains(restore @ positions,
 		                                 cell_definitions, cell_scales, dΦ, dΛ)
 		if np.all(a > 0) and np.all(b > 0):
@@ -730,17 +731,8 @@ def create_map_projection(configuration_file: str):
 			b_term = np.exp(-6*b)
 			return (a_term + b_term).sum()
 
-	def compute_energy_lenient(positions: np.ndarray) -> float: # one that works in all domains
-		a, b = compute_principal_strains(restore @ positions,
-		                                 cell_definitions, cell_scales, dΦ, dΛ)
-		if np.all(a > 0) and np.all(b > 0):
-			return -inf
-		else:
-			scale_term = (a + b - 2)**2
-			shape_term = (a - b)**2
-			return ((scale_term + 2*shape_term)*cell_weights).sum()
-
-	def compute_energy_strict(positions: np.ndarray) -> float: # and one that only works when all strains are positive
+	def compute_energy_strict(positions: np.ndarray) -> float:
+		# and one that throws an error when any strains are negative
 		a, b = compute_principal_strains(restore @ positions,
 		                                 cell_definitions, cell_scales, dΦ, dΛ)
 		if np.any(a <= 0) or np.any(b <= 0):
@@ -778,18 +770,6 @@ def create_map_projection(configuration_file: str):
 			                          report=plot_status,
 			                          tolerance=1e-3/EARTH.R)
 			node_positions = restore @ node_positions
-
-		# the mesh should, at some point, become well-behaved
-		if not np.all(np.greater(compute_principal_strains(
-			node_positions, cell_definitions, cell_scales, dΦ, dΛ), 0)):
-			# if it doesn't do a final pass using the aggressive objective function to whip it into shape
-			node_positions = minimize(func=compute_energy_strict,
-			                          backup_func=compute_energy_aggressive,
-			                          guess=node_positions,
-			                          bounds_matrix=bounds_matrix,
-			                          bounds_limits=bounds_limits,
-			                          report=plot_status,
-			                          tolerance=1e-3/EARTH.R)
 
 	except RuntimeError as e:
 		traceback.print_exc()
