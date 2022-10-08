@@ -1,7 +1,7 @@
 name: lin
 descript: ...
 cuts: oceans
-weights: land
-scale: uniform
+shape_weights: land
+scale_weights: land
 size: inf,inf
 section_names: Áfrika,Australia,Amérika

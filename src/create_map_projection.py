@@ -23,6 +23,9 @@ from util import dilate, EARTH, index_grid, Scalar, inside_region, inside_polygo
 	simplify_path, refine_path, decimate_path
 
 
+MIN_WEIGHT = .03 # the ratio of the whitespace weight to the subject weight
+
+
 # some useful custom h5 datatypes
 h5_xy_tuple = [("x", float), ("y", float)]
 h5_фλ_tuple = [("latitude", float), ("longitude", float)]
@@ -105,40 +108,38 @@ def enumerate_nodes(mesh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 	return node_indices, node_positions
 
 
-def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray], scales: list[np.ndarray],
-                    dΦ: np.ndarray, dΛ: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray | list[np.ndarray]],
+                    dΦ: np.ndarray, dΛ: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
 	""" take an array of nodes and generate the list of cells in which the elastic energy
 	    should be calculated.
 	    :param node_indices: the lookup table that tells you the index in the position
 	                         vector at which is stored each node at each location in the
 	                         mesh
-	    :param values: the relative importance of each cell in the cell matrix
-	    :param scales: the desired relative areal scale factor for each location in the cell matrix
+	    :param values: a list of the relative importance of the shape of each cell in the cell matrix, for each
+	                   section.  it's a list so that you can specify different kinds of importance.
 	    :param dΦ: the spacing between each adjacent row of nodes (km)
 	    :param dΛ: the spacing between adjacent nodes in each row (km)
-	    :return: cell_definitions: the list of cells, each defined by a set of seven
-	                               indices (the section index, the two indices specifying
-	                               its location the matrix, and the indices of the four
-	                               vertex nodes (two of them are probably the same node)
-	                               in the node vector in the order: west, east, south, north
-	             cell_weights: the volume of each cell for elastic-energy-summing porpoises
-	             cell_scales: the desired relative linear scale factor for each cell
+	    :return: cell_definitions: the list of cells, each defined by a set of seven indices (the section index, the
+	                               two indices specifying its location the matrix, and the indices of the four vertex
+	                               nodes (two of them are probably the same node) in the node vector in the order:
+	                               west, east, south, north
+	             cell_weights: the volume of each cell for elastic-energy-summing porpoises; one 1d array for each
+	                           element of values
 
 	"""
 	# start off by resampling these in a useful way
-	for h in range(node_indices.shape[0]):
-		values[h] = downsample(values[h], node_indices.shape[1:])
-		scales[h] = downsample(scales[h], node_indices.shape[1:])
-	values = np.stack(values) # TODO: make values on glue borders a little smarter; shared cells should share weights
-	scales = np.stack(scales)
+	for k in range(len(values)):
+		for h in range(node_indices.shape[0]):
+			values[k][h] = downsample(values[k][h], node_indices.shape[1:])
+		values[k] = np.stack(values[k])
 
 	# assemble a list of all possible cells
 	h, i, j = index_grid((node_indices.shape[0],
 	                      node_indices.shape[1] - 1,
 	                      node_indices.shape[2] - 1))
 	h, i, j = h.ravel(), i.ravel(), j.ravel()
-	cell_definitions = np.empty((0, 12), dtype=int)
-	cell_values = np.empty((0,), dtype=float)
+	cell_definitions = np.empty((0, 9), dtype=int)
+	cell_values = [np.empty((0,), dtype=float)]*len(values)
 	for di in range(0, 2):
 		for dj in range(0, 2):
 			# define them by their indices and neiboring node indices
@@ -148,43 +149,45 @@ def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray], scales: 
 			north_node = node_indices[h, i + 1, j + dj]
 			cell_definitions = np.concatenate([
 				cell_definitions,
-				np.stack([h, i, j, i + di, i + 1 - di, # these first five will get chopd off once I'm done with them
+				np.stack([i + di, i + 1 - di, # these first two will get chopd off once I'm done with them
 					      h, i + di, j + dj, # these middle three are for generic spacially dependent stuff
 				          west_node, east_node, # these bottom four are the really important indices
 				          south_node, north_node], axis=-1)])
-			cell_values = np.concatenate([
-				cell_values,
-				values[h, i, j]
-			])
+			for k in range(len(values)):
+				cell_values[k] = np.concatenate([
+					cell_values[k],
+					values[k][h, i, j],
+				])
 
 	# then remove all duplicates
 	_, unique_indices, final_indices = np.unique(cell_definitions[:, -4:], axis=0, return_index=True, return_inverse=True)
-	cell_values, _ = np.histogram(final_indices, np.arange(final_indices.max() + 2), weights=cell_values) # make sure to add corresponding cell values
+	for k in range(len(values)):
+		cell_values[k], _ = np.histogram(final_indices, np.arange(final_indices.max() + 2),
+		                                 weights=cell_values[k]) # make sure to add corresponding cell values
 	cell_definitions = cell_definitions[unique_indices, :]
 
 	# and remove the ones that rely on missingnodes or that rely on the poles too many times
 	missing_node = np.any(cell_definitions[:, -4:] == -1, axis=1)
 	degenerate = cell_definitions[:, -4] == cell_definitions[:, -3]
 	cell_definitions = cell_definitions[~(missing_node | degenerate), :]
-	cell_values = cell_values[~(missing_node | degenerate)]
+	for k in range(len(values)):
+		cell_values[k] = cell_values[k][~(missing_node | degenerate)]
 
 	# you can pull apart the cell definitions now
-	cell_hs = cell_definitions[:, 0]
-	cell_is = cell_definitions[:, 1]
-	cell_js = cell_definitions[:, 2]
-	cell_node1_is = cell_definitions[:, 3]
-	cell_node2_is = cell_definitions[:, 4]
-	cell_definitions = cell_definitions[:, 5:]
+	cell_node1_is = cell_definitions[:, 0]
+	cell_node2_is = cell_definitions[:, 1]
+	cell_definitions = cell_definitions[:, 2:]
 
 	# finally, calculate their areas and stuff
 	A_1 = dΦ[cell_node1_is]*dΛ[cell_node1_is]
 	A_2 = dΦ[cell_node2_is]*dΛ[cell_node2_is]
 	cell_areas = (3*A_1 + A_2)/16/(4*np.pi*EARTH.R**2)
 
-	cell_weights = cell_areas*np.minimum(1, cell_values)
-	cell_scales = np.sqrt(scales[cell_hs, cell_is, cell_js]) # this sqrt converts it from areal scale to linear
+	cell_weights = []
+	for k in range(len(values)):
+		cell_weights.append(cell_areas*np.minimum(1, np.maximum(MIN_WEIGHT, cell_values[k])))
 
-	return cell_definitions, cell_weights, cell_scales
+	return cell_definitions, cell_weights
 
 
 def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
@@ -272,13 +275,12 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
 
 
 def compute_principal_strains(positions: np.ndarray,
-                              cell_definitions: np.ndarray, cell_scales: np.ndarray,
+                              cell_definitions: np.ndarray,
                               dΦ: np.ndarray, dΛ: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 	""" take a set of cell definitions and 2D coordinates for each node, and calculate
 	    the Tissot-ellipse semiaxes of each cell.
 	    :param positions: the vector specifying the location of each node in the map plane
 	    :param cell_definitions: the list of cells, each defined by seven indices
-	    :param cell_scales: the linear scale factor for each cell
 	    :param dΦ: the distance between adjacent rows of nodes (km)
 	    :param dΛ: the distance between adjacent nodes in each row (km)
 	"""
@@ -286,12 +288,12 @@ def compute_principal_strains(positions: np.ndarray,
 
 	west = positions[cell_definitions[:, 3], :]
 	east = positions[cell_definitions[:, 4], :]
-	F_λ = ((east - west)/(dΛ[i]/cell_scales)[:, np.newaxis])
+	F_λ = ((east - west)/dΛ[i, np.newaxis])
 	dxdΛ, dydΛ = F_λ[:, 0], F_λ[:, 1]
 
 	south = positions[cell_definitions[:, 5], :]
 	north = positions[cell_definitions[:, 6], :]
-	F_ф = ((north - south)/(dΦ[i]/cell_scales)[:, np.newaxis])
+	F_ф = ((north - south)/dΦ[i, np.newaxis])
 	dxdΦ, dydΦ = F_ф[:, 0], F_ф[:, 1]
 
 	trace = np.sqrt((dxdΛ + dydΦ)**2 + (dxdΦ - dydΛ)**2)/2
@@ -438,15 +440,14 @@ def load_options(filename: str) -> dict[str, str]:
 	return options
 
 
-def load_pixel_values(filename: str, cut_set: str, num_sections: int, minimum=-inf) -> list[np.ndarray]:
+def load_pixel_values(filename: str, cut_set: str, num_sections: int) -> list[np.ndarray]:
 	""" load and resample a generic 2D raster image """
 	if filename == "uniform":
 		return [np.array(1.)]*num_sections
 	else:
 		values = []
 		for h in range(num_sections):
-			values.append(np.maximum(
-				minimum, tifffile.imread(f"../spec/pixels_{cut_set}_{h}_{filename}.tif")))
+			values.append(tifffile.imread(f"../spec/pixels_{cut_set}_{h}_{filename}.tif"))
 		return values
 
 
@@ -478,8 +479,7 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np.ndarray,
               values: list[float], grads: list[float], final: bool,
               ф_mesh: np.ndarray, λ_mesh: np.ndarray, dΦ: np.ndarray, dΛ: np.ndarray,
-              mesh_index: np.ndarray, cell_definitions: np.ndarray,
-              cell_weights: np.ndarray, cell_scales: np.ndarray,
+              mesh_index: np.ndarray, cell_definitions: np.ndarray,  cell_weights: np.ndarray,
               coastlines: list[np.array], border: np.ndarray | DenseSparseArray,
               map_width: float, map_hite: float,
               map_axes: plt.Axes, hist_axes: plt.Axes,
@@ -511,7 +511,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 		                 c=-np.linalg.norm(velocity, axis=1),
 		                 cmap=CUSTOM_CMAP["speed"], zorder=0) # TODO: zoom in and rotate automatically
 
-	a, b = compute_principal_strains(all_positions, cell_definitions, cell_scales, dΦ, dΛ)
+	a, b = compute_principal_strains(all_positions, cell_definitions, dΦ, dΛ)
 
 	# mark any nodes with nonpositive principal strains
 	worst_cells = np.nonzero((a <= 0) | (b <= 0))[0]
@@ -658,10 +658,10 @@ def create_map_projection(configuration_file: str):
 	print(f"loaded options from {configuration_file}")
 	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
 	print(f"loaded a {np.sum(np.isfinite(mesh[:, :, :, 0]))}-node mesh")
-	scale = load_pixel_values(configure["scale"], configure["cuts"], mesh.shape[0], .03)
-	print(f"loaded the {configure['scale']} map as the scale")
-	weights = load_pixel_values(configure["weights"], configure["cuts"], mesh.shape[0], .03)
-	print(f"loaded the {configure['weights']} map as the weights")
+	scale_weights = load_pixel_values(configure["scale_weights"], configure["cuts"], mesh.shape[0])
+	print(f"loaded the {configure['scale_weights']} map as the area weights")
+	shape_weights = load_pixel_values(configure["shape_weights"], configure["cuts"], mesh.shape[0])
+	print(f"loaded the {configure['shape_weights']} map as the angle weights")
 	width, height = (float(value) for value in configure["size"].split(","))
 	print(f"setting the maximum map size to {width}×{height} km")
 
@@ -673,7 +673,8 @@ def create_map_projection(configuration_file: str):
 	node_indices, node_positions = enumerate_nodes(mesh)
 
 	# and then do the same thing for cell corners
-	cell_definitions, cell_weights, cell_scales = enumerate_cells(node_indices, weights, scale, dΦ, dΛ)
+	cell_definitions, [cell_shape_weights, cell_scale_weights] = enumerate_cells(
+		node_indices, [shape_weights, scale_weights], dΦ, dΛ)
 
 	# define functions that can define the node positions from a reduced set of them
 	transformations = []
@@ -721,7 +722,7 @@ def create_map_projection(configuration_file: str):
 	def compute_energy_lenient(positions: np.ndarray) -> float:
 		# one that aggressively pushes the mesh to have all positive strains
 		a, b = compute_principal_strains(restore @ positions,
-		                                 cell_definitions, cell_scales, dΦ, dΛ)
+		                                 cell_definitions, dΦ, dΛ)
 		if np.all(a > 0) and np.all(b > 0):
 			return -inf
 		elif np.any(a < -100) or np.any(b < -100): # make this check to avoid annoying overflow warnings
@@ -734,14 +735,14 @@ def create_map_projection(configuration_file: str):
 	def compute_energy_strict(positions: np.ndarray) -> float:
 		# and one that throws an error when any strains are negative
 		a, b = compute_principal_strains(restore @ positions,
-		                                 cell_definitions, cell_scales, dΦ, dΛ)
+		                                 cell_definitions, dΦ, dΛ)
 		if np.any(a <= 0) or np.any(b <= 0):
 			return inf
 		else:
 			ab = a*b
 			scale_term = (ab**2 - 1)/2 - np.log(ab)
 			shape_term = (a - b)**2
-			return ((scale_term + 2*shape_term)*cell_weights).sum()
+			return (scale_term*cell_scale_weights + 2*shape_term*cell_shape_weights).sum()
 
 	def plot_status(positions: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, final: bool) -> None:
 		values.append(value)
@@ -749,7 +750,7 @@ def create_map_projection(configuration_file: str):
 		if len(values) == 1 or np.random.random() < 1e-1 or final:
 			show_mesh(positions, restore @ positions, step, values, grads, final,
 			          ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
-			          cell_definitions, cell_weights, cell_scales,
+			          cell_definitions, cell_scale_weights,
 			          coastlines, border_matrix, width, height,
 			          map_axes, hist_axes, valu_axes, diff_axes)
 			main_fig.canvas.draw()
