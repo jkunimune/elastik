@@ -700,8 +700,8 @@ def create_map_projection(configuration_file: str):
 	for d, size in [(0, width), (1, height)]:
 		if np.isfinite(width):
 			node_positions[:, d] = interp(node_positions[:, d],
-			                              np.min(node_positions[:, d]),
-			                              np.max(node_positions[:, d]),
+			                              np.min(bounds_matrix@node_positions[:, d]),
+			                              np.max(bounds_matrix@node_positions[:, d]),
 			                              -size/2, size/2)
 
 	# load the coastline data from Natural Earth
