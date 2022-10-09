@@ -13,6 +13,7 @@ import numpy as np
 import shapefile
 import tifffile
 from matplotlib import pyplot as plt
+from numpy.typing import NDArray
 from scipy.interpolate import RegularGridInterpolator
 
 from cmap import CUSTOM_CMAP
@@ -566,6 +567,10 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 	                          to the HDF5 file as attributes.
 	    :param projected_border: the px2 array of cartesian points representing the
 	"""
+	plt.figure()
+	plt.plot(projected_border[:, 0], projected_border[:, 1], "k-o")
+	plt.axis("equal")
+	plt.show()
 	assert len(section_borders) == len(section_names)
 
 	# start by calculating some things
@@ -649,6 +654,21 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 			f.write("\n")
 
 
+def project_section_borders(ф_mesh: NDArray[float], λ_mesh: NDArray[float],
+                            node_indices: NDArray[int], section_borders: list[NDArray[float]],
+                            resolution: float) -> DenseSparseArray:
+	borders = [] # TODO: put this in a function so I can do this at a lower resolution for the fit and a hier one for the end result
+	for h, border in enumerate(section_borders): # take the border of each section
+		first_pole = np.nonzero(abs(border[:, 0]) == pi/2)[0][0]
+		border = np.concatenate([border[first_pole:], border[1:first_pole + 1]]) # rotate the path so it starts and ends at a pole
+		border = border[dilate(abs(border[:, 0]) != pi/2, 1)] # and then remove points that move along the pole
+		borders.append(project(refine_path(border, resolution, period=2*pi), # finally, refine it before projecting
+		                       ф_mesh, λ_mesh, node_indices, section_index=h))
+	border_matrix = simplify_path(DenseSparseArray.concatenate(borders), cyclic=True) # simplify the borders together to remove excess
+	return border_matrix
+
+
+
 def create_map_projection(configuration_file: str):
 	""" create a map projection
 	    :param configuration_file: "oceans" | "continents" | "countries"
@@ -684,14 +704,7 @@ def create_map_projection(configuration_file: str):
 	transformations.append((Scalar(1), Scalar(1))) # finishing with the full unreduced set
 
 	# set up the fitting constraints that will force the map to fit inside a box
-	borders = [] # TODO: put this in a function so I can do this at a lower resolution for the fit and a hier one for the end result
-	for h, border in enumerate(section_borders): # take the border of each section
-		first_pole = np.nonzero(abs(border[:, 0]) == pi/2)[0][0]
-		border = np.concatenate([border[first_pole:], border[1:first_pole + 1]]) # rotate the path so it starts and ends at a pole
-		border = border[dilate(abs(border[:, 0]) != pi/2, 1)] # and then remove points that move along the pole
-		borders.append(project(refine_path(border, pi/50, period=2*pi), # finally, refine it before projecting
-		                       ф_mesh, λ_mesh, node_indices, section_index=h))
-	border_matrix = simplify_path(DenseSparseArray.concatenate(borders), cyclic=True) # simplify the borders together to remove excess
+	border_matrix = project_section_borders(ф_mesh, λ_mesh, node_indices, section_borders, .05)
 	double_border_matrix = DenseSparseArray.concatenate([border_matrix, -border_matrix]) # and add a negative version for the left bounds
 	map_size = np.array([width, height])
 
@@ -807,10 +820,11 @@ def create_map_projection(configuration_file: str):
 	mesh[node_indices == -1, :] = nan
 
 	# and save it!
+	border_matrix = project_section_borders(ф_mesh, λ_mesh, node_indices, section_borders, 5e-3)
 	save_mesh(configure["name"], configure["descript"],
 	          ф_mesh, λ_mesh, mesh,
 	          section_borders, configure["section_names"].split(","),
-	          decimate_path(border_matrix @ node_positions, resolution=10))
+	          decimate_path(border_matrix @ node_positions, resolution=5))
 
 	print(f"elastik {configure['name']} projection saved!")
 
