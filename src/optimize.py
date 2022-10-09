@@ -306,10 +306,8 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			new_state = state + step_size*direction
 			# projecting onto the legal subspace if necessary
 			if bounds_limits is not None:
-				for k in range(bounds_limits.size):
-					new_state[:, k] = polytope_project(new_state[:, k],
-					                                   bounds_matrix, bounds_limits[k],
-					                                   bounds_tolerance)
+				new_state = polytope_project(
+					new_state, bounds_matrix, bounds_limits, bounds_tolerance)
 			step = new_state - state
 			new_value = get_value(new_state)
 			# if we're going in the wrong direction, disable fast mode and try again
@@ -338,7 +336,9 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		else:
 			report(state, value, gradient, step, True)
 			print(f"Completed in {num_line_searches} iterations.")
-			return polytope_project(state, bounds_matrix, bounds_limits, 0, 100)
+			if bounds_limits is not None:
+				state = polytope_project(state, bounds_matrix, bounds_limits, 0, 100)
+			return state
 
 		# take the new state and error value
 		state = new_state

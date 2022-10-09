@@ -693,16 +693,8 @@ def create_map_projection(configuration_file: str):
 		borders.append(project(refine_path(border, pi/50, period=2*pi), # finally, refine it before projecting
 		                       ф_mesh, λ_mesh, node_indices, section_index=h))
 	border_matrix = simplify_path(DenseSparseArray.concatenate(borders), cyclic=True) # simplify the borders together to remove excess
-	bounds_matrix = DenseSparseArray.concatenate([border_matrix, -border_matrix]) # and add a negative version for the left bounds
-	bounds_limits = np.array([width, height])/2
-
-	# naively fit the initial condition into the bounding box if there is one
-	for d, size in [(0, width), (1, height)]:
-		if np.isfinite(width):
-			node_positions[:, d] = interp(node_positions[:, d],
-			                              np.min(bounds_matrix@node_positions[:, d]),
-			                              np.max(bounds_matrix@node_positions[:, d]),
-			                              -size/2, size/2)
+	double_border_matrix = DenseSparseArray.concatenate([border_matrix, -border_matrix]) # and add a negative version for the left bounds
+	map_size = np.array([width, height])
 
 	# load the coastline data from Natural Earth
 	coastlines = load_coastline_data()
@@ -719,18 +711,24 @@ def create_map_projection(configuration_file: str):
 	values, grads = [], []
 
 	# define the objective functions
-	def compute_energy_lenient(positions: np.ndarray) -> float:
+	def compute_energy_aggressive(positions: np.ndarray) -> float:
 		# one that aggressively pushes the mesh to have all positive strains
 		a, b = compute_principal_strains(restore @ positions,
 		                                 cell_definitions, dΦ, dΛ)
 		if np.all(a > 0) and np.all(b > 0):
 			return -inf
-		elif np.any(a < -100) or np.any(b < -100): # make this check to avoid annoying overflow warnings
-			return inf
 		else:
 			a_term = np.exp(-6*a)
 			b_term = np.exp(-6*b)
 			return (a_term + b_term).sum()
+
+	def compute_energy_lenient(positions: np.ndarray) -> float:
+		# one that approximates the true cost function without requiring positive strains
+		a, b = compute_principal_strains(restore @ positions,
+		                                 cell_definitions, dΦ, dΛ)
+		scale_term = (a + b - 2)**2
+		shape_term = (a - b)**2
+		return (scale_term*cell_scale_weights + 2*shape_term*cell_shape_weights).sum()
 
 	def compute_energy_strict(positions: np.ndarray) -> float:
 		# and one that throws an error when any strains are negative
@@ -760,17 +758,36 @@ def create_map_projection(configuration_file: str):
 	# then minimize!
 	print("begin fitting process.")
 	try:
-		# progress from the coarsest transformd mesh to finer and finer ones
-		for reduce, restore in transformations:
-			node_positions = reduce @ node_positions
-			node_positions = minimize(func=compute_energy_strict,
-			                          backup_func=compute_energy_lenient,
-			                          guess=node_positions,
-			                          bounds_matrix=bounds_matrix @ restore,
-			                          bounds_limits=bounds_limits,
-			                          report=plot_status,
-			                          tolerance=1e-3/EARTH.R)
-			node_positions = restore @ node_positions
+			# progress from the coarsest transformd mesh to finer and finer ones
+			for reduce, restore in transformations:
+				node_positions = reduce @ node_positions
+
+				if reduce.ndim == 2: # when you've coarsened the mesh
+					# you must use the lenient energy function
+					primary_func, backup_func = compute_energy_lenient, None
+					# and you should ignore bounds
+					bounds_matrix, bounds_limits = None, None
+				else: # once you reach the final fit
+					# you should switch to the final energy function
+					primary_func, backup_func = compute_energy_strict, compute_energy_aggressive
+					# and impose bounds, and make sure the initial condition fits them
+					bounds_matrix, bounds_limits = double_border_matrix @ restore, map_size/2
+					for k in range(bounds_limits.size):
+						node_positions[:, k] = interp(node_positions[:, k],
+						                              np.min(border_matrix@node_positions[:, k]),
+						                              np.max(border_matrix@node_positions[:, k]),
+						                              -bounds_limits[k], bounds_limits[k])
+
+				# finally, delegate the rest to the gradient descent code
+				node_positions = minimize(func=primary_func,
+				                          backup_func=backup_func,
+				                          guess=node_positions,
+				                          bounds_matrix=bounds_matrix,
+				                          bounds_limits=bounds_limits,
+				                          report=plot_status,
+				                          tolerance=1e-3/EARTH.R)
+
+				node_positions = restore @ node_positions
 
 	except RuntimeError as e:
 		traceback.print_exc()

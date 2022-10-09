@@ -32,6 +32,7 @@ class Scalar:
 	def __init__(self, value):
 		""" a float with a matmul method """
 		self.value = value
+		self.ndim = 0
 
 	def __matmul__(self, other):
 		return self.value * other
