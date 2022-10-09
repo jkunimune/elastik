@@ -4,12 +4,16 @@ util.py
 
 some handy utility functions that are used in multiple places
 """
-from math import hypot, pi
+from math import hypot, pi, cos, sin, inf, copysign
 from typing import Sequence, Iterable
 
 import numpy as np
+from numpy.typing import NDArray
 
 from sparse import DenseSparseArray
+
+
+Numeric = float | NDArray[float]
 
 
 class Ellipsoid:
@@ -45,11 +49,11 @@ EARTH = Ellipsoid(6_378.137, 1/298.257_223_563)
 """ the figure of the earth as given by WGS 84 """
 
 
-def bin_centers(bin_edges: np.ndarray) -> np.ndarray:
+def bin_centers(bin_edges: NDArray[float]) -> NDArray[float]:
 	""" calculate the center of each bin """
 	return (bin_edges[1:] + bin_edges[:-1])/2
 
-def bin_index(x: float | np.ndarray, bin_edges: np.ndarray) -> float | np.ndarray:
+def bin_index(x: float | NDArray[float], bin_edges: NDArray[float]) -> float | NDArray[int]:
 	""" I dislike the way numpy defines this function
 	    :param: coerce whether to force everything into the bins (useful when there's roundoff)
 	"""
@@ -60,28 +64,33 @@ def index_grid(shape: Sequence[int]) -> Sequence[np.ndarray]:
 	indices = [np.arange(length) for length in shape]
 	return np.meshgrid(*indices, indexing="ij")
 
-def normalize(vector: np.ndarray) -> Sequence[float]:
+def normalize(vector: NDArray[float]) -> NDArray[float]:
 	""" normalize a vector such that it can be compared to other vectors on the basis of direction alone """
 	if np.all(np.equal(vector, 0)):
 		return vector
 	else:
 		return np.divide(vector, abs(vector[np.argmax(np.abs(vector))]))
 
-def wrap_angle(x: float | np.ndarray) -> float | np.ndarray: # TODO: come up with a better name
+def wrap_angle(x: Numeric) -> Numeric: # TODO: come up with a better name
 	""" wrap an angular value into the range [-pi, pi) """
 	return x - np.floor((x + pi)/(2*pi))*2*pi
 
-def to_cartesian(ф: float | np.ndarray, λ: float | np.ndarray) -> tuple[float | np.ndarray, float | np.ndarray, float | np.ndarray]:
+def to_cartesian(ф: Numeric, λ: Numeric) -> tuple[Numeric, Numeric, Numeric]:
 	""" convert spherical coordinates in degrees to unit-sphere cartesian coordinates """
 	return (np.cos(np.radians(ф))*np.cos(np.radians(λ)),
 	        np.cos(np.radians(ф))*np.sin(np.radians(λ)),
 	        np.sin(np.radians(ф)))
 
-def interp(x: float, x0: float, x1: float, y0: float, y1: float):
+def rotation_matrix(angle: float) -> NDArray[float]:
+	""" calculate a simple 2d rotation matrix """
+	return np.array([[cos(angle), -sin(angle)],
+	                 [sin(angle),  cos(angle)]])
+
+def interp(x: Numeric, x0: float, x1: float, y0: float, y1: float):
 	""" do linear interpolation given two points, and *not* assuming x1 >= x0 """
 	return (x - x0)/(x1 - x0)*(y1 - y0) + y0
 
-def dilate(x: np.ndarray, distance: int) -> np.ndarray:
+def dilate(x: NDArray[bool], distance: int) -> NDArray[bool]:
 	""" take a 1D boolean array and make it so that any Falses near Trues become True.
 	    then return the modified array.
 	"""
@@ -90,10 +99,65 @@ def dilate(x: np.ndarray, distance: int) -> np.ndarray:
 		x[1:] |= x[:-1]
 	return x
 
-def erode_2d(x: np.ndarray, distance: int) -> np.ndarray:
-	""" take a 2D boolean array and make it so that any Trues near Falses become True. """
+def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float]]:
+	""" find the smallest rectangle that contains the given polygon, and parameterize it with the
+	    rotation and translation needed to make it landscape and centered on the origin.
+	"""
+	if polygon.ndim != 2 or polygon.shape[0] < 3 or polygon.shape[1] != 2:
+		raise ValueError("the polygon must be a sequence of at least 3 point sin 2-space")
+	start = np.argmax(polygon[:, 0])
+	polygon = np.concatenate([polygon[start:], polygon[:start]])
+	# start by finding the convex hull
+	hull = convex_hull(polygon)
+	best_transform = None
+	best_area = inf
+	# the best rectangle will be oriented along one of the convex hull edges
+	for i in range(hull.shape[0]):
+		# measure the angle
+		angle = np.arctan(np.divide(*(hull[i, ::-1] - hull[i - 1, ::-1])))
+		rotated_hull = (rotation_matrix(-angle)@hull.T).T
+		x_min, y_min = np.min(rotated_hull, axis=0)
+		x_max, y_max = np.max(rotated_hull, axis=0)
+		# measure the area
+		area = (x_max - x_min)*(y_max - y_min)
+		# take the one that has the smallest area
+		if area < best_area:
+			print(f"{area}!")
+			best_area = area
+			x_center, y_center = (x_min + x_max)/2, (y_min + y_max)/2
+			# (make it landscape)
+			if x_max - x_min < y_max - y_min:
+				x_center, y_center = copysign(y_center, angle), copysign(x_center, -angle)
+				angle = angle - copysign(pi/2, angle)
+			best_transform = -angle, (-x_center, -y_center)
+		else:
+			print(f"{area}")
+	return best_transform
 
-def decimate_path(path: list[tuple[float, float]] | np.ndarray, resolution: float) -> list[tuple[float, float]] | np.ndarray:
+def rotate_and_shift(points: NDArray[float], rotation: float, shift: NDArray[float]) -> NDArray[float]:
+	""" rotate some points about the origin and then translate them """
+	if points.ndim != 2 or points.shape[1] != 2:
+		raise ValueError("the polygon must be a sequence of at least 3 point sin 2-space")
+	return (rotation_matrix(rotation)@points.T).T + shift
+
+def convex_hull(polygon: NDArray[float]) -> NDArray[float]:
+	""" take a polygon and return a copy that is missing all of the points that are inside the
+	    convex hull.
+	"""
+	hull =  [polygon[0, :], polygon[1, :]]
+	# define a minor utility function
+	def convex(hull):
+		a, b, c = hull
+		return (c[0] - b[0])*(b[1] - a[1]) - (c[1] - b[1])*(b[0] - a[0]) < 0
+	# go thru the polygon one thing at a time
+	for i in range(2, polygon.shape[0]):
+		hull.append(polygon[i, :])
+		# then, if the end is no longer convex, backtrace
+		while len(hull) >= 3 and not convex(hull[-3:]):
+			hull.pop(-2)
+	return np.array(hull)
+
+def decimate_path(path: list[tuple[float, float]] | NDArray[float], resolution: float) -> list[tuple[float, float]] | NDArray[float]:
 	""" simplify a path in-place such that the number of nodes on each segment is only as
 	    many as needed to make the curves look nice, using Ramer-Douglas
 	"""
@@ -116,7 +180,7 @@ def decimate_path(path: list[tuple[float, float]] | np.ndarray, resolution: floa
 		return np.concatenate([decimated_head, decimated_tail])
 
 
-def simplify_path(path: list[Iterable[float]] | np.ndarray | DenseSparseArray, cyclic=False) -> list[Iterable[float]] | np.ndarray | DenseSparseArray:
+def simplify_path(path: list[Iterable[float]] | NDArray[float] | DenseSparseArray, cyclic=False) -> list[Iterable[float]] | NDArray[float] | DenseSparseArray:
 	""" simplify a path in-place such that strait segments have no redundant midpoints
 	    marked in them, and it does not retrace itself
 	"""
@@ -152,7 +216,7 @@ def simplify_path(path: list[Iterable[float]] | np.ndarray | DenseSparseArray, c
 	return path[index, ...]
 
 
-def refine_path(path: list[tuple[float, float]] | np.ndarray, resolution: float, period=np.inf) -> np.ndarray:
+def refine_path(path: list[tuple[float, float]] | NDArray[float], resolution: float, period=np.inf) -> NDArray[float]:
 	""" add points to a path such that it has no segments longer than resolution """
 	i = 1
 	while i < len(path):
@@ -167,7 +231,7 @@ def refine_path(path: list[tuple[float, float]] | np.ndarray, resolution: float,
 	return path
 
 
-def inside_polygon(x: np.ndarray, y: np.ndarray, polygon: np.ndarray, convex=False):
+def inside_polygon(x: NDArray[float], y: NDArray[float], polygon: NDArray[float], convex=False) -> NDArray[bool]:
 	""" take a set of points in the plane and run a polygon containment test
 	    :param x: the x coordinates of the points
 	    :param y: the y coordinates of the points
@@ -184,7 +248,7 @@ def inside_polygon(x: np.ndarray, y: np.ndarray, polygon: np.ndarray, convex=Fal
 	return inside
 
 
-def inside_region(ф: np.ndarray, λ: np.ndarray, region: np.ndarray, period=360) -> np.ndarray:
+def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float], period=360) -> NDArray[bool]:
 	""" take a set of points on a globe and run a polygon containment test
 	    :param ф: the latitudes in degrees, either for each point in question or for each
 	              row if the relevant points are in a grid

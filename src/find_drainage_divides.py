@@ -234,7 +234,7 @@ if __name__ == "__main__":
 		paths[i] = paths[i][::-1, :]
 
 	# save and plot them
-	np.savetxt("../spec/cuts_mountains.txt", np.concatenate(paths), fmt="%.1f")
+	np.savetxt("../spec/cuts_mountains.txt", np.concatenate(paths), fmt="%.1f")  # type: ignore
 	plt.figure()
 	plt.contourf(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 21), vmax=3000, cmap="cividis")
 	plt.contour(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 21), colors="k", linewidths=0.2)

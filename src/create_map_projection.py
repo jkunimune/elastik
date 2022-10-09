@@ -20,8 +20,7 @@ from elastik import gradient, smooth_interpolate
 from optimize import minimize
 from sparse import DenseSparseArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, inside_polygon, interp, \
-	simplify_path, refine_path, decimate_path
-
+	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle
 
 MIN_WEIGHT = .03 # the ratio of the whitespace weight to the subject weight
 
@@ -758,36 +757,38 @@ def create_map_projection(configuration_file: str):
 	# then minimize!
 	print("begin fitting process.")
 	try:
-			# progress from the coarsest transformd mesh to finer and finer ones
-			for reduce, restore in transformations:
-				node_positions = reduce @ node_positions
+		# progress from the coarsest transformd mesh to finer and finer ones
+		for reduce, restore in transformations:
+			node_positions = reduce @ node_positions
 
-				if reduce.ndim == 2: # when you've coarsened the mesh
-					# you must use the lenient energy function
-					primary_func, backup_func = compute_energy_lenient, None
-					# and you should ignore bounds
-					bounds_matrix, bounds_limits = None, None
-				else: # once you reach the final fit
-					# you should switch to the final energy function
-					primary_func, backup_func = compute_energy_strict, compute_energy_aggressive
-					# and impose bounds, and make sure the initial condition fits them
-					bounds_matrix, bounds_limits = double_border_matrix @ restore, map_size/2
-					for k in range(bounds_limits.size):
+			if reduce.ndim == 2: # when you've coarsened the mesh
+				# you must use the lenient energy function
+				primary_func, backup_func = compute_energy_lenient, None
+				# and you should ignore bounds
+				bounds_matrix, bounds_limits = None, None
+			else: # once you reach the final fit
+				# you should switch to the final energy function
+				primary_func, backup_func = compute_energy_strict, compute_energy_aggressive
+				# and impose bounds, and make sure the initial condition fits them
+				bounds_matrix, bounds_limits = double_border_matrix @ restore, map_size/2
+				node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))
+				border = border_matrix@node_positions
+				for k in range(bounds_limits.size):
+					if np.ptp(border[:, k]) > 2*bounds_limits[k]:
 						node_positions[:, k] = interp(node_positions[:, k],
-						                              np.min(border_matrix@node_positions[:, k]),
-						                              np.max(border_matrix@node_positions[:, k]),
+						                              np.min(border[:, k]), np.max(border[:, k]),
 						                              -bounds_limits[k], bounds_limits[k])
 
-				# finally, delegate the rest to the gradient descent code
-				node_positions = minimize(func=primary_func,
-				                          backup_func=backup_func,
-				                          guess=node_positions,
-				                          bounds_matrix=bounds_matrix,
-				                          bounds_limits=bounds_limits,
-				                          report=plot_status,
-				                          tolerance=1e-3/EARTH.R)
+			# finally, delegate the rest to the gradient descent code
+			node_positions = minimize(func=primary_func,
+			                          backup_func=backup_func,
+			                          guess=node_positions,
+			                          bounds_matrix=bounds_matrix,
+			                          bounds_limits=bounds_limits,
+			                          report=plot_status,
+			                          tolerance=1e-3/EARTH.R)
 
-				node_positions = restore @ node_positions
+			node_positions = restore @ node_positions
 
 	except RuntimeError as e:
 		traceback.print_exc()
@@ -797,6 +798,9 @@ def create_map_projection(configuration_file: str):
 
 	print("end fitting process.")
 	small_fig.canvas.manager.set_window_title("Done!")
+
+	# fit the result in a landscape rectangle
+	node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))
 
 	# apply the optimized vector back to the mesh
 	mesh = node_positions[node_indices, :]
@@ -812,8 +816,8 @@ def create_map_projection(configuration_file: str):
 
 
 if __name__ == "__main__":
-	# create_map_projection("oceans")
+	create_map_projection("oceans")
 	# create_map_projection("continents")
-	create_map_projection("countries")
+	# create_map_projection("countries")
 
 	plt.show()

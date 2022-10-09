@@ -13,7 +13,7 @@ from math import sqrt
 from typing import Callable
 
 import numpy as np
-from numpy._typing import NDArray
+from numpy.typing import NDArray
 
 from sparse import DenseSparseArray
 
@@ -260,13 +260,13 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	def get_value(x: np.ndarray) -> float:
 		value = func(x)
 		if np.isnan(value):
-			raise RuntimeError("there are nan values")
+			raise RuntimeError(f"there are nan values at x = {x}")
 		return value
 	# define a utility function to use Variable to get the gradient of the value
 	def get_gradient(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 		variable = func(Variable(x, independent=True))
 		if np.any(np.isnan(variable.gradients)):
-			raise RuntimeError("there are nan gradients")
+			raise RuntimeError(f"there are nan gradients at x = {x}")
 		return variable.gradients, np.sum(variable.curvatures, axis=-1)
 
 	initial_value = get_value(guess)
