@@ -71,7 +71,7 @@ def normalize(vector: NDArray[float]) -> NDArray[float]:
 	else:
 		return np.divide(vector, abs(vector[np.argmax(np.abs(vector))]))
 
-def wrap_angle(x: Numeric) -> Numeric: # TODO: come up with a better name
+def wrap_angle(x: Numeric) -> Numeric:
 	""" wrap an angular value into the range [-pi, pi) """
 	return x - np.floor((x + pi)/(2*pi))*2*pi
 
@@ -105,8 +105,6 @@ def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float
 	"""
 	if polygon.ndim != 2 or polygon.shape[0] < 3 or polygon.shape[1] != 2:
 		raise ValueError("the polygon must be a sequence of at least 3 point sin 2-space")
-	start = np.argmax(polygon[:, 0])
-	polygon = np.concatenate([polygon[start:], polygon[:start]])
 	# start by finding the convex hull
 	hull = convex_hull(polygon)
 	best_transform = None
@@ -122,7 +120,6 @@ def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float
 		area = (x_max - x_min)*(y_max - y_min)
 		# take the one that has the smallest area
 		if area < best_area:
-			print(f"{area}!")
 			best_area = area
 			x_center, y_center = (x_min + x_max)/2, (y_min + y_max)/2
 			# (make it landscape)
@@ -130,8 +127,6 @@ def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float
 				x_center, y_center = copysign(y_center, angle), copysign(x_center, -angle)
 				angle = angle - copysign(pi/2, angle)
 			best_transform = -angle, (-x_center, -y_center)
-		else:
-			print(f"{area}")
 	return best_transform
 
 def rotate_and_shift(points: NDArray[float], rotation: float, shift: NDArray[float]) -> NDArray[float]:
@@ -140,20 +135,26 @@ def rotate_and_shift(points: NDArray[float], rotation: float, shift: NDArray[flo
 		raise ValueError("the polygon must be a sequence of at least 3 point sin 2-space")
 	return (rotation_matrix(rotation)@points.T).T + shift
 
-def convex_hull(polygon: NDArray[float]) -> NDArray[float]:
-	""" take a polygon and return a copy that is missing all of the points that are inside the
-	    convex hull.
+def convex_hull(points: NDArray[float]) -> NDArray[float]:
+	""" take a set of points and return a copy that is missing all of the points that are inside the
+	    convex hull, and they're also widdershins-ordered now, using a graham scan.
 	"""
-	hull =  [polygon[0, :], polygon[1, :]]
+	# first we must sort the points by angle
+	x0, y0 = (np.min(points, axis=0) + np.max(points, axis=0))/2
+	order = np.argsort(np.arctan2(points[:, 1] - y0, points[:, 0] - x0))
+	points = points[order]
+	# then cycle them around so they start on a point we know to be on the hull
+	start = np.argmax(points[:, 0])
+	points = np.concatenate([points[start:], points[:start]])
 	# define a minor utility function
-	def convex(hull):
-		a, b, c = hull
+	def convex(a, b, c):
 		return (c[0] - b[0])*(b[1] - a[1]) - (c[1] - b[1])*(b[0] - a[0]) < 0
 	# go thru the polygon one thing at a time
-	for i in range(2, polygon.shape[0]):
-		hull.append(polygon[i, :])
+	hull =  []
+	for i in range(0, points.shape[0]):
+		hull.append(points[i, :])
 		# then, if the end is no longer convex, backtrace
-		while len(hull) >= 3 and not convex(hull[-3:]):
+		while len(hull) >= 3 and not convex(*hull[-3:]):
 			hull.pop(-2)
 	return np.array(hull)
 

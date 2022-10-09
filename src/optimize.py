@@ -65,7 +65,7 @@ class Variable:
 			# if no gradients are given and these are independent variables
 			elif independent:
 				# make an identity matrix of sorts
-				self.gradients = DenseSparseArray.identity(self.values.shape) # TODO: if the gradient calculation step becomes very slow, I should try using sparse matrices for this part
+				self.gradients = DenseSparseArray.identity(self.values.shape)
 			# if no gradients are given and these are not independent
 			else:
 				# take the values to be constant

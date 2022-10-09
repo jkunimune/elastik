@@ -508,7 +508,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 		# indicate the speed of each node
 		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=2,
 		                 c=-np.linalg.norm(velocity, axis=1),
-		                 cmap=CUSTOM_CMAP["speed"], zorder=0) # TODO: zoom in and rotate automatically
+		                 cmap=CUSTOM_CMAP["speed"], zorder=0)
 
 	a, b = compute_principal_strains(all_positions, cell_definitions, dΦ, dΛ)
 
@@ -816,8 +816,8 @@ def create_map_projection(configuration_file: str):
 
 
 if __name__ == "__main__":
-	create_map_projection("oceans")
+	# create_map_projection("oceans")
 	# create_map_projection("continents")
-	# create_map_projection("countries")
+	create_map_projection("countries")
 
 	plt.show()
