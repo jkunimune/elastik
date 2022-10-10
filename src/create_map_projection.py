@@ -5,6 +5,7 @@ create_map_projection.py
 take a basic mesh and optimize it according to a particular cost function in order to
 create a new Elastic Projection.
 """
+import threading
 import traceback
 from math import inf, pi, log2, nan
 
@@ -492,9 +493,9 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 
 
 def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np.ndarray,
-              values: list[float], grads: list[float], steps: list[float], final: bool,
+              values: list[float], grads: list[float], projected_grads: list[float], final: bool,
               ф_mesh: np.ndarray, λ_mesh: np.ndarray, dΦ: np.ndarray, dΛ: np.ndarray,
-              mesh_index: np.ndarray, cell_definitions: np.ndarray,  cell_weights: np.ndarray,
+              mesh_index: np.ndarray, cell_definitions: np.ndarray, cell_weights: np.ndarray,
               coastlines: list[np.array], border: np.ndarray | DenseSparseArray,
               map_width: float, map_hite: float,
               map_axes: plt.Axes, hist_axes: plt.Axes,
@@ -549,16 +550,16 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 	valu_axes.clear()
 	valu_axes.plot(values)
 	valu_axes.set_xlim(len(values) - 1000, len(values))
-	valu_axes.set_ylim(0, 6*values[-1])
+	valu_axes.set_ylim(0, 6*values[-1] if values else 1)
 	valu_axes.minorticks_on()
 	valu_axes.yaxis.set_tick_params(which='both')
 	valu_axes.grid(which="both", axis="y")
 
 	# plot the convergence criteria over time
 	diff_axes.clear()
-	diff_axes.scatter(np.arange(len(grads)), steps, s=1, zorder=10)
-	diff_axes.scatter(np.arange(len(grads)), grads, s=1, zorder=10)
-	ylim = max(2e-2, np.min(steps)*5e2)
+	diff_axes.scatter(np.arange(len(grads)), projected_grads, s=.5, zorder=10)
+	diff_axes.scatter(np.arange(len(grads)), grads, s=.5, zorder=10)
+	ylim = min(2e-2, np.min(projected_grads, initial=1e3)*5e2)
 	diff_axes.set_ylim(ylim/1e3, ylim)
 	diff_axes.set_yscale("log")
 	diff_axes.grid(which="major", axis="y")
@@ -713,7 +714,7 @@ def create_map_projection(configuration_file: str):
 	schedule.append((minorly_reduce, minorly_restore, 1, True))
 	schedule.append((Scalar(1), Scalar(1), 1, True))
 
-	# set up the plotting axes
+	# set up the plotting axes and state variables
 	small_fig = plt.figure(figsize=(3, 5), num=f"Elastik-{configuration_file} fitting")
 	gridspecs = (plt.GridSpec(3, 1, height_ratios=[2, 1, 1]),
 	             plt.GridSpec(3, 1, height_ratios=[2, 1, 1], hspace=0))
@@ -722,6 +723,9 @@ def create_map_projection(configuration_file: str):
 	diff_axes = small_fig.add_subplot(gridspecs[1][2, :], sharex=valu_axes)
 	main_fig, map_axes = plt.subplots(figsize=(7, 5), num=f"Elastik-{configuration_file}")
 
+	current_state = node_positions
+	current_positions = node_positions
+	latest_step = np.zeros_like(node_positions)
 	values, grads, projected_grads = [], [], []
 
 	# define the objective functions
@@ -756,20 +760,14 @@ def create_map_projection(configuration_file: str):
 			shape_term = (a - b)**2
 			return (scale_term*cell_scale_weights + 2*shape_term*cell_shape_weights).sum()
 
-	def plot_status(positions: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, final: bool) -> None:
+	def record_status(state: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray) -> None:
+		nonlocal current_state, current_positions, latest_step
+		current_state = state
+		current_positions = restore @ state
+		latest_step = step
 		values.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
 		projected_grads.append(-np.sum(grad*step)/np.linalg.norm(step)*EARTH.R)
-		if len(values)%10 == 1 or final:
-			show_mesh(positions, restore @ positions, step,
-			          values, grads, projected_grads, final,
-			          ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
-			          cell_definitions, cell_scale_weights,
-			          coastlines, border_matrix, width, height,
-			          map_axes, hist_axes, valu_axes, diff_axes)
-			main_fig.canvas.draw()
-			small_fig.canvas.draw()
-			plt.pause(.01)
 
 	# then minimize! follow the scheduled progression.
 	print("begin fitting process.")
@@ -805,19 +803,33 @@ def create_map_projection(configuration_file: str):
 		node_positions = reduce @ node_positions
 
 		# each time, run the projected gradient descent routine
-		try:
+		success = False
+		def calculation_function():
+			nonlocal node_positions, success
 			node_positions = minimize(func=primary_func,
 			                          backup_func=backup_func,
 			                          guess=node_positions,
 			                          bounds_matrix=bounds_matrix,
 			                          bounds_limits=bounds_limits,
-			                          report=plot_status,
+			                          report=record_status,
 			                          tolerance=tolerance)
-		except RuntimeError as e:
-			traceback.print_exc()
+			success = True
+		calculation = threading.Thread(target=calculation_function)
+		calculation.start()
+		while calculation.is_alive():
+			show_mesh(current_state, current_positions, latest_step,
+			          values, grads, projected_grads, final,
+			          ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
+			          cell_definitions, cell_scale_weights,
+			          coastlines, border_matrix, width, height,
+			          map_axes, hist_axes, valu_axes, diff_axes)
+			main_fig.canvas.draw()
+			small_fig.canvas.draw()
+			plt.pause(5)
+		if not success:
 			small_fig.canvas.manager.set_window_title("Error!")
 			plt.show()
-			raise e
+			raise RuntimeError
 
 		# remember to re-mesh the mesh when you're done
 		node_positions = restore @ node_positions

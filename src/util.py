@@ -297,7 +297,7 @@ def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float]
 
 
 def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, polytope_lim: float | NDArray[float],
-                     tolerance: float, certainty: float = 20) -> NDArray[float]:
+                     tolerance: float, certainty: float = 30) -> NDArray[float]:
 	""" project a given point onto a polytope defined by the inequality
 	        all(ploytope_mat@point <= polytope_lim + tolerance)
 	    I learned this fast dual-based proximal gradient strategy from
@@ -328,6 +328,9 @@ def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, poly
 	# check to see if we're already done
 	if np.all(polytope_mat@point <= polytope_lim):
 		return point
+
+	# try not to have the tolerance be bigger than the current position; it screws with stuff
+	tolerance = min(tolerance, np.max(polytope_mat@point - polytope_lim)*1e-1)
 
 	# establish the parameters and persisting variables
 	L = np.linalg.norm(polytope_mat, ord=2)**2

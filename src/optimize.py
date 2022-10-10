@@ -200,7 +200,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
              tolerance: float,
              bounds_matrix: DenseSparseArray = None,
              bounds_limits: NDArray[float] | list[float] = None,
-             report: Callable[[NDArray[float], float, NDArray[float], NDArray[float], bool], None] = None,
+             report: Callable[[NDArray[float], float, NDArray[float], NDArray[float]], None] = None,
              backup_func: Callable[[NDArray[float] | Variable], float | Variable] = None,
              ) -> np.ndarray:
 	""" find the vector that minimizes a function of a list of points using gradient
@@ -312,6 +312,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			new_value = get_value(new_state)
 			if np.sum(step*gradient) > 0:
 				if bounds_mode:
+					print("Warning: more precise polytope projection mite be required")
 					break
 				else:
 					raise RuntimeError("this problem needed to be run in bounds mode, I gess...")
@@ -329,15 +330,14 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			if num_step_sizes > 100:
 				raise RuntimeError("line search did not converge")
 
+		report(state, value, gradient, step)
+
 		# if the termination condition is met, finish
 		if bounds_mode:
 			is_converged = -np.sum(gradient*step)/np.linalg.norm(step) < tolerance
 		else:
 			is_converged = np.linalg.norm(gradient) < tolerance
-		if not is_converged:
-			report(state, value, gradient, step, False)
-		else:
-			report(state, value, gradient, step, True)
+		if is_converged:
 			print(f"Completed in {num_line_searches} iterations.")
 			if bounds_mode:
 				state = polytope_project(state, bounds_matrix, bounds_limits, 0, 100)
