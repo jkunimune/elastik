@@ -85,30 +85,30 @@ def smooth_interpolate(xs: Sequence[float | np.ndarray], x_grids: Sequence[np.nd
 	# choose a cell in the grid
 	key = [np.interp(x, x_grid, np.arange(x_grid.size)) for x, x_grid in zip(xs, x_grids)]
 
-	# calculate the cubic-interpolation weits for the adjacent values and gradients
-	value_weits, slope_weits = [], []
+	# calculate the cubic-interpolation weights for the adjacent values and gradients
+	value_weights, slope_weights = [], []
 	for k, i_full in enumerate(key):
 		i = key[k] = np.minimum(np.floor(i_full).astype(int), x_grids[k].size - 2)
 		ξ, ξ2, ξ3 = i_full - i, (i_full - i)**2, (i_full - i)**3
 		dx = x_grids[k][i + 1] - x_grids[k][i]
 		if differentiate is None or differentiate != k:
-			value_weits.append([2*ξ3 - 3*ξ2 + 1, -2*ξ3 + 3*ξ2])
-			slope_weits.append([(ξ3 - 2*ξ2 + ξ)*dx, (ξ3 - ξ2)*dx])
+			value_weights.append([2*ξ3 - 3*ξ2 + 1, -2*ξ3 + 3*ξ2])
+			slope_weights.append([(ξ3 - 2*ξ2 + ξ)*dx, (ξ3 - ξ2)*dx])
 		else:
-			value_weits.append([(6*ξ2 - 6*ξ)/dx, (-6*ξ2 + 6*ξ)/dx])
-			slope_weits.append([3*ξ2 - 4*ξ + 1, 3*ξ2 - 2*ξ])
-	value_weits = np.meshgrid(*value_weits, indexing="ij", sparse=True)
-	slope_weits = np.meshgrid(*slope_weits, indexing="ij", sparse=True)
+			value_weights.append([(6*ξ2 - 6*ξ)/dx, (-6*ξ2 + 6*ξ)/dx])
+			slope_weights.append([3*ξ2 - 4*ξ + 1, 3*ξ2 - 2*ξ])
+	value_weights = np.meshgrid(*value_weights, indexing="ij", sparse=True)
+	slope_weights = np.meshgrid(*slope_weights, indexing="ij", sparse=True)
 
 	# get the indexing all set up correctly
 	index = tuple(np.meshgrid(*([i, i + 1] for i in key), indexing="ij", sparse=True))
 	full = (slice(None),)*len(xs) + (np.newaxis,)*(z_grid.ndim - len(xs))
 
 	# then multiply and combine all the things
-	weits = product(value_weits)[full]
+	weits = product(value_weights)[full]
 	result = np.sum(weits*z_grid[index], axis=tuple(range(ndim)))
 	for k in range(ndim):
-		weits = product(value_weits[:k] + [slope_weits[k]] + value_weits[k+1:])[full]
+		weits = product(value_weights[:k] + [slope_weights[k]] + value_weights[k+1:])[full]
 		result += np.sum(weits*dzdx_grids[k][index], axis=tuple(range(ndim)))
 	return result
 
@@ -283,4 +283,3 @@ if __name__ == "__main__":
 	# 	for j in range(4):
 	# 		plt.plot(y[j] + dy, Z[i, j] + dAdy[i, j]*dy, f"C{i}")
 	# plt.show()
-

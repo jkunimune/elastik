@@ -9,16 +9,16 @@ progress as it goes.
 """
 from __future__ import annotations
 
-from math import sqrt
 from typing import Callable
 
 import numpy as np
 from numpy.typing import NDArray
 
 from sparse import DenseSparseArray
+from util import polytope_project
 
 STEP_REDUCTION = 5.
-STEP_AUGMENTATION = STEP_REDUCTION**2.6
+STEP_AUGMENTATION = STEP_REDUCTION**2
 STEP_MAXIMUM = 1e3
 LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
@@ -281,7 +281,6 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_value}")
 
 	# instantiate the loop state variables
-	is_pre_converged = False
 	value = initial_value
 	state = guess
 	# and with the step size parameter set
@@ -311,11 +310,11 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 					new_state, bounds_matrix, bounds_limits, bounds_tolerance)
 			step = new_state - state
 			new_value = get_value(new_state)
-			# if we're going in the wrong direction, disable fast mode and try again
 			if np.sum(step*gradient) > 0:
 				if bounds_mode:
-				assert not bounds_mode, f"projection caused it to step uphill"
-				raise RuntimeError("this problem needed to be run in bounds mode, I gess...")
+					break
+				else:
+					raise RuntimeError("this problem needed to be run in bounds mode, I gess...")
 			# if this is infinitely good, jump to the followup function now
 			if new_value == -np.inf and followup_func is not None:
 				print(f"Reached the valid domain in {num_line_searches} iterations.")
@@ -331,17 +330,18 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 				raise RuntimeError("line search did not converge")
 
 		# if the termination condition is met, finish
-		if bounds_mode: is_converged = -np.sum(gradient*step)/np.linalg.norm(step) < tolerance
-		else:           is_converged = np.linalg.norm(gradient) < tolerance
-		if is_pre_converged and is_converged:  # (it must meet the criterion twice in a row)
+		if bounds_mode:
+			is_converged = -np.sum(gradient*step)/np.linalg.norm(step) < tolerance
+		else:
+			is_converged = np.linalg.norm(gradient) < tolerance
+		if not is_converged:
+			report(state, value, gradient, step, False)
+		else:
 			report(state, value, gradient, step, True)
 			print(f"Completed in {num_line_searches} iterations.")
 			if bounds_mode:
 				state = polytope_project(state, bounds_matrix, bounds_limits, 0, 100)
 			return state
-		else:
-			report(state, value, gradient, step, False)
-			is_pre_converged = is_converged
 
 		# take the new state and error value
 		state = new_state
@@ -353,63 +353,6 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		if num_line_searches >= 1e5:
 			raise RuntimeError(f"algorithm did not converge in {num_step_sizes} iterations")
 
-
-def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, polytope_lim: float | NDArray[float],
-                     tolerance: float, certainty: float = 20) -> NDArray[float]:
-	""" project a given point onto a polytope defined by the inequality
-	        all(ploytope_mat@point <= polytope_lim + tolerance)
-	    I learned this fast dual-based proximal gradient strategy from
-	        Beck, A. & Teboulle, M. "A fast dual proximal gradient algorithm for
-	        convex minimization and applications", <i>Operations Research Letters</i> <b>42</b> 1
-	        (2014), p. 1–6. doi:10.1016/j.orl.2013.10.007,
-	    :param point: the point to project
-	    :param polytope_mat: the matrix that defines the normals of the polytope faces
-	    :param polytope_lim: the quantity that defines the size of the polytope.  it may be an array
-	                         if point is 2d.  a point is in the polytope iff
-	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
-	    :param tolerance: how far outside of the polytope a returned point may be
-	    :param certainty: how many iterations it should try once it's within the tolerance to ensure
-	                      it's finding the best point
-	"""
-	if point.ndim == 2:
-		if point.shape[1] != polytope_lim.size:
-			raise ValueError(f"if you want this fancy functionality, the shapes must match")
-		# if there are multiple dimensions, do each dimension one at a time
-		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[k], tolerance, certainty)
-		                 for k in range(point.shape[1])]).T
-	elif point.ndim != 1 or np.ndim(polytope_lim) != 0:
-		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
-	if polytope_mat.ndim != 2:
-		raise ValueError(f"the matrix should be a (2d) matrix, not a {polytope_mat.ndim}d-array")
-	if point.shape[0] != polytope_mat.shape[1]:
-		raise ValueError("these polytope definitions don't jive")
-	# check to see if we're already done
-	if np.all(polytope_mat@point <= polytope_lim):
-		return point
-
-	# establish the parameters and persisting variables
-	L = np.linalg.norm(polytope_mat, ord=2)**2
-	x_new = None
-	w_old = y_old = np.zeros(polytope_mat.shape[0])
-	t_old = 1
-	candidates = []
-	# loop thru the proximal gradient descent of the dual problem
-	for i in range(1_000):
-		grad_F = polytope_mat@(point + polytope_mat.T@w_old)
-		prox_G = np.minimum(polytope_lim, grad_F - L*w_old)
-		y_new = w_old - (grad_F - prox_G)/L
-		t_new = (1 + sqrt(1 + 4*t_old**2))/2  # this inertia term is what makes it fast
-		w_new = y_new + (t_old - 1)/t_new*(y_new - y_old)
-		x_new = point + polytope_mat.T@y_new
-		# save any points that are close enuff to being in
-		if np.all(polytope_mat@x_new <= polytope_lim + tolerance):
-			candidates.append(x_new)
-			# and terminate once we get enuff of them
-			if len(candidates) >= certainty:
-				best = np.argmin(np.linalg.norm(np.array(candidates) - point, axis=1))
-				return candidates[best]
-		t_old, w_old, y_old = t_new, w_new, y_new
-	return x_new
 
 if __name__ == "__main__":
 	import matplotlib.pyplot as plt

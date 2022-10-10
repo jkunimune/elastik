@@ -4,7 +4,7 @@ util.py
 
 some handy utility functions that are used in multiple places
 """
-from math import hypot, pi, cos, sin, inf, copysign
+from math import hypot, pi, cos, sin, inf, copysign, sqrt
 from typing import Sequence, Iterable
 
 import numpy as np
@@ -12,25 +12,6 @@ from numpy.typing import NDArray
 
 from sparse import DenseSparseArray
 
-
-Numeric = float | NDArray[float]
-
-
-class Ellipsoid:
-	def __init__(self, a, f):
-		""" a collection of values defining a spheroid """
-		self.a = a
-		""" major semiaxis """
-		self.f = f
-		""" flattening """
-		self.b = a*(1 - f)
-		""" minor semiaxis """
-		self.R = a
-		""" equatorial radius """
-		self.e2 = 1 - (self.b/self.a)**2
-		""" square of eccentricity """
-		self.e = np.sqrt(self.e2)
-		""" eccentricity """
 
 class Scalar:
 	def __init__(self, value):
@@ -45,6 +26,27 @@ class Scalar:
 		return self.value * other
 
 
+class Ellipsoid:
+	def __init__(self, a, f):
+		""" a collection of values defining a spheroid """
+		self.a = a
+		""" major semi-axis """
+		self.f = f
+		""" flattening """
+		self.b = a*(1 - f)
+		""" minor semi-axis """
+		self.R = a
+		""" equatorial radius """
+		self.e2 = 1 - (self.b/self.a)**2
+		""" square of eccentricity """
+		self.e = np.sqrt(self.e2)
+		""" eccentricity """
+
+
+Numeric = float | NDArray[float]
+""" an object on which general arithmetic operators are defined """
+Tensor = NDArray[float] | DenseSparseArray | Scalar
+""" an object that supports the matrix multiplication operator """
 EARTH = Ellipsoid(6_378.137, 1/298.257_223_563)
 """ the figure of the earth as given by WGS 84 """
 
@@ -55,7 +57,7 @@ def bin_centers(bin_edges: NDArray[float]) -> NDArray[float]:
 
 def bin_index(x: float | NDArray[float], bin_edges: NDArray[float]) -> float | NDArray[int]:
 	""" I dislike the way numpy defines this function
-	    :param: coerce whether to force everything into the bins (useful when there's roundoff)
+	    :param: coerce whether to force everything into the bins (useful when there's round-off)
 	"""
 	return np.where(x < bin_edges[-1], np.digitize(x, bin_edges) - 1, bin_edges.size - 2)
 
@@ -257,7 +259,7 @@ def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float]
 	              collum if the relevant points are in a grid
 	    :param region: a polygon expressed as an n×2 array; each vertex is a row in degrees.
 	                   if the polygon is not closed (i.e. the zeroth vertex equals the last
-	                   one) its endpoitns will get infinite vertical rays attachd to them.
+	                   one) its endpoints will get infinite vertical rays attached to them.
 	    :param period: 360 for degrees and 2π for radians.
 	    :return: a boolean array with the same shape as points (except the 2 at the end)
 	             denoting whether each point is inside the region
@@ -267,7 +269,7 @@ def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float]
 		out_shape = (ф.size, λ.size)
 	else:
 		out_shape = ф.shape
-	# first we need to haracterize the region so that we can classify points at untuchd longitudes
+	# first we need to characterize the region so that we can classify points at untuched longitudes
 	δλ_border = region[1:, 1] - region[:-1, 1]
 	ф_border = region[1:, 0]
 	if np.array_equal(region[0, :], region[-1, :]):
@@ -292,3 +294,61 @@ def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float]
 			inside[affected] = (λ1 > λ0) != (фX > ф)[affected]
 			nearest_segment[affected] = Δф[affected]
 	return inside
+
+
+def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, polytope_lim: float | NDArray[float],
+                     tolerance: float, certainty: float = 20) -> NDArray[float]:
+	""" project a given point onto a polytope defined by the inequality
+	        all(ploytope_mat@point <= polytope_lim + tolerance)
+	    I learned this fast dual-based proximal gradient strategy from
+	        Beck, A. & Teboulle, M. "A fast dual proximal gradient algorithm for
+	        convex minimization and applications", <i>Operations Research Letters</i> <b>42</b> 1
+	        (2014), p. 1–6. doi:10.1016/j.orl.2013.10.007,
+	    :param point: the point to project
+	    :param polytope_mat: the matrix that defines the normals of the polytope faces
+	    :param polytope_lim: the quantity that defines the size of the polytope.  it may be an array
+	                         if point is 2d.  a point is in the polytope iff
+	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
+	    :param tolerance: how far outside of the polytope a returned point may be
+	    :param certainty: how many iterations it should try once it's within the tolerance to ensure
+	                      it's finding the best point
+	"""
+	if point.ndim == 2:
+		if point.shape[1] != polytope_lim.size:
+			raise ValueError(f"if you want this fancy functionality, the shapes must match")
+		# if there are multiple dimensions, do each dimension one at a time
+		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[k], tolerance, certainty)
+		                 for k in range(point.shape[1])]).T
+	elif point.ndim != 1 or np.ndim(polytope_lim) != 0:
+		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
+	if polytope_mat.ndim != 2:
+		raise ValueError(f"the matrix should be a (2d) matrix, not a {polytope_mat.ndim}d-array")
+	if point.shape[0] != polytope_mat.shape[1]:
+		raise ValueError("these polytope definitions don't jive")
+	# check to see if we're already done
+	if np.all(polytope_mat@point <= polytope_lim):
+		return point
+
+	# establish the parameters and persisting variables
+	L = np.linalg.norm(polytope_mat, ord=2)**2
+	x_new = None
+	w_old = y_old = np.zeros(polytope_mat.shape[0])
+	t_old = 1
+	candidates = []
+	# loop thru the proximal gradient descent of the dual problem
+	for i in range(1_000):
+		grad_F = polytope_mat@(point + polytope_mat.T@w_old)
+		prox_G = np.minimum(polytope_lim, grad_F - L*w_old)
+		y_new = w_old - (grad_F - prox_G)/L
+		t_new = (1 + sqrt(1 + 4*t_old**2))/2  # this inertia term is what makes it fast
+		w_new = y_new + (t_old - 1)/t_new*(y_new - y_old)
+		x_new = point + polytope_mat.T@y_new
+		# save any points that are close enough to being in
+		if np.all(polytope_mat@x_new <= polytope_lim + tolerance):
+			candidates.append(x_new)
+			# and terminate once we get enough of them
+			if len(candidates) >= certainty:
+				best = np.argmin(np.linalg.norm(np.array(candidates) - point, axis=1))
+				return candidates[best]
+		t_old, w_old, y_old = t_new, w_new, y_new
+	return x_new

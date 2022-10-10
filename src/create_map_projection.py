@@ -21,7 +21,7 @@ from elastik import gradient, smooth_interpolate
 from optimize import minimize
 from sparse import DenseSparseArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, inside_polygon, interp, \
-	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle
+	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor
 
 MIN_WEIGHT = .03 # the ratio of the whitespace weight to the subject weight
 
@@ -50,13 +50,13 @@ def downsample(full: np.ndarray, shape: tuple):
 	assert len(shape) == len(full.shape)
 	for i in range(len(shape)):
 		assert shape[i] < full.shape[i]
-	reduc = np.empty(shape)
-	i_reduc = (np.arange(full.shape[0])/full.shape[0]*reduc.shape[0]).astype(int)
-	j_reduc = (np.arange(full.shape[1])/full.shape[1]*reduc.shape[1]).astype(int)
+	reduce = np.empty(shape)
+	i_reduce = (np.arange(full.shape[0])/full.shape[0]*reduce.shape[0]).astype(int)
+	j_reduce = (np.arange(full.shape[1])/full.shape[1]*reduce.shape[1]).astype(int)
 	for i in range(shape[0]):
 		for j in range(shape[1]):
-			reduc[i][j] = np.mean(full[i_reduc == i][:, j_reduc == j])
-	return reduc
+			reduce[i][j] = np.mean(full[i_reduce == i][:, j_reduce == j])
+	return reduce
 
 
 def follow_graph(progression: np.ndarray, frum: np.ndarray, until: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -79,7 +79,7 @@ def follow_graph(progression: np.ndarray, frum: np.ndarray, until: np.ndarray) -
 	return state, distance_traveld
 
 
-def get_interpolation_weits(distance_a, distance_b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def get_interpolation_weights(distance_a, distance_b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 	""" compute the weits needed to linearly interpolate a point between two fixed points,
 	    given the distance of each respective reference to the point of interpolation.
 	"""
@@ -191,7 +191,7 @@ def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray | list[np.
 
 
 def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
-                  ) -> tuple[np.ndarray | DenseSparseArray | Scalar, np.ndarray | DenseSparseArray | Scalar]:
+                  ) -> tuple[Tensor, Tensor]:
 	""" create a pair of inverse functions that transform points between the full space of
 	    possible meshes and a reduced space with fewer degrees of freedom. the idea here
 	    is to identify 80% or so of the nodes that can form a skeleton, and from which the
@@ -254,9 +254,9 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
 	s_reference, s_distance = follow_graph(south_neibor, frum=np.arange(n_full), until=has_defined_neibors)
 	se_reference, se_distance = follow_graph(east_neibor, frum=s_reference, until=is_defined)
 	sw_reference, sw_distance = follow_graph(west_neibor, frum=s_reference, until=is_defined)
-	n_weit, s_weit = get_interpolation_weits(n_distance, s_distance)
-	ne_weit, nw_weit = get_interpolation_weits(ne_distance, nw_distance)
-	se_weit, sw_weit = get_interpolation_weits(se_distance, sw_distance)
+	n_weit, s_weit = get_interpolation_weights(n_distance, s_distance)
+	ne_weit, nw_weit = get_interpolation_weights(ne_distance, nw_distance)
+	se_weit, sw_weit = get_interpolation_weights(se_distance, sw_distance)
 	defining_indices = np.stack([
 		ne_reference, nw_reference, se_reference, sw_reference,
 	], axis=1)
@@ -430,6 +430,21 @@ def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray
 	return result
 
 
+def project_section_borders(ф_mesh: NDArray[float], λ_mesh: NDArray[float],
+                            node_indices: NDArray[int], section_borders: list[NDArray[float]],
+                            resolution: float) -> DenseSparseArray:
+	""" take the section borders, concatenate them, project them, and trim off the shared edges """
+	borders = []
+	for h, border in enumerate(section_borders): # take the border of each section
+		first_pole = np.nonzero(abs(border[:, 0]) == pi/2)[0][0]
+		border = np.concatenate([border[first_pole:], border[1:first_pole + 1]]) # rotate the path so it starts and ends at a pole
+		border = border[dilate(abs(border[:, 0]) != pi/2, 1)] # and then remove points that move along the pole
+		borders.append(project(refine_path(border, resolution, period=2*pi), # finally, refine it before projecting
+		                       ф_mesh, λ_mesh, node_indices, section_index=h))
+	border_matrix = simplify_path(DenseSparseArray.concatenate(borders), cyclic=True) # simplify the borders together to remove excess
+	return border_matrix
+
+
 def load_options(filename: str) -> dict[str, str]:
 	""" load a simple colon-separated text file """
 	options = dict()
@@ -517,8 +532,8 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 	worst_cells = np.nonzero((a <= 0) | (b <= 0))[0]
 	for cell in worst_cells:
 		h, i, j, east, west, north, south = cell_definitions[cell, :]
-		plt.plot(all_positions[[east, west], 0], all_positions[[east, west], 1], "#f60", linewidth=1.3)
-		plt.plot(all_positions[[north, south], 0], all_positions[[north, south], 1], "#f60", linewidth=1.3)
+		map_axes.plot(all_positions[[east, west], 0], all_positions[[east, west], 1], "#f50", linewidth=1.3)
+		map_axes.plot(all_positions[[north, south], 0], all_positions[[north, south], 1], "#f50", linewidth=1.3)
 	map_axes.axis("equal")
 
 	# histogram the principal strains
@@ -543,7 +558,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 	diff_axes.clear()
 	diff_axes.scatter(np.arange(len(grads)), steps, s=1, zorder=10)
 	diff_axes.scatter(np.arange(len(grads)), grads, s=1, zorder=10)
-	ylim = max(2e-2, np.min(steps)*1e3)
+	ylim = max(2e-2, np.min(steps)*5e2)
 	diff_axes.set_ylim(ylim/1e3, ylim)
 	diff_axes.set_yscale("log")
 	diff_axes.grid(which="major", axis="y")
@@ -648,21 +663,6 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 			f.write("\n")
 
 
-def project_section_borders(ф_mesh: NDArray[float], λ_mesh: NDArray[float],
-                            node_indices: NDArray[int], section_borders: list[NDArray[float]],
-                            resolution: float) -> DenseSparseArray:
-	borders = [] # TODO: put this in a function so I can do this at a lower resolution for the fit and a hier one for the end result
-	for h, border in enumerate(section_borders): # take the border of each section
-		first_pole = np.nonzero(abs(border[:, 0]) == pi/2)[0][0]
-		border = np.concatenate([border[first_pole:], border[1:first_pole + 1]]) # rotate the path so it starts and ends at a pole
-		border = border[dilate(abs(border[:, 0]) != pi/2, 1)] # and then remove points that move along the pole
-		borders.append(project(refine_path(border, resolution, period=2*pi), # finally, refine it before projecting
-		                       ф_mesh, λ_mesh, node_indices, section_index=h))
-	border_matrix = simplify_path(DenseSparseArray.concatenate(borders), cyclic=True) # simplify the borders together to remove excess
-	return border_matrix
-
-
-
 def create_map_projection(configuration_file: str):
 	""" create a map projection
 	    :param configuration_file: "oceans" | "continents" | "countries"
@@ -689,21 +689,29 @@ def create_map_projection(configuration_file: str):
 	cell_definitions, [cell_shape_weights, cell_scale_weights] = enumerate_cells(
 		node_indices, [shape_weights, scale_weights], dΦ, dΛ)
 
-	# define functions that can define the node positions from a reduced set of them
-	transformations = []
-	progression = np.ceil(np.geomspace(ф_mesh.size/10, 1.,
-	                                   int(log2(ф_mesh.size/10)) + 1))
-	for factor in progression:
-		transformations.append(mesh_skeleton(node_indices, factor, ф_mesh))
-	transformations.append((Scalar(1), Scalar(1))) # finishing with the full unreduced set
-
 	# set up the fitting constraints that will force the map to fit inside a box
 	border_matrix = project_section_borders(ф_mesh, λ_mesh, node_indices, section_borders, .05)
-	double_border_matrix = DenseSparseArray.concatenate([border_matrix, -border_matrix]) # and add a negative version for the left bounds
 	map_size = np.array([width, height])
 
 	# load the coastline data from Natural Earth
 	coastlines = load_coastline_data()
+
+	# now we can bild up the progression schedule
+	schedule: list[tuple[Tensor, Tensor, int, bool]] = []
+	# start by optimizing a reduced set of node positions
+	skeleton_factors = np.ceil(np.geomspace(
+		ф_mesh.size/10, 1., int(log2(ф_mesh.size/10)) + 1))
+	for factor in skeleton_factors:
+		reduce, restore = mesh_skeleton(node_indices, factor, ф_mesh)
+		schedule.append((reduce, restore, 0, False))
+	# follow up by imposing bounds with reduced resolutions
+	minorly_reduce, minorly_restore = mesh_skeleton(node_indices, 1, ф_mesh)
+	if np.any(np.isfinite(map_size)):
+		for factor in [3, 1]:
+			schedule.append((minorly_reduce, minorly_restore, factor, False))
+	# finish with the full unreduced mesh and bounds, plus the final cost function
+	schedule.append((minorly_reduce, minorly_restore, 1, True))
+	schedule.append((Scalar(1), Scalar(1), 1, True))
 
 	# set up the plotting axes
 	small_fig = plt.figure(figsize=(3, 5), num=f"Elastik-{configuration_file} fitting")
@@ -752,7 +760,7 @@ def create_map_projection(configuration_file: str):
 		values.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
 		projected_grads.append(-np.sum(grad*step)/np.linalg.norm(step)*EARTH.R)
-		if len(values) == 1 or np.random.random() < 1e-1 or final:
+		if len(values)%10 == 1 or final:
 			show_mesh(positions, restore @ positions, step,
 			          values, grads, projected_grads, final,
 			          ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
@@ -763,47 +771,56 @@ def create_map_projection(configuration_file: str):
 			small_fig.canvas.draw()
 			plt.pause(.01)
 
-	# then minimize!
+	# then minimize! follow the scheduled progression.
 	print("begin fitting process.")
-	try:
-		# progress from the coarsest transformd mesh to finer and finer ones
-		for reduce, restore in transformations:
-			node_positions = reduce @ node_positions
+	for i, (reduce, restore, bounds_coarseness, final) in enumerate(schedule):
+		print(f"fitting pass {i}/{len(schedule)}")
 
-			if reduce.ndim == 2: # when you've coarsened the mesh
-				# you must use the lenient energy function
-				primary_func, backup_func = compute_energy_lenient, None
-				# and you should ignore bounds
-				bounds_matrix, bounds_limits = None, None
-			else: # once you reach the final fit
-				# you should switch to the final energy function
-				primary_func, backup_func = compute_energy_strict, compute_energy_aggressive
-				# and impose bounds, and make sure the initial condition fits them
-				bounds_matrix, bounds_limits = double_border_matrix @ restore, map_size/2
-				node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))
-				border = border_matrix@node_positions
-				for k in range(bounds_limits.size):
-					if np.ptp(border[:, k]) > 2*bounds_limits[k]:
-						node_positions[:, k] = interp(node_positions[:, k],
-						                              np.min(border[:, k]), np.max(border[:, k]),
-						                              -bounds_limits[k], bounds_limits[k])
+		# progress from coarser to finer domain polytopes
+		if bounds_coarseness == 0:
+			tolerance = 1e-2/EARTH.R
+			bounds_matrix, bounds_limits = None, None
+		else:
+			tolerance = 1e-3/EARTH.R
+			coarse_border_matrix = border_matrix[np.arange(0, border_matrix.shape[0], bounds_coarseness), :]
+			double_border_matrix = DenseSparseArray.concatenate([coarse_border_matrix, -coarse_border_matrix])
+			bounds_matrix = double_border_matrix @ restore
+			bounds_limits = map_size/2
+			# fit the initial conditions into the bounds each time you impose them
+			node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))
+			border = border_matrix@node_positions
+			for k in range(bounds_limits.size):
+				if np.ptp(border[:, k]) > 2*bounds_limits[k]:
+					node_positions[:, k] = interp(node_positions[:, k],
+					                              np.min(border[:, k]), np.max(border[:, k]),
+					                              -bounds_limits[k], bounds_limits[k])
 
-			# finally, delegate the rest to the gradient descent code
+		# progress from the quickly-converging approximation to the true cost function
+		if not final:
+			primary_func, backup_func = compute_energy_lenient, None
+		else:
+			primary_func, backup_func = compute_energy_strict, compute_energy_aggressive
+
+		# progress from coarser to finer mesh skeletons
+		node_positions = reduce @ node_positions
+
+		# each time, run the projected gradient descent routine
+		try:
 			node_positions = minimize(func=primary_func,
 			                          backup_func=backup_func,
 			                          guess=node_positions,
 			                          bounds_matrix=bounds_matrix,
 			                          bounds_limits=bounds_limits,
 			                          report=plot_status,
-			                          tolerance=1e-3/EARTH.R)
+			                          tolerance=tolerance)
+		except RuntimeError as e:
+			traceback.print_exc()
+			small_fig.canvas.manager.set_window_title("Error!")
+			plt.show()
+			raise e
 
-			node_positions = restore @ node_positions
-
-	except RuntimeError as e:
-		traceback.print_exc()
-		small_fig.canvas.manager.set_window_title("Error!")
-		plt.show()
-		raise e
+		# remember to re-mesh the mesh when you're done
+		node_positions = restore @ node_positions
 
 	print("end fitting process.")
 	small_fig.canvas.manager.set_window_title("Done!")
