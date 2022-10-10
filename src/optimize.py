@@ -248,6 +248,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		if np.all(np.isinf(bounds_limits)): # go ahead and remove any pointless bounds
 			bounds_matrix = None
 			bounds_limits = None
+	bounds_mode = bounds_limits is not None
 
 	# if a backup objective function is provided, start with that
 	if backup_func is not None:
@@ -280,11 +281,11 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_value}")
 
 	# instantiate the loop state variables
-	fast_mode = True
+	is_pre_converged = False
 	value = initial_value
 	state = guess
 	# and with the step size parameter set
-	step_size = 1e2#STEP_MAXIMUM
+	step_size = STEP_MAXIMUM
 	# descend until we can't descend any further
 	num_line_searches = 0
 	while True:
@@ -293,11 +294,11 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		assert gradient.shape == state.shape
 
 		# descend the gradient
-		if fast_mode: # well, gradient scaled with curvature if possible
+		if bounds_mode:
+			direction = -gradient
+		else:  # well, gradient scaled with curvature if possible
 			curvature_cutoff = np.quantile(abs(curvature), .01)
 			direction = -gradient/np.maximum(curvature, curvature_cutoff)[:, np.newaxis]
-		else:
-			direction = -gradient
 
 		# do a line search to choose a good step size
 		num_step_sizes = 0
@@ -305,17 +306,16 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			# step according to the gradient and step size for this inner loop
 			new_state = state + step_size*direction
 			# projecting onto the legal subspace if necessary
-			if bounds_limits is not None:
+			if bounds_mode:
 				new_state = polytope_project(
 					new_state, bounds_matrix, bounds_limits, bounds_tolerance)
 			step = new_state - state
 			new_value = get_value(new_state)
 			# if we're going in the wrong direction, disable fast mode and try again
 			if np.sum(step*gradient) > 0:
-				assert fast_mode, "projection caused it to step uphill"
-				fast_mode = False
-				new_state, new_value = state, value
-				break
+				if bounds_mode:
+				assert not bounds_mode, f"projection caused it to step uphill"
+				raise RuntimeError("this problem needed to be run in bounds mode, I gess...")
 			# if this is infinitely good, jump to the followup function now
 			if new_value == -np.inf and followup_func is not None:
 				print(f"Reached the valid domain in {num_line_searches} iterations.")
@@ -331,14 +331,17 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 				raise RuntimeError("line search did not converge")
 
 		# if the termination condition is met, finish
-		if -np.sum(gradient*step)/np.linalg.norm(step) > tolerance:
-			report(state, value, gradient, step, False)
-		else:
+		if bounds_mode: is_converged = -np.sum(gradient*step)/np.linalg.norm(step) < tolerance
+		else:           is_converged = np.linalg.norm(gradient) < tolerance
+		if is_pre_converged and is_converged:  # (it must meet the criterion twice in a row)
 			report(state, value, gradient, step, True)
 			print(f"Completed in {num_line_searches} iterations.")
-			if bounds_limits is not None:
+			if bounds_mode:
 				state = polytope_project(state, bounds_matrix, bounds_limits, 0, 100)
 			return state
+		else:
+			report(state, value, gradient, step, False)
+			is_pre_converged = is_converged
 
 		# take the new state and error value
 		state = new_state
@@ -347,7 +350,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		step_size *= STEP_AUGMENTATION
 		# keep track of the number of iterations
 		num_line_searches += 1
-		if num_line_searches > 1e5:
+		if num_line_searches >= 1e5:
 			raise RuntimeError(f"algorithm did not converge in {num_step_sizes} iterations")
 
 
@@ -391,7 +394,7 @@ def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, poly
 	t_old = 1
 	candidates = []
 	# loop thru the proximal gradient descent of the dual problem
-	for i in range(10_000):
+	for i in range(1_000):
 		grad_F = polytope_mat@(point + polytope_mat.T@w_old)
 		prox_G = np.minimum(polytope_lim, grad_F - L*w_old)
 		y_new = w_old - (grad_F - prox_G)/L

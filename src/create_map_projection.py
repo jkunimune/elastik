@@ -477,7 +477,7 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 
 
 def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np.ndarray,
-              values: list[float], grads: list[float], final: bool,
+              values: list[float], grads: list[float], steps: list[float], final: bool,
               ф_mesh: np.ndarray, λ_mesh: np.ndarray, dΦ: np.ndarray, dΛ: np.ndarray,
               mesh_index: np.ndarray, cell_definitions: np.ndarray,  cell_weights: np.ndarray,
               coastlines: list[np.array], border: np.ndarray | DenseSparseArray,
@@ -541,11 +541,9 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 
 	# plot the convergence criteria over time
 	diff_axes.clear()
-	diffs = -np.diff(values)/values[1:]
-	if diffs.size > 0:
-		diff_axes.scatter(np.arange(1, len(values)), diffs, s=1, zorder=10)
+	diff_axes.scatter(np.arange(len(grads)), steps, s=1, zorder=10)
 	diff_axes.scatter(np.arange(len(grads)), grads, s=1, zorder=10)
-	ylim = max(2e-2, diffs.min(where=diffs != 0, initial=np.min(grads))*1e3)
+	ylim = max(2e-2, np.min(steps)*1e3)
 	diff_axes.set_ylim(ylim/1e3, ylim)
 	diff_axes.set_yscale("log")
 	diff_axes.grid(which="major", axis="y")
@@ -567,10 +565,6 @@ def save_mesh(name: str, descript: str, ф: np.ndarray, λ: np.ndarray, mesh: np
 	                          to the HDF5 file as attributes.
 	    :param projected_border: the px2 array of cartesian points representing the
 	"""
-	plt.figure()
-	plt.plot(projected_border[:, 0], projected_border[:, 1], "k-o")
-	plt.axis("equal")
-	plt.show()
 	assert len(section_borders) == len(section_names)
 
 	# start by calculating some things
@@ -720,7 +714,7 @@ def create_map_projection(configuration_file: str):
 	diff_axes = small_fig.add_subplot(gridspecs[1][2, :], sharex=valu_axes)
 	main_fig, map_axes = plt.subplots(figsize=(7, 5), num=f"Elastik-{configuration_file}")
 
-	values, grads = [], []
+	values, grads, projected_grads = [], [], []
 
 	# define the objective functions
 	def compute_energy_aggressive(positions: np.ndarray) -> float:
@@ -756,9 +750,11 @@ def create_map_projection(configuration_file: str):
 
 	def plot_status(positions: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, final: bool) -> None:
 		values.append(value)
-		grads.append(-np.sum(grad*step)/np.linalg.norm(step)*EARTH.R)
+		grads.append(np.linalg.norm(grad)*EARTH.R)
+		projected_grads.append(-np.sum(grad*step)/np.linalg.norm(step)*EARTH.R)
 		if len(values) == 1 or np.random.random() < 1e-1 or final:
-			show_mesh(positions, restore @ positions, step, values, grads, final,
+			show_mesh(positions, restore @ positions, step,
+			          values, grads, projected_grads, final,
 			          ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
 			          cell_definitions, cell_scale_weights,
 			          coastlines, border_matrix, width, height,
