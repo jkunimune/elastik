@@ -6,7 +6,6 @@ take a basic mesh and optimize it according to a particular cost function in ord
 create a new Elastic Projection.
 """
 import threading
-import traceback
 from math import inf, pi, log2, nan
 
 import h5py
@@ -126,7 +125,6 @@ def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray | list[np.
 	                               west, east, south, north
 	             cell_weights: the volume of each cell for elastic-energy-summing porpoises; one 1d array for each
 	                           element of values
-
 	"""
 	# start off by resampling these in a useful way
 	for k in range(len(values)):
@@ -493,7 +491,7 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 
 
 def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np.ndarray,
-              values: list[float], grads: list[float], projected_grads: list[float], final: bool,
+              values: list[float], grads: list[float], angles: list[float], final: bool,
               ф_mesh: np.ndarray, λ_mesh: np.ndarray, dΦ: np.ndarray, dΛ: np.ndarray,
               mesh_index: np.ndarray, cell_definitions: np.ndarray, cell_weights: np.ndarray,
               coastlines: list[np.array], border: np.ndarray | DenseSparseArray,
@@ -557,9 +555,9 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 
 	# plot the convergence criteria over time
 	diff_axes.clear()
-	diff_axes.scatter(np.arange(len(grads)), projected_grads, s=.5, zorder=10)
 	diff_axes.scatter(np.arange(len(grads)), grads, s=.5, zorder=10)
-	ylim = min(2e-2, np.min(projected_grads, initial=1e3)*5e2)
+	diff_axes.scatter(np.arange(len(grads)), angles, s=.5, zorder=10)
+	ylim = max(2e-2, np.min(grads, initial=1e3)*5e2)
 	diff_axes.set_ylim(ylim/1e3, ylim)
 	diff_axes.set_yscale("log")
 	diff_axes.grid(which="major", axis="y")
@@ -726,7 +724,7 @@ def create_map_projection(configuration_file: str):
 	current_state = node_positions
 	current_positions = node_positions
 	latest_step = np.zeros_like(node_positions)
-	values, grads, projected_grads = [], [], []
+	values, grads, angles = [], [], []
 
 	# define the objective functions
 	def compute_energy_aggressive(positions: np.ndarray) -> float:
@@ -760,14 +758,14 @@ def create_map_projection(configuration_file: str):
 			shape_term = (a - b)**2
 			return (scale_term*cell_scale_weights + 2*shape_term*cell_shape_weights).sum()
 
-	def record_status(state: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray) -> None:
+	def record_status(state: np.ndarray, value: float, grad: float, boundedness: float, step: np.ndarray) -> None:
 		nonlocal current_state, current_positions, latest_step
 		current_state = state
 		current_positions = restore @ state
 		latest_step = step
 		values.append(value)
-		grads.append(np.linalg.norm(grad)*EARTH.R)
-		projected_grads.append(-np.sum(grad*step)/np.linalg.norm(step)*EARTH.R)
+		grads.append(grad*EARTH.R)
+		angles.append(boundedness)
 
 	# then minimize! follow the scheduled progression.
 	print("begin fitting process.")
@@ -779,7 +777,7 @@ def create_map_projection(configuration_file: str):
 			tolerance = 1e-2/EARTH.R
 			bounds_matrix, bounds_limits = None, None
 		else:
-			tolerance = 1e-3/EARTH.R
+			tolerance = 1e-4/EARTH.R
 			coarse_border_matrix = border_matrix[np.arange(0, border_matrix.shape[0], bounds_coarseness), :]
 			double_border_matrix = DenseSparseArray.concatenate([coarse_border_matrix, -coarse_border_matrix])
 			bounds_matrix = double_border_matrix @ restore
@@ -812,13 +810,14 @@ def create_map_projection(configuration_file: str):
 			                          bounds_matrix=bounds_matrix,
 			                          bounds_limits=bounds_limits,
 			                          report=record_status,
-			                          tolerance=tolerance)
+			                          gradient_tolerance=tolerance,
+			                          cosine_tolerance=0.5)
 			success = True
 		calculation = threading.Thread(target=calculation_function)
 		calculation.start()
 		while calculation.is_alive():
 			show_mesh(current_state, current_positions, latest_step,
-			          values, grads, projected_grads, final,
+			          values, grads, angles, final,
 			          ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
 			          cell_definitions, cell_scale_weights,
 			          coastlines, border_matrix, width, height,

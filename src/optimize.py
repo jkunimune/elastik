@@ -9,6 +9,7 @@ progress as it goes.
 """
 from __future__ import annotations
 
+from math import inf
 from typing import Callable
 
 import numpy as np
@@ -197,10 +198,11 @@ class Variable:
 
 def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
              guess: NDArray[float],
-             tolerance: float,
+             gradient_tolerance: float,
+             cosine_tolerance: float,
              bounds_matrix: DenseSparseArray = None,
              bounds_limits: NDArray[float] | list[float] = None,
-             report: Callable[[NDArray[float], float, NDArray[float], NDArray[float]], None] = None,
+             report: Callable[[NDArray[float], float, float, float, NDArray[float]], None] = None,
              backup_func: Callable[[NDArray[float] | Variable], float | Variable] = None,
              ) -> np.ndarray:
 	""" find the vector that minimizes a function of a list of points using gradient
@@ -210,29 +212,30 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	    :param func: the objective function to minimize. it takes an array of size n×2 as
 	                 argument and returns a single scalar value
 	    :param guess: the initial input to the function, from which the gradients will descend.
-	    :param tolerance: the absolute tolerance. when the magnitude of the gradient at
-	                      any given point dips below this, we are done.
+	    :param gradient_tolerance: the absolute tolerance. if the magnitude of the gradient at any
+	                               given point dips below this, we are done.
+	    :param cosine_tolerance: the relative tolerance. if the normalized dot-product of the
+	                             gradient and the projected step direction dips below this, we done.
 	    :param bounds_matrix: a list of inequality constraints on various linear combinations.
 	                          it should be some object that matrix-multiplies by the state array to
 	                          produce a m×2 vector of tracer particle positions
 	    :param bounds_limits: the values of the inequality constraints. should be a 2-vector
 	                          representing the maximum allowable x and y coordinates of those tracer
 	                          particles.
-	    :param report: an optional function that will be called each time a line search
-	                   is completed, to provide real-time information on how the fitting
-	                   routine is going. it takes as arguments the current state, the
-	                   current value of the function, the current gradient, the previous
-	                   step if any, and whether this is the final value
+	    :param report: an optional function that will be called each time a line search is
+	                   completed, to provide real-time information on how the fitting routine is
+	                   going. it takes as arguments the current state, the current value of the
+	                   function, the current gradient magnitude, the previous step, and the ratio
+	                   of the step that is currently getting projected away by the bounds.
 	    :param backup_func: an optional additional objective function to use when func is
-	                        nonapplicable. specificly, when the primary objective function
-	                        is only defined in a certain domain but the initial guess may
-	                        be outside of it, the backup can be used to push the state
-	                        vector into that domain. it should return smaller and smaller
-	                        values as the state approaches the valid domain and -inf for
-	                        states inside it. if a -inf in achieved with the backup
-	                        function, it will immediately switch to the primary function.
-	                        if -inf is never returned and the backup function converges,
-	                        that minimum will be returnd.
+	                        nonapplicable. specificly, when the primary objective function is only
+	                        defined in a certain domain but the initial guess may be outside of it,
+	                        the backup can be used to push the state vector into that domain. it
+	                        should return smaller and smaller values as the state approaches the
+	                        valid domain and -inf for states inside it. if a -inf in achieved with
+	                        the backup function, it will immediately switch to the primary function.
+	                        if -inf is never returned and the backup function converges, that
+	                        minimum will be returnd.
 	    :return: the optimal n×2 array of points
 	"""
 	# start by checking the guess agenst the bounds
@@ -244,11 +247,15 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		if bounds_limits is None:
 			raise ValueError("you mustn't pass bounds_matrix without bounds_limits")
 		guess = polytope_project(guess, bounds_matrix, bounds_limits, tolerance=0, certainty=60)
-		bounds_tolerance = np.min(bounds_limits)*1e-3
+		bounds_tolerance = np.min(bounds_limits)*1e-4
 		if np.all(np.isinf(bounds_limits)): # go ahead and remove any pointless bounds
 			bounds_matrix = None
 			bounds_limits = None
-	bounds_mode = bounds_limits is not None
+	if bounds_limits is None:
+		bounds_mode = False
+		cosine_tolerance = -inf
+	else:
+		bounds_mode = True
 
 	# if a backup objective function is provided, start with that
 	if backup_func is not None:
@@ -319,7 +326,8 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			# if this is infinitely good, jump to the followup function now
 			if new_value == -np.inf and followup_func is not None:
 				print(f"Reached the valid domain in {num_line_searches} iterations.")
-				return minimize(followup_func, new_state, tolerance, bounds_matrix, bounds_limits, report, None)
+				return minimize(followup_func, new_state, gradient_tolerance, cosine_tolerance,
+				                bounds_matrix, bounds_limits, report, None)
 			# if the line search condition is met, take it
 			if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(step*gradient):
 				break
@@ -330,14 +338,16 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			if num_step_sizes > 100:
 				raise RuntimeError("line search did not converge")
 
-		report(state, value, gradient, step)
+		# do a few final calculations
+		gradient_magnitude = np.linalg.norm(gradient)
+		if bounds_mode:
+			gradient_angle = np.sum(direction*step/step_size)/np.sum(direction**2)
+		else:
+			gradient_angle = 1
+		report(state, value, gradient_magnitude, gradient_angle, step)
 
 		# if the termination condition is met, finish
-		if bounds_mode:
-			is_converged = -np.sum(gradient*step)/np.linalg.norm(step) < tolerance
-		else:
-			is_converged = np.linalg.norm(gradient) < tolerance
-		if is_converged:
+		if gradient_magnitude < gradient_tolerance or gradient_angle < cosine_tolerance:
 			print(f"Completed in {num_line_searches} iterations.")
 			if bounds_mode:
 				state = polytope_project(state, bounds_matrix, bounds_limits, 0, 100)
