@@ -735,6 +735,8 @@ def create_map_projection(configuration_file: str):
 		                                 cell_definitions, dΦ, dΛ)
 		if np.all(a > 0) and np.all(b > 0):
 			return -inf
+		elif np.any(a < -100) or np.any(b < -100):
+			return inf
 		else:
 			a_term = np.exp(-6*a)
 			b_term = np.exp(-6*b)

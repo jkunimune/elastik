@@ -114,7 +114,10 @@ def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float
 	# the best rectangle will be oriented along one of the convex hull edges
 	for i in range(hull.shape[0]):
 		# measure the angle
-		angle = np.arctan(np.divide(*(hull[i, ::-1] - hull[i - 1, ::-1])))
+		if hull[i, 0] != hull[i - 1, 0]:
+			angle = np.arctan(np.divide(*(hull[i, ::-1] - hull[i - 1, ::-1])))
+		else:
+			angle = pi/2
 		rotated_hull = (rotation_matrix(-angle)@hull.T).T
 		x_min, y_min = np.min(rotated_hull, axis=0)
 		x_max, y_max = np.max(rotated_hull, axis=0)
