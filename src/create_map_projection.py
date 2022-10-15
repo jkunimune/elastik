@@ -231,11 +231,13 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
 	# start by marking some evenly spaced interior points
 	for h in range(lookup_table.shape[0]):
 		for i in range(lookup_table.shape[1]):
-			east_west_factor = int(round(factor/np.cos(ф[i])))
+			num_λ = max(1, round((lookup_table.shape[2] - 1)*np.cos(ф[i])/factor))
+			important_λ = np.linspace(0, 360, num_λ, endpoint=False)
+			important_j = np.round(important_λ*(lookup_table.shape[2] - 1)/360)
 			for j in range(lookup_table.shape[2]):
 				if lookup_table[h, i, j] != -1:
 					important_row = (min(i, ф.size - 1 - i)%factor == 0)
-					important_col = (j%east_west_factor == 0)
+					important_col = j in important_j#(j%east_west_factor == 0)
 					has_defined_neibors[lookup_table[h, i, j]] |= important_row
 					is_defined[lookup_table[h, i, j]] |= important_col
 	# then make sure we define enuff points at each edge to keep it all fully defined
