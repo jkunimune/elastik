@@ -11,17 +11,41 @@ import numpy as np
 import shapefile
 import tifffile
 from matplotlib import pyplot as plt
+from numpy.typing import NDArray
 
 from util import bin_centers, to_cartesian, inside_region
 
 
 FUDGE_FACTOR = 4 # some extra padding to put on the contiguus joints of the sections
+# latitude of southernmost settlement
+ANTARCTIC_CUTOFF = -56.
+# latitude of northernmost settlement
+ARCTIC_CUTOFF = 78.
+# coordinates of sahara and australian desert ellipses
+DESERT_ELLIPSES = [(23, 8, 7, 20), (-24, 132, 7, 15)]
+# coordinates of small, remote, uninhabited islands
+EXCLUDED_ISLANDS = [(-6, 72), # chagos islands
+                    (-54, 3), # bouvet island
+                    (-40, -9), # gough island
+                    (-46, 38), # prince edward island
+                    (-53, 73), # heard island
+                    (-49, 69), # kerguelen islands
+                    (-46, 52), # crozet islands
+                    (15, 169), # bokak atoll
+                    (10, -109), # clipperton island
+                    (24, 154), # marcus island
+                    (19, 167), # wake island
+                    (-21, -29), # trindade and martim vaz
+                    (-55, 159), # macquarie island
+                    (-38, 78), # st. paul and amsterdam islands
+                    (-49, 179)] # antipode and bounty islands
 
 
-def load_coast_vertices(precision) -> list[tuple[float, float]]:
+def load_coast_vertices(precision: float) -> list[tuple[float, float]]:
 	""" load the coastline shapefiles, including as many islands as we can, but not being
 	    too precise about the coastlines' exact shapes.
 	"""
+	excluded_ф, excluded_λ = np.transpose(EXCLUDED_ISLANDS)
 	points = []
 	λ_last, ф_last = np.nan, np.nan
 	for data in ["coastline", "minor_islands_coastline"]:
@@ -31,14 +55,15 @@ def load_coast_vertices(precision) -> list[tuple[float, float]]:
 					edge_length = math.hypot(
 						ф - ф_last, (λ - λ_last)*np.cos(math.radians((ф + ф_last)/2)))
 					if math.isnan(λ_last) or edge_length > precision:
-						if abs(ф + 6) > 2 or abs(λ - 72) > 2: # exclude the chagos archipelago because it's awkwardly situated
-							points.append((ф, λ))
 						λ_last, ф_last = λ, ф
+						if not np.any((abs(ф - excluded_ф) < 2) & (abs(λ - excluded_λ) < 2)):
+							points.append((ф, λ)) # exclude the chagos, prince edward, and bouvet islands because they're awkwardly situated
+
 	return points
 
 
-def calculate_coast_distance(ф: np.ndarray, λ: np.ndarray, coast: list[tuple[float, float]],
-                             section: np.ndarray, southern_cutoff: float) -> np.ndarray:
+def calculate_coast_distance(ф: NDArray[float], λ: NDArray[float], coast: list[tuple[float, float]],
+                             section: NDArray[float], exclude_uninhabited: bool) -> NDArray[float]:
 	""" take a set of latitudes and longitudes and calculate the angular distance from
 	    each point to the nearest shoreline (in degrees)
 	"""
@@ -48,18 +73,29 @@ def calculate_coast_distance(ф: np.ndarray, λ: np.ndarray, coast: list[tuple[f
 	# first crop the coasts inside this section
 	points = np.array(coast)
 	points = points[inside_region(points[:, 0], points[:, 1], section), :]
+	if exclude_uninhabited:
+		points = points[~is_uninhabited(points[:, 0], points[:, 1]), :]
 	minimum_distance = np.full((ф.size, λ.size), np.inf)
 
 	# then calculate the distances
 	for ф_0, λ_0 in points:
-		if southern_cutoff is None or ф_0 > southern_cutoff:
-			x_0, y_0, z_0 = to_cartesian(ф_0, λ_0)
-			minimum_distance = np.minimum(minimum_distance,
-			                              np.degrees(np.arccos(x_0*xx + y_0*yy + z_0*zz)))
+		x_0, y_0, z_0 = to_cartesian(ф_0, λ_0)
+		minimum_distance = np.minimum(minimum_distance,
+		                              np.degrees(np.arccos(x_0*xx + y_0*yy + z_0*zz)))
 	return minimum_distance
 
 
-def load_cut_file(filename: str) -> list[np.ndarray]:
+def is_uninhabited(ф: NDArray[float], λ: NDArray[float]) -> NDArray[bool]:
+	""" return a bool array indicating which points are in the (ant)arctic or a big desert """
+	uninhabited = (ф >= ARCTIC_CUTOFF) | (ф <= ANTARCTIC_CUTOFF)
+	for ф_0, λ_0 in EXCLUDED_ISLANDS:
+		uninhabited = uninhabited | ((abs(ф - ф_0) < 2) & (abs(λ - λ_0) < 2))
+	for ф_0, λ_0, a, b in DESERT_ELLIPSES:
+		uninhabited = uninhabited | (((ф - ф_0)/a)**2 + ((λ - λ_0)/b)**2 < 1)
+	return uninhabited
+
+
+def load_cut_file(filename: str) -> list[NDArray[float]]:
 	""" load the borders of the sections for a given map projection """
 	cut_data = np.loadtxt(filename)
 	section_indices = np.nonzero(np.all(cut_data == cut_data[0, :], axis=1))[0]
@@ -88,7 +124,7 @@ def load_land_polygons() -> list[list[tuple[float, float]]]:
 	return polygons
 
 
-def find_land_mask(ф_grid: np.ndarray, λ_grid: np.ndarray, southern_cutoff: float) -> np.ndarray:
+def find_land_mask(ф_grid: NDArray[float], λ_grid: NDArray[float], exclude_uninhabited: bool) -> NDArray[bool]:
 	""" bild a 2D bool array that is True for coordinates on land and False for coordinates in the ocean. """
 	crossings = np.full((ф_grid.size, λ_grid.size), 0)
 	polygons = load_land_polygons()
@@ -102,12 +138,13 @@ def find_land_mask(ф_grid: np.ndarray, λ_grid: np.ndarray, southern_cutoff: fl
 			intersects = np.not_equal(λ_0 < λ_grid, λ_1 < λ_grid)
 			ф_X[~intersects] = np.inf
 			crossings[ф_X[np.newaxis, :] < ф_grid[:, np.newaxis]] += 1
-	if southern_cutoff is not None:
-		crossings[ф_grid <= southern_cutoff] = 0
+	if exclude_uninhabited:
+		ф_grid, λ_grid = np.meshgrid(ф_grid, λ_grid, indexing="ij", sparse=True)
+		crossings[is_uninhabited(ф_grid, λ_grid)] = 0
 	return crossings%2 == 1
 
 
-def calculate_weights(coast_width: float, precision: float, antarctic_cutoff=-56.):
+def calculate_weights(coast_width: float, precision: float):
 	# define the grid
 	ф_edges = bin_centers(np.linspace(-90, 90, 188)) # (these are intentionally weerd numbers to reduce roundoff issues)
 	λ_edges = bin_centers(np.linspace(-180, 180, 375))
@@ -119,10 +156,9 @@ def calculate_weights(coast_width: float, precision: float, antarctic_cutoff=-56
 	# iterate thru the four weight files we want to generate
 	for crop_antarctica in [False, True]:
 		# load the land data with or without antarctica
-		cutoff = antarctic_cutoff if crop_antarctica else None
-		land = find_land_mask(ф, λ, cutoff)
+		land = find_land_mask(ф, λ, crop_antarctica)
 
-		for cut_file, value_land in [("basic", True), ("oceans", True), ("mountains", False)]:
+		for cut_file, value_land in [("basic", True)]:#, ("oceans", True), ("mountains", False)]:
 			# load the cut file
 			sections = load_cut_file(f"../spec/cuts_{cut_file}.txt")
 
@@ -134,7 +170,7 @@ def calculate_weights(coast_width: float, precision: float, antarctic_cutoff=-56
 				print(filename)
 
 				# get the distance of each point from the nearest contained coast
-				coast_distance = calculate_coast_distance(ф, λ, coast_vertices, section, cutoff)
+				coast_distance = calculate_coast_distance(ф, λ, coast_vertices, section, crop_antarctica)
 
 				# get the points on the mesh inside this section
 				in_section = inside_region(ф, λ, section)
