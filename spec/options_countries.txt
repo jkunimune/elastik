@@ -3,5 +3,5 @@ descript: ...
 cuts: basic
 shape_weights: land
 scale_weights: land_sinATA
-size: 25_000,16_000
+size: 24_000,16_000
 section_names: veste,carik

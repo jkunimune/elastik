@@ -202,7 +202,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
              cosine_tolerance: float,
              bounds_matrix: DenseSparseArray = None,
              bounds_limits: NDArray[float] | list[float] = None,
-             report: Callable[[NDArray[float], float, float, float, NDArray[float]], None] = None,
+             report: Callable[[NDArray[float], float, NDArray[float], NDArray[float], float], None] = None,
              backup_func: Callable[[NDArray[float] | Variable], float | Variable] = None,
              ) -> np.ndarray:
 	""" find the vector that minimizes a function of a list of points using gradient
@@ -344,7 +344,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			gradient_angle = np.sum(direction*step/step_size)/np.sum(direction**2)
 		else:
 			gradient_angle = 1
-		report(state, value, gradient_magnitude, gradient_angle, step)
+		report(state, value, gradient, step, gradient_angle)
 
 		# if the termination condition is met, finish
 		if gradient_magnitude < gradient_tolerance or gradient_angle < cosine_tolerance:

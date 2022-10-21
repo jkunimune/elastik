@@ -232,12 +232,15 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
 	for h in range(lookup_table.shape[0]):
 		for i in range(lookup_table.shape[1]):
 			num_λ = max(1, round((lookup_table.shape[2] - 1)*np.cos(ф[i])/factor))
-			important_λ = np.linspace(0, 360, num_λ, endpoint=False)
-			important_j = np.round(important_λ*(lookup_table.shape[2] - 1)/360)
+			if num_λ <= lookup_table.shape[2]/1.5:
+				important_λ = np.linspace(0, 360, num_λ, endpoint=False)
+				important_j = np.round(important_λ*(lookup_table.shape[2] - 1)/360)
+			else:
+				important_j = np.arange(lookup_table.shape[2])
 			for j in range(lookup_table.shape[2]):
 				if lookup_table[h, i, j] != -1:
 					important_row = (min(i, ф.size - 1 - i)%factor == 0)
-					important_col = j in important_j#(j%east_west_factor == 0)
+					important_col = j in important_j
 					has_defined_neibors[lookup_table[h, i, j]] |= important_row
 					is_defined[lookup_table[h, i, j]] |= important_col
 	# then make sure we define enuff points at each edge to keep it all fully defined
@@ -523,9 +526,9 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 
 	if not final and velocity is not None:
 		# indicate the speed of each node
-		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=2,
+		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=5,
 		                 c=-np.linalg.norm(velocity, axis=1),
-		                 cmap=CUSTOM_CMAP["speed"], zorder=0)
+		                 vmax=0, cmap=CUSTOM_CMAP["speed"], zorder=0)
 
 	a, b = compute_principal_strains(all_positions, cell_definitions, dΦ, dΛ)
 
@@ -533,8 +536,8 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 	worst_cells = np.nonzero((a <= 0) | (b <= 0))[0]
 	for cell in worst_cells:
 		h, i, j, east, west, north, south = cell_definitions[cell, :]
-		map_axes.plot(all_positions[[east, west], 0], all_positions[[east, west], 1], "#f50", linewidth=1.3)
-		map_axes.plot(all_positions[[north, south], 0], all_positions[[north, south], 1], "#f50", linewidth=1.3)
+		map_axes.plot(all_positions[[east, west], 0], all_positions[[east, west], 1], "#f50", linewidth=.8)
+		map_axes.plot(all_positions[[north, south], 0], all_positions[[north, south], 1], "#f50", linewidth=.8)
 	map_axes.axis("equal")
 
 	# histogram the principal strains
@@ -705,13 +708,14 @@ def create_map_projection(configuration_file: str):
 	for factor in skeleton_factors:
 		reduce, restore = mesh_skeleton(node_indices, factor, ф_mesh)
 		schedule.append((reduce, restore, 0, False))
-	# follow up by imposing bounds with reduced resolutions
+	# once you're done, switch to the final cost function
 	minorly_reduce, minorly_restore = mesh_skeleton(node_indices, 1, ф_mesh)
+	schedule.append((minorly_reduce, minorly_restore, 0, True))
+	# then impose bounds with reduced resolutions
 	if np.any(np.isfinite(map_size)):
 		for factor in [3, 1]:
-			schedule.append((minorly_reduce, minorly_restore, factor, False))
-	# finish with the full unreduced mesh and bounds, plus the final cost function
-	schedule.append((minorly_reduce, minorly_restore, 1, True))
+			schedule.append((minorly_reduce, minorly_restore, factor, True))
+	# finally, optimize the completely unreduced mesh
 	schedule.append((Scalar(1), Scalar(1), 1, True))
 
 	# set up the plotting axes and state variables
@@ -762,13 +766,13 @@ def create_map_projection(configuration_file: str):
 			shape_term = (a - b)**2
 			return (scale_term*cell_scale_weights + 2*shape_term*cell_shape_weights).sum()
 
-	def record_status(state: np.ndarray, value: float, grad: float, boundedness: float, step: np.ndarray) -> None:
+	def record_status(state: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, boundedness: float) -> None:
 		nonlocal current_state, current_positions, latest_step
 		current_state = state
 		current_positions = restore @ state
 		latest_step = step
 		values.append(value)
-		grads.append(grad*EARTH.R)
+		grads.append(np.linalg.norm(grad)*EARTH.R)
 		angles.append(boundedness)
 
 	# then minimize! follow the scheduled progression.
@@ -819,9 +823,10 @@ def create_map_projection(configuration_file: str):
 			success = True
 		calculation = threading.Thread(target=calculation_function)
 		calculation.start()
-		while calculation.is_alive():
+		while True:
+			done = not calculation.is_alive()
 			show_mesh(current_state, current_positions, latest_step,
-			          values, grads, angles, final,
+			          values, grads, angles, done,
 			          ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
 			          cell_definitions, cell_scale_weights,
 			          coastlines, border_matrix, width, height,
@@ -829,6 +834,7 @@ def create_map_projection(configuration_file: str):
 			main_fig.canvas.draw()
 			small_fig.canvas.draw()
 			plt.pause(5)
+			if done: break
 		if not success:
 			small_fig.canvas.manager.set_window_title("Error!")
 			plt.show()
