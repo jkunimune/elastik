@@ -62,26 +62,20 @@ declare_c_func(c_lib.concatenate, [c_SparseArrayArray_p, c_int], c_SparseArrayAr
 declare_c_func(c_lib.new_saa, [c_int, c_int_p, c_int, c_int, c_int_ndarray, c_ndarray], c_SparseArrayArray)
 declare_c_func(c_lib.multiply_nda, [c_SparseArrayArray, c_ndarray, c_int_p], c_SparseArrayArray)
 declare_c_func(c_lib.divide_nda, [c_SparseArrayArray, c_ndarray, c_int_p], c_SparseArrayArray)
-declare_c_func(c_lib.matmul_nda, [c_SparseArrayArray, c_ndarray, c_int_p, c_int], c_ndarray)
+declare_c_func(c_lib.matmul_nda, [c_SparseArrayArray, c_ndarray, c_int_p, c_int, c_ndarray], None)
 declare_c_func(c_lib.multiply_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
 declare_c_func(c_lib.divide_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
 declare_c_func(c_lib.power_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
 declare_c_func(c_lib.sum_along_axis, [c_SparseArrayArray, c_int], c_SparseArrayArray)
-declare_c_func(c_lib.sum_all_sparse, [c_SparseArrayArray], c_ndarray)
-declare_c_func(c_lib.sum_all_dense, [c_SparseArrayArray, c_int_p], c_ndarray)
-declare_c_func(c_lib.to_dense, [c_SparseArrayArray, c_int_p], c_ndarray)
+declare_c_func(c_lib.sum_all_sparse, [c_SparseArrayArray, c_ndarray], None)
+declare_c_func(c_lib.sum_all_dense, [c_SparseArrayArray, c_int_p, c_ndarray], None)
+declare_c_func(c_lib.to_dense, [c_SparseArrayArray, c_int_p, c_ndarray], None)
 declare_c_func(c_lib.transpose, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.expand_dims, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_slice_saa, [c_SparseArrayArray, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_reindex_saa, [c_SparseArrayArray, c_int_p, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.to_string, [c_SparseArrayArray], c_mut_char_p)
 
-
-def ndarray_from_c(data: c_ndarray, shape: Sequence[int]) -> np.ndarray:
-	c_array = np.ctypeslib.as_array(cast(data, c_double_p), shape=shape) # bild a np.ndarray around the existing memory
-	py_array = c_array.copy() # transcribe it to a python-ownd block of memory
-	c_lib.free_nda(c_array) # then delete the old memory from c, since Python won't do it for us
-	return py_array
 
 def str_from_c(data: c_mut_char_p | bytes) -> str:
 	length = 0
@@ -296,10 +290,10 @@ class DenseSparseArray:
 				raise ValueError("can't matrix-multiply by a matrix with only sparse dims")
 			return DenseSparseArray(self.shape[:-1] + other.shape[1:], c_lib.matmul_saa(self, other))
 		elif type(other) is np.ndarray:
-			return ndarray_from_c(
-				c_lib.matmul_nda(self, np.ascontiguousarray(other), # TODO: it sounds like I can silence this warning by passing a preallocated empty array to project_nda, matmul_nda, and to_dense
-				                 c_int_array(other.shape), c_int(other.ndim)),
-				self.shape[:-1] + other.shape[1:])
+			result = np.empty(self.shape[:-1] + other.shape[1:])
+			c_lib.matmul_nda(self, np.ascontiguousarray(other),
+			                 c_int_array(other.shape), c_int(other.ndim), result)
+			return result
 		else:
 			return NotImplemented
 
@@ -369,7 +363,9 @@ class DenseSparseArray:
 		return f"{self.dense_shape}x{self.sparse_shape}:\n  {values}"
 
 	def __array__(self) -> np.ndarray:
-		return ndarray_from_c(c_lib.to_dense(self, c_int_array(self.sparse_shape)), self.shape)
+		result = np.empty(self.shape)
+		c_lib.to_dense(self, c_int_array(self.sparse_shape), result)
+		return result
 
 	def to_array_array(self) -> np.ndarray:
 		""" convert all of the dense axes to numpy axes. the result is a numpy object array with dtype=DenseSparseArray
@@ -415,12 +411,16 @@ class DenseSparseArray:
 			raise ValueError("the axes can't have duplicates")
 		# if summing over all sparse axes, there's no need for the sparse data structure anymore
 		if len(axis) == self.sparse_ndim and np.all(np.greater_equal(axis, self.dense_ndim)):
-			return ndarray_from_c(c_lib.sum_all_sparse(self), self.dense_shape)
+			result = np.empty(self.dense_shape)
+			c_lib.sum_all_sparse(self, result)
+			return result
 		elif np.any(np.greater_equal(axis, self.dense_ndim)):
 			raise ValueError("I haven't implemented summing on individual sparse axes")
 		# if summing over all dense axes, convert to a regular dense array
 		if len(axis) == self.dense_ndim:
-			return ndarray_from_c(c_lib.sum_all_dense(self, c_int_array(self.sparse_shape)), self.sparse_shape)
+			result = np.empty(self.sparse_shape)
+			c_lib.sum_all_dense(self, c_int_array(self.sparse_shape), result)
+			return result
 		# otherwise, do them one at a time
 		else:
 			result = self
@@ -497,3 +497,5 @@ if __name__ == "__main__":
 	print(eyes)
 
 	print(DenseSparseArray.identity(3, add_zero=True))
+
+	print(DenseSparseArray.zeros((0,), (6,)))

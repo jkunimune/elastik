@@ -92,7 +92,7 @@ void free_sa(struct SparseArray a) {
 /**
  * free the memory allocated to a SparseArrayArray and all of its elements
  */
-__declspec(dllexport) void free_saa(
+EXPORT void free_saa(
         struct SparseArrayArray a) {
     for (int i = 0; i < a.size; i ++)
         free_sa(a.elements[i]);
@@ -105,7 +105,7 @@ __declspec(dllexport) void free_saa(
  * this is really just an alias for the existing free function; I only have it
  * here so that I only haff to import one dll file.
  */
-__declspec(dllexport) void free_nda(double* a) {
+EXPORT void free_nda(double* a) {
     free(a);
 }
 
@@ -732,99 +732,28 @@ EXPORT struct SparseArrayArray divide_nda(
  * perform matrix multiplication between a 2d SparseArrayArray and a plain dense array
  * @param a a SparseArrayArray with a single sparse dimension
  */
-EXPORT double* matmul_nda(
-        struct SparseArrayArray a, const double* b, const int b_shape[], int b_ndim) {
-    // start by defining the output based on its known size and shape
-    int c_ndim = a.ndim + b_ndim - 1;
-    int* c_shape = malloc(c_ndim*sizeof(int));
-    for (int k = 0; k < a.ndim; k ++)
-        c_shape[k] = a.shape[k];
-    for (int k = a.ndim; k < c_ndim; k ++)
-        c_shape[k] = b_shape[k - a.ndim + 1];
-
+EXPORT void matmul_nda(
+        struct SparseArrayArray a, const double* b, const int b_shape[], int b_ndim, double* result) {
     // calculate this one stride that we need
     int row_size = 1;
     for (int k = 1; k < b_ndim; k ++)
         row_size *= b_shape[k];
-    int c_size = a.size*row_size;
-    double* c = malloc(c_size*sizeof(double));
-
-    free(c_shape);
 
     // then compute each row as a linear combination of rows from b
     for (int i = 0; i < a.size; i ++) {
         struct SparseArray vector = a.elements[i];
         if (vector.ndim != 1) {
             printf("Error! the first matrix must only have one sparse dim, to match the zeroth dim of b.\n");
-            return NULL;
+            return;
         }
 
         for (int l = 0; l < row_size; l ++) {
-            c[i*row_size + l] = 0.;
+            result[i*row_size + l] = 0.;
             for (int j = 0; j < vector.nitems; j ++)
-                c[i*row_size + l] += vector.values[j]*b[vector.indices[j]*row_size + l];
+                result[i*row_size + l] += vector.values[j]*b[vector.indices[j]*row_size + l];
         }
     }
-
-    return c;
 }
-
-///**
-// * orthogonally project a dense vector into the subspace described by a SparseArrayArray.
-// * @param a a SparseArrayArray with a single sparse dimension (it need not have orthogonal rows)
-// */
-//EXPORT double* project_nda(
-//        struct SparseArrayArray a, const double* b, const int b_shape[], int b_ndim) {
-//    // calculate some sizes
-//    int row_size = 1;
-//    for (int k = 1; k < b_ndim; k ++)
-//        row_size *= b_shape[k];
-//    int b_size = b_shape[0]*row_size;
-//
-//    // orthogonalize the rows of a
-//    struct SparseArray* orthogonal_rows = malloc(a.size*sizeof(struct SparseArray));
-//    for (int i0 = 0; i0 < a.size; i0 ++) {
-//        struct SparseArray old_vector = copy_of_sa(a.elements[i0]);
-//        for (int i1 = 0; i1 < i0; i1 ++) {
-//            double coefficient = dot_product_sa(old_vector, orthogonal_rows[i1])/
-//                                 dot_product_sa(orthogonal_rows[i1], orthogonal_rows[i1]);
-//            struct SparseArray scaled = multiply_sa(orthogonal_rows[i1], coefficient);
-//            struct SparseArray new_vector = subtract_sa(old_vector, scaled);
-//            free_sa(scaled);
-//            free_sa(old_vector);
-//            old_vector = new_vector;
-//        }
-//        orthogonal_rows[i0] = old_vector;
-//    }
-//
-//    // then bild up the projection one basis vector at a time
-//    double* c = calloc(b_size, sizeof(double));
-//    for (int i = 0; i < a.size; i ++) {
-//        struct SparseArray row = orthogonal_rows[i];
-//        if (row.ndim != 1) {
-//            printf("Error! the first matrix must only have one sparse dim.\n");
-//            return NULL;
-//        }
-//
-//				for (int l = 0; l < row_size; l ++) {
-//				    double v_dot_b = 0;
-//				    double v_sqr = 0;
-//				    for (int j = 0; j < row.nitems; j ++) {
-//				        v_dot_b += row.values[j]*b[row.indices[j]*row_size + l];
-//				        v_sqr += row.values[j]*row.values[j];
-//				    }
-//		        double coef = v_dot_b/v_sqr;
-//            for (int j = 0; j < row.nitems; j ++)
-//                c[row.indices[j]*row_size + l] += coef*row.values[j];
-//        }
-//    }
-//
-//    for (int i = 0; i < a.size; i ++)
-//        free_sa(orthogonal_rows[i]);
-//    free(orthogonal_rows);
-//
-//    return c;
-//}
 
 struct SparseArrayArray elementwise_f(enum Operator operator, struct SparseArrayArray a, double b) {
     struct SparseArrayArray c = {.ndim=a.ndim, .size=a.size};
@@ -929,27 +858,28 @@ EXPORT struct SparseArrayArray sum_along_axis(
 /**
  * sum along all of the sparse axes of a SparseArrayArray
  */
-EXPORT double* sum_all_sparse(
-        struct SparseArrayArray a) {
+EXPORT void sum_all_sparse(
+        struct SparseArrayArray a, double* result) {
     // set up the ndarray
-    double* values = calloc(a.size, sizeof(double));
+    for (int l = 0; l < a.size; l ++)
+        result[l] = 0;
     // then do the sum for each SparseArray
     for (int i = 0; i < a.size; i ++)
         for (int j = 0; j < a.elements[i].nitems; j ++)
-            values[i] += a.elements[i].values[j];
-    return values;
+            result[i] += a.elements[i].values[j];
 }
 
 /**
  * sum along all of the dense axes of a SparseArrayArray
  */
-EXPORT double* sum_all_dense(
-        struct SparseArrayArray a, const int shape[]) {
+EXPORT void sum_all_dense(
+        struct SparseArrayArray a, const int shape[], double* result) {
     // calculate the size
     int size = product(shape, a.elements[0].ndim);
 
     // finally, histogram the values
-    double* values = calloc(size, sizeof(double));
+    for (int l = 0; l < size; l ++)
+        result[l] = 0;
     for (int i = 0; i < a.size; i ++) {
         // for each element of each element
         for (int j = 0; j < a.elements[i].nitems; j ++) {
@@ -958,15 +888,13 @@ EXPORT double* sum_all_dense(
             for (int k = 0; k < a.elements[i].ndim; k ++) {
                 if (index[k] < 0 || index[k] >= shape[k]) {
                     printf("Error! a SparseArray had an index outside of the given shape (%d out of %d).\n", index[k], shape[k]);
-                    return NULL;
+                    return;
                 }
                 l = l*shape[k] + index[k]; // find the index
             }
-            values[l] += a.elements[i].values[j]; // and add it there
+            result[l] += a.elements[i].values[j]; // and add it there
         }
     }
-
-    return values;
 }
 
 /**
@@ -1166,8 +1094,8 @@ EXPORT struct SparseArrayArray get_reindex_saa(
 /**
  * convert a SparseArrayArray to a plain dense ndarray (flattend)
  */
-EXPORT double* to_dense(
-        struct SparseArrayArray a, const int sparse_shape[]) {
+EXPORT void to_dense(
+        struct SparseArrayArray a, const int sparse_shape[], double* result) {
     // first, you must determine the shape
     int total_ndim = a.ndim + a.elements[0].ndim;
     int* shape = malloc(total_ndim*sizeof(int));
@@ -1180,7 +1108,8 @@ EXPORT double* to_dense(
     int size = product(shape, total_ndim);
 
     // finally, set the values
-    double* values = calloc(size, sizeof(double));
+    for (int l = 0; l < size; l ++)
+        result[l] = 0;
     for (int i = 0; i < a.size; i ++) {
         struct SparseArray element = a.elements[i];
         // for each element of each element
@@ -1190,17 +1119,15 @@ EXPORT double* to_dense(
             for (int k = a.ndim; k < total_ndim; k ++) {
                 if (index[k - a.ndim] < 0 || index[k - a.ndim] >= shape[k]) {
                     printf("Error! a SparseArray had an index outside of the given shape (%d out of %d).\n", index[k - a.ndim], shape[k]);
-                    return NULL;
+                    return;
                 }
                 l = l*shape[k] + index[k - a.ndim]; // find the index
             }
-            values[l] += element.values[j]; // and add it there
+            result[l] += element.values[j]; // and add it there
         }
     }
 
     free(shape);
-
-    return values;
 }
 
 /**
