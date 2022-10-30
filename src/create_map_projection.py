@@ -183,8 +183,8 @@ def enumerate_cells(node_indices: np.ndarray, values: list[np.ndarray | list[np.
 	cell_areas = (3*A_1 + A_2)/16/(4*np.pi*EARTH.R**2)
 
 	cell_weights = []
-	for k in range(len(values)):
-		cell_weights.append(cell_areas*np.minimum(1, np.maximum(MIN_WEIGHT, cell_values[k])))
+	for values in cell_values:
+		cell_weights.append(cell_areas*np.minimum(1, np.maximum(MIN_WEIGHT, values)))
 
 	return cell_definitions, cell_weights
 
@@ -766,14 +766,14 @@ def create_map_projection(configuration_file: str):
 			shape_term = (a - b)**2
 			return (scale_term*cell_scale_weights + 2*shape_term*cell_shape_weights).sum()
 
-	def record_status(state: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, boundedness: float) -> None:
+	def record_status(state: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, freedom: float) -> None:
 		nonlocal current_state, current_positions, latest_step
 		current_state = state
 		current_positions = restore @ state
 		latest_step = step
 		values.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
-		angles.append(boundedness)
+		angles.append(1 - freedom)
 
 	# then minimize! follow the scheduled progression.
 	print("begin fitting process.")
@@ -819,7 +819,7 @@ def create_map_projection(configuration_file: str):
 			                          bounds_limits=bounds_limits,
 			                          report=record_status,
 			                          gradient_tolerance=tolerance,
-			                          cosine_tolerance=0.5)
+			                          cosine_tolerance=1e-1)
 			success = True
 		calculation = threading.Thread(target=calculation_function)
 		calculation.start()

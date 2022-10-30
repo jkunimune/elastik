@@ -19,8 +19,7 @@ from sparse import DenseSparseArray
 from util import polytope_project
 
 STEP_REDUCTION = 5.
-STEP_AUGMENTATION = STEP_REDUCTION**2
-STEP_MAXIMUM = 1e3
+STEP_RELAXATION = STEP_REDUCTION**2
 LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
 
@@ -205,10 +204,10 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
              report: Callable[[NDArray[float], float, NDArray[float], NDArray[float], float], None] = None,
              backup_func: Callable[[NDArray[float] | Variable], float | Variable] = None,
              ) -> np.ndarray:
-	""" find the vector that minimizes a function of a list of points using gradient
-	    descent with a dynamically chosen step size. unlike a more generic minimization
-	    function, this one assumes that each datum is a vector, not a scalar, so many
-	    things have one more dimension that you might otherwise expect.
+	""" find the vector that minimizes a function of a list of points using projected gradient
+	    descent with a dynamically chosen step size. unlike a more generic minimization routine,
+	    this one assumes that each datum is a vector, not a scalar, so many things have one more
+	    dimension than you might otherwise expect.
 	    :param func: the objective function to minimize. it takes an array of size n×2 as
 	                 argument and returns a single scalar value
 	    :param guess: the initial input to the function, from which the gradients will descend.
@@ -242,20 +241,14 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	if bounds_matrix is None:
 		if bounds_limits is not None:
 			raise ValueError("you mustn't pass bounds_limits without bounds_matrix")
+		bounds_matrix = DenseSparseArray.zeros((0,), guess.shape[:1])
+		bounds_limits = np.full(guess.shape[1], inf)
 		bounds_tolerance = None
 	else:
 		if bounds_limits is None:
 			raise ValueError("you mustn't pass bounds_matrix without bounds_limits")
 		guess = polytope_project(guess, bounds_matrix, bounds_limits, tolerance=0, certainty=60)
 		bounds_tolerance = np.min(bounds_limits)*1e-4
-		if np.all(np.isinf(bounds_limits)): # go ahead and remove any pointless bounds
-			bounds_matrix = None
-			bounds_limits = None
-	if bounds_limits is None:
-		bounds_mode = False
-		cosine_tolerance = -inf
-	else:
-		bounds_mode = True
 
 	# if a backup objective function is provided, start with that
 	if backup_func is not None:
@@ -275,7 +268,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		variable = func(Variable(x, independent=True))
 		if np.any(np.isnan(variable.gradients)):
 			raise RuntimeError(f"there are nan gradients at x = {x}")
-		return variable.gradients, np.sum(variable.curvatures, axis=-1)
+		return variable.gradients, variable.curvatures
 
 	initial_value = get_value(guess)
 
@@ -287,52 +280,38 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	elif not np.isfinite(initial_value):
 		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_value}")
 
+	# calculate the initial gradient
+	gradient, curvature = get_gradient(guess)
+	if gradient.shape != guess.shape:
+		raise ValueError(f"the gradient function returned the wrong shape ({gradient.shape}, should be {guess.shape})")
+
 	# instantiate the loop state variables
 	value = initial_value
 	state = guess
-	# and with the step size parameter set
-	step_size = STEP_MAXIMUM
+	step_limiter = np.quantile(abs(curvature), .01)
 	# descend until we can't descend any further
 	num_line_searches = 0
 	while True:
-		# compute the gradient once per outer loop
-		gradient, curvature = get_gradient(state)
-		assert gradient.shape == state.shape
-
-		# descend the gradient
-		if bounds_mode:
-			direction = -gradient
-		else:  # well, gradient scaled with curvature if possible
-			curvature_cutoff = np.quantile(abs(curvature), .01)
-			direction = -gradient/np.maximum(curvature, curvature_cutoff)[:, np.newaxis]
-
 		# do a line search to choose a good step size
 		num_step_sizes = 0
 		while True:
-			# step according to the gradient and step size for this inner loop
-			new_state = state + step_size*direction
-			# projecting onto the legal subspace if necessary
-			if bounds_mode:
-				new_state = polytope_project(
-					new_state, bounds_matrix, bounds_limits, bounds_tolerance)
-			step = new_state - state
+			# step according to the gradient and step limiter for this inner loop, projecting onto the legal subspace
+			ideal_step = -gradient/np.maximum(curvature, step_limiter)
+			new_state = polytope_project(
+				state + ideal_step,
+				bounds_matrix, bounds_limits, bounds_tolerance)
+			actual_step = new_state - state
 			new_value = get_value(new_state)
-			if np.sum(step*gradient) > 0:
-				if bounds_mode:
-					print("Warning: more precise polytope projection mite be required")
-					break
-				else:
-					raise RuntimeError("this problem needed to be run in bounds mode, I gess...")
 			# if this is infinitely good, jump to the followup function now
 			if new_value == -np.inf and followup_func is not None:
 				print(f"Reached the valid domain in {num_line_searches} iterations.")
 				return minimize(followup_func, new_state, gradient_tolerance, cosine_tolerance,
 				                bounds_matrix, bounds_limits, report, None)
 			# if the line search condition is met, take it
-			if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(step*gradient):
+			if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(actual_step*gradient):
 				break
 			# if the condition is not met, decrement the step size and try agen
-			step_size /= STEP_REDUCTION
+			step_limiter *= STEP_REDUCTION
 			num_step_sizes += 1
 			# keep track of the number of step sizes we've tried
 			if num_step_sizes > 100:
@@ -340,24 +319,21 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 
 		# do a few final calculations
 		gradient_magnitude = np.linalg.norm(gradient)
-		if bounds_mode:
-			gradient_angle = np.sum(direction*step/step_size)/np.sum(direction**2)
-		else:
-			gradient_angle = 1
-		report(state, value, gradient, step, gradient_angle)
+		gradient_angle = np.sum(actual_step*ideal_step)/np.sum(ideal_step**2)
+		report(state, value, gradient, actual_step, gradient_angle)
 
 		# if the termination condition is met, finish
 		if gradient_magnitude < gradient_tolerance or gradient_angle < cosine_tolerance:
 			print(f"Completed in {num_line_searches} iterations.")
-			if bounds_mode:
-				state = polytope_project(state, bounds_matrix, bounds_limits, 0, 100)
-			return state
+			return polytope_project(state, bounds_matrix, bounds_limits, 0, 100)
 
 		# take the new state and error value
 		state = new_state
 		value = new_value
+		# recompute the gradient once per outer loop
+		gradient, curvature = get_gradient(state)
 		# set the step size back a bit
-		step_size *= STEP_AUGMENTATION
+		step_limiter /= STEP_RELAXATION
 		# keep track of the number of iterations
 		num_line_searches += 1
 		if num_line_searches >= 1e5:
