@@ -35,6 +35,7 @@ EXCLUDED_ISLANDS = [(-6, 72), # chagos islands
                     (10, -109), # clipperton island
                     (24, 154), # marcus island
                     (19, 167), # wake island
+                    (1, -29), # sao pedro and sao paul
                     (-21, -29), # trindade and martim vaz
                     (-55, 159), # macquarie island
                     (-38, 78), # st. paul and amsterdam islands
@@ -62,8 +63,20 @@ def load_coast_vertices(precision: float) -> list[tuple[float, float]]:
 	return points
 
 
+def excluded(ф: NDArray[float], λ: NDArray[float], exclude_continents: bool) -> NDArray[bool]:
+	""" return a bool array indicating which points are in the (ant)arctic or a big desert """
+	uninhabited = np.full(np.broadcast(ф, λ).shape, False)
+	for ф_0, λ_0 in EXCLUDED_ISLANDS:
+		uninhabited |= ((abs(ф - ф_0) < 2) & (abs(λ - λ_0) < 2))
+	if exclude_continents:
+		for ф_0, λ_0, a, b in DESERT_ELLIPSES:
+			uninhabited |= (((ф - ф_0)/a)**2 + ((λ - λ_0)/b)**2 < 1)
+		uninhabited |= (ф >= ARCTIC_CUTOFF) | (ф <= ANTARCTIC_CUTOFF)
+	return uninhabited
+
+
 def calculate_coast_distance(ф: NDArray[float], λ: NDArray[float], coast: list[tuple[float, float]],
-                             section: NDArray[float], exclude_uninhabited: bool) -> NDArray[float]:
+                             section: NDArray[float], exclude_antarctica: bool) -> NDArray[float]:
 	""" take a set of latitudes and longitudes and calculate the angular distance from
 	    each point to the nearest shoreline (in degrees)
 	"""
@@ -73,8 +86,7 @@ def calculate_coast_distance(ф: NDArray[float], λ: NDArray[float], coast: list
 	# first crop the coasts inside this section
 	points = np.array(coast)
 	points = points[inside_region(points[:, 0], points[:, 1], section), :]
-	if exclude_uninhabited:
-		points = points[~is_uninhabited(points[:, 0], points[:, 1]), :]
+	points = points[~excluded(points[:, 0], points[:, 1], exclude_antarctica), :]
 	minimum_distance = np.full((ф.size, λ.size), np.inf)
 
 	# then calculate the distances
@@ -83,16 +95,6 @@ def calculate_coast_distance(ф: NDArray[float], λ: NDArray[float], coast: list
 		minimum_distance = np.minimum(minimum_distance,
 		                              np.degrees(np.arccos(x_0*xx + y_0*yy + z_0*zz)))
 	return minimum_distance
-
-
-def is_uninhabited(ф: NDArray[float], λ: NDArray[float]) -> NDArray[bool]:
-	""" return a bool array indicating which points are in the (ant)arctic or a big desert """
-	uninhabited = (ф >= ARCTIC_CUTOFF) | (ф <= ANTARCTIC_CUTOFF)
-	for ф_0, λ_0 in EXCLUDED_ISLANDS:
-		uninhabited = uninhabited | ((abs(ф - ф_0) < 2) & (abs(λ - λ_0) < 2))
-	for ф_0, λ_0, a, b in DESERT_ELLIPSES:
-		uninhabited = uninhabited | (((ф - ф_0)/a)**2 + ((λ - λ_0)/b)**2 < 1)
-	return uninhabited
 
 
 def load_cut_file(filename: str) -> list[NDArray[float]]:
@@ -124,7 +126,7 @@ def load_land_polygons() -> list[list[tuple[float, float]]]:
 	return polygons
 
 
-def find_land_mask(ф_grid: NDArray[float], λ_grid: NDArray[float], exclude_uninhabited: bool) -> NDArray[bool]:
+def find_land_mask(ф_grid: NDArray[float], λ_grid: NDArray[float], exclude_antarctica: bool) -> NDArray[bool]:
 	""" bild a 2D bool array that is True for coordinates on land and False for coordinates in the ocean. """
 	crossings = np.full((ф_grid.size, λ_grid.size), 0)
 	polygons = load_land_polygons()
@@ -138,9 +140,8 @@ def find_land_mask(ф_grid: NDArray[float], λ_grid: NDArray[float], exclude_uni
 			intersects = np.not_equal(λ_0 < λ_grid, λ_1 < λ_grid)
 			ф_X[~intersects] = np.inf
 			crossings[ф_X[np.newaxis, :] < ф_grid[:, np.newaxis]] += 1
-	if exclude_uninhabited:
-		ф_grid, λ_grid = np.meshgrid(ф_grid, λ_grid, indexing="ij", sparse=True)
-		crossings[is_uninhabited(ф_grid, λ_grid)] = 0
+	ф_grid, λ_grid = np.meshgrid(ф_grid, λ_grid, indexing="ij", sparse=True)
+	crossings[excluded(ф_grid, λ_grid, exclude_antarctica)] = 0
 	return crossings%2 == 1
 
 
@@ -158,7 +159,7 @@ def calculate_weights(coast_width: float, precision: float):
 		# load the land data with or without antarctica
 		land = find_land_mask(ф, λ, crop_antarctica)
 
-		for cut_file, value_land in [("basic", True)]:#, ("oceans", True), ("mountains", False)]:
+		for cut_file, value_land in [("basic", True), ("oceans", True), ("mountains", False)]:
 			# load the cut file
 			sections = load_cut_file(f"../spec/cuts_{cut_file}.txt")
 
