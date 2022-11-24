@@ -54,14 +54,15 @@ int product(const int values[], int length) {
 }
 
 /**
- * compare two arrays, taking the initial elements as most significant
+ * compare two arrays, taking the initial elements as most significant.
+ * @return 1 if a > b, -1 if a < b, and 0 if a == b
  */
-int less_than(const int a[], const int b[], int length) {
+int compare(const int a[], const int b[], int length) {
     for (int k = 0; k < length; k ++) {
         if (a[k] > b[k])
-            return 0;
-        else if (a[k] < b[k])
             return 1;
+        else if (a[k] < b[k])
+            return -1;
         else
             continue;
     }
@@ -167,6 +168,30 @@ struct SparseArray copy_of_sa(struct SparseArray original) {
 }
 
 /**
+ * efficiently search a sorted int array to find the index of value.
+ * if value does not exist in the array, return -1.
+ * @param array the 2D array thru which to search
+ * @param length the number of rows in the array
+ * @param value the row that we want to locate in the array
+ * @param the number of columns in the array
+ * @return the index j such that array[j*ndim + k] == value[k] for all 0 <= k < ndim
+ */
+int binary_search(int array[], int length, int value[], int ndim) {
+    int j_min = -1, j_max = length; // the current search bounds, exclusive
+    while (j_max - j_min > 1) {
+        int j_new = (j_min + j_max)/2;
+        int comparison = compare(array + j_new*ndim, value, ndim);
+        if (comparison < 0)
+            j_min = j_new;
+        else if (comparison > 0)
+            j_max = j_new;
+        else
+            return j_new;
+    }
+    return -1;
+}
+
+/**
  * combine two SparseArrays into a new one created by applying the given operator to each
  * of their elements
  * @param operator the operation to perform on each pair of elements
@@ -195,21 +220,13 @@ struct SparseArray elementwise_sa(enum Operator operator,
             int *a_index = (j_a < a.nitems) ? a.indices + j_a*c.ndim : NULL;
             int *b_index = (j_b < b.nitems) ? b.indices + j_b*c.ndim : NULL;
             // each iteration, see which index comes next
-            int comparison = 0; // default to 0: a combined a and b comes next
+            int comparison;
             if (a_index == NULL)
                 comparison = 1; // 1: a b index comes next
             else if (b_index == NULL)
-                comparison = - 1; // -1: an a index comes next
-            else {
-                for (int k = 0; k < c.ndim; k ++) {
-                    if (a_index[k] < b_index[k])
-                        comparison = - 1; // -1: an a index comes next
-                    else if (a_index[k] > b_index[k])
-                        comparison = 1; // 1: a b index comes next
-                    if (comparison != 0)
-                        break;
-                }
-            }
+                comparison = -1; // -1: an a index comes next
+            else
+                comparison = compare(a_index, b_index, c.ndim);
             // if the next one should be a, assine it the next a index and mark b as nonparticipating
             if (comparison < 0) {
                 a_mapping[j_c] = j_a;
@@ -303,6 +320,26 @@ struct SparseArray multiply_sa(struct SparseArray a, double factor) {
 }
 
 /**
+ * multiply two SparseArrays and expand their dimensions to get al the combinations
+ */
+struct SparseArray outer_multiply_sa(struct SparseArray a, struct SparseArray b) {
+    struct SparseArray c = {.ndim=a.ndim + b.ndim, .nitems=a.nitems*b.nitems};
+    c.indices = malloc(c.nitems*c.ndim*sizeof(int));
+    c.values = malloc(c.nitems*sizeof(double));
+    for (int j_a = 0; j_a < a.nitems; j_a ++) {
+        for (int j_b = 0; j_b < b.nitems; j_b ++) {
+            int j_c = j_a*b.nitems + j_b;
+            for (int k = 0; k < a.ndim; k ++)
+                c.indices[j_c*c.ndim + k] = a.indices[j_a*a.ndim + k];
+            for (int k = a.ndim; k < c.ndim; k ++)
+                c.indices[j_c*c.ndim + k] = b.indices[j_b*b.ndim + (k - a.ndim)];
+            c.values[j_c] = a.values[j_a]*b.values[j_b];
+        }
+    }
+    return c;
+}
+
+/**
  * compute the dot product of two SparseArrays
  */
 double dot_product_sa(struct SparseArray a, struct SparseArray b) {
@@ -319,21 +356,13 @@ double dot_product_sa(struct SparseArray a, struct SparseArray b) {
         int *a_index = (j_a < a.nitems) ? a.indices + j_a*a.ndim : NULL;
         int *b_index = (j_b < b.nitems) ? b.indices + j_b*b.ndim : NULL;
         // each iteration, see which index comes next
-        int comparison = 0; // default to 0: the selected a and b elements are equal in index
+        int comparison;
         if (a_index == NULL)
             comparison = 1; // 1: the b index is sooner
         else if (b_index == NULL)
-            comparison = - 1; // -1: the a index is sooner
-        else {
-            for (int k = 0; k < a.ndim; k ++) {
-                if (a_index[k] < b_index[k])
-                    comparison = - 1; // -1: an a index comes next
-                else if (a_index[k] > b_index[k])
-                    comparison = 1; // 1: a b index comes next
-                if (comparison != 0)
-                    break;
-            }
-        }
+            comparison = -1; // -1: the a index is sooner
+        else
+            comparison = compare(a_index, b_index, a.ndim);
 
         if (comparison < 0) // if the a index is sooner, pass it
             j_a ++;
@@ -392,55 +421,76 @@ EXPORT struct SparseArrayArray multiply_saa(
 }
 
 /**
- * perform matrix multiplication between two 2d SparseArrayArrays
- * @param a a SparseArrayArray with a single sparse dimension
- * @param b a SparseArrayArray with a single dense dimension
+ * perform matrix multiplication between two SparseArrayArrays.  the twoth will be dotted with
+ * each SparseArray in the first, in such a way that its sparse structure is preserved.  thus,
+ * the first must have the same sparse shape as the twoth has dense shape, and the result
+ * will have the dense shape of the first and the sparse shape of the twoth.
  */
 EXPORT struct SparseArrayArray matmul_saa(
         struct SparseArrayArray a, struct SparseArrayArray b) {
-    if (b.ndim < 1) {
-        printf("Error! the second matrix needs at least one dense dim that I can line up with a's sparse dim.\n");
+    // calculate what the two components of b's size would be if it were a compatible DenseSparseArray
+    int dot_ndim = a.elements[0].ndim; // these "dot" dimensions map to and dot with a's sparse dimensions
+    if (dot_ndim > b.ndim) {
+        printf("Error! the first matrix must have no more sparse dims than the twoth has dense ones.\n");
         struct SparseArrayArray null = {.ndim=-1};
         return null;
     }
-
-    // calculate this stride in case b is multidimensional
+    int row_ndim = b.ndim - dot_ndim; // these "row" dimensions do not participate in the matmul
     int row_size = 1;
-    for (int k = 1; k < b.ndim; k ++)
+    for (int k = dot_ndim; k < b.ndim; k ++)
         row_size *= b.shape[k];
-    int sparse_ndim = b.elements[0].ndim;
 
-    // start by defining the output based on its known size and shape
-    struct SparseArrayArray c = {.ndim=a.ndim + b.ndim - 1, .size=a.size*row_size};
+    // define the output based on its known size and shape
+    struct SparseArrayArray c = {.ndim=a.ndim + row_ndim, .size=a.size*row_size};
     c.shape = malloc(c.ndim*sizeof(int));
     for (int k = 0; k < a.ndim; k ++)
         c.shape[k] = a.shape[k];
     for (int k = a.ndim; k < c.ndim; k ++)
-        c.shape[k] = b.shape[k - a.ndim + 1];
-
-    // then compute each element as the linear combination of rows from b
+        c.shape[k] = b.shape[k - a.ndim + dot_ndim];
     c.elements = malloc(c.size*sizeof(struct SparseArray));
-    for (int i = 0; i < a.size; i ++) {
-        struct SparseArray vector = a.elements[i];
-        if (vector.ndim != 1) {
-            printf("Error! the first matrix must only have one sparse dim, to match the dense dim on b.\n");
-            struct SparseArrayArray null = {.ndim=-1};
-            return null;
-        }
-
+    // then compute each row as a linear combination of rows from b
+    for (int i_a = 0; i_a < a.size; i_a ++) {
         for (int l = 0; l < row_size; l ++) {
-            struct SparseArray element = {.ndim=sparse_ndim, .nitems=0};
-            for (int j = 0; j < vector.nitems; j ++) {
+            struct SparseArray element = {.ndim=b.elements[0].ndim, .nitems=0};
+            for (int j = 0; j < a.elements[i_a].nitems; j ++) {
+                int i_b = 0;
+                for (int k = 0; k < dot_ndim; k ++)
+                    i_b = i_b*b.shape[k] + a.elements[i_a].indices[j*dot_ndim + k];
                 struct SparseArray initial = element;
-                struct SparseArray change = multiply_sa(
-                        b.elements[vector.indices[j]*row_size + l], vector.values[j]);
+                struct SparseArray change = multiply_sa(b.elements[i_b*row_size + l], a.elements[i_a].values[j]);
                 element = add_sa(initial, change);
                 free_sa(initial);
                 free_sa(change);
             }
-            c.elements[i*row_size + l] = element;
+            c.elements[i_a*row_size + l] = element;
         }
     }
+
+    return c;
+}
+
+/**
+ * multiply two SparseArrayArrays elementwise and expand their sparse dimensions
+ * @param a the first array
+ * @param b the second array
+ * @return the resulting array
+ */
+EXPORT struct SparseArrayArray outer_multiply_saa(
+        struct SparseArrayArray a, struct SparseArrayArray b) {
+    // check their shapes breefly; no need to examine them in detail
+    if (a.ndim != b.ndim || a.size != b.size) {
+        printf("Error! the SparseArrayArray dimensions don't look rite.\n");
+        struct SparseArrayArray null = {.ndim=-1};
+        return null;
+    }
+
+    struct SparseArrayArray c = {.ndim=a.ndim, .size=a.size};
+    c.shape = copy_of_ia(a.shape, a.ndim);
+
+    c.elements = malloc(c.size*sizeof(struct SparseArray));
+    for (int i = 0; i < c.size; i ++)
+        c.elements[i] = outer_multiply_sa(a.elements[i], b.elements[i]);
+
     return c;
 }
 
@@ -555,7 +605,7 @@ EXPORT struct SparseArrayArray concatenate(
 /**
  * take a SparseArray that may have zero elements and fix it
  */
-EXPORT struct SparseArray remove_zeros_and_free_sa(struct SparseArray input) {
+struct SparseArray remove_zeros(struct SparseArray input, int free_input) {
     struct SparseArray output = {.ndim=input.ndim};
     output.nitems = 0;
     for (int j = 0; j < input.nitems; j ++)
@@ -572,18 +622,19 @@ EXPORT struct SparseArray remove_zeros_and_free_sa(struct SparseArray input) {
 		        j_out ++;
 		    }
     }
-    free_sa(input);
+    if (free_input)
+        free_sa(input);
     return output;
 }
 
 /**
  * take a SparseArray with its items out of order and put them in order
  */
-EXPORT struct SparseArray sort_in_place_sa(struct SparseArray a) {
+struct SparseArray sort_in_place_sa(struct SparseArray a) {
     for (int j0 = 0; j0 < a.nitems; j0 ++) {
         int j_min = j0;
         for (int j1 = j0 + 1; j1 < a.nitems; j1 ++)
-            if (less_than(a.indices + j1*a.ndim, a.indices + j_min*a.ndim, a.ndim))
+            if (compare(a.indices + j1*a.ndim, a.indices + j_min*a.ndim, a.ndim) < 0)
                 j_min = j1;
         int* min_index = copy_of_ia(a.indices + j_min*a.ndim, a.ndim);
         double min_value = a.values[j_min];
@@ -601,7 +652,7 @@ EXPORT struct SparseArray sort_in_place_sa(struct SparseArray a) {
 /**
  * take a SparseArray that may have adjacent duplicate elements and remove them
  */
-EXPORT struct SparseArray combine_duplicates_and_free(struct SparseArray input) {
+struct SparseArray combine_duplicates(struct SparseArray input, int free_input) {
     int ndim = input.ndim;
     struct SparseArray output = {.ndim=ndim};
     output.nitems = 0;
@@ -620,15 +671,16 @@ EXPORT struct SparseArray combine_duplicates_and_free(struct SparseArray input) 
                                                      input.indices + (j_in+1)*ndim, ndim))
             j_out ++;
     }
-    free_sa(input);
+    if (free_input)
+        free_sa(input);
     return output;
 }
 
 /**
  * create a SparseArrayArray based on the given indices and values.  they will be sorted.
- * @praam nitems the number of items in each SparseArray
- * @param indices the indices of every nonzero item as an ndarray with shape dense_shape + nelements + sparse_ndim
- * @param values the value of every nonzero item as an ndarray with shape dense_shape + nelements
+ * @param nitems the number of items in each SparseArray
+ * @param indices the indices of every nonzero item as an ndarray with shape dense_shape + nitems + sparse_ndim
+ * @param values the value of every nonzero item as an ndarray with shape dense_shape + nitems
  */
 EXPORT struct SparseArrayArray new_saa(
         int dense_ndim, const int dense_shape[], int nitems, int sparse_ndim,
@@ -641,12 +693,24 @@ EXPORT struct SparseArrayArray new_saa(
         struct SparseArray element = {.ndim=sparse_ndim, .nitems=nitems};
         element.indices = copy_of_ia(indices + i*nitems*sparse_ndim, nitems*sparse_ndim);
         element.values = copy_of_da(values + i*nitems, nitems);
-        element = remove_zeros_and_free_sa(element);
+        element = remove_zeros(element, 1);
         element = sort_in_place_sa(element);
-        element = combine_duplicates_and_free(element);
+        element = combine_duplicates(element, 1);
         a.elements[i] = element;
     }
     return a;
+}
+
+/**
+ * take a linear index from an array of known shape and compute the indices along each axis.
+ */
+int* decompose_index(int unravelled, const int shape[], int ndim) {
+    int* components = malloc(ndim*sizeof(int));
+    for (int k = ndim - 1; k >= 0; k --) {
+        components[k] = unravelled%shape[k];
+        unravelled = unravelled/shape[k];
+    }
+    return components;
 }
 
 /**
@@ -729,32 +793,34 @@ EXPORT struct SparseArrayArray divide_nda(
 }
 
 /**
- * perform matrix multiplication between a 2d SparseArrayArray and a plain dense array
- * @param a a SparseArrayArray with a single sparse dimension
+ * perform matrix multiplication between a SparseArrayArray and a plain dense array.  the dense array
+ * will be dotted with each SparseArray in the SparseArrayArray, and it will all also be densified.
  */
 EXPORT void matmul_nda(
         struct SparseArrayArray a, const double* b, const int b_shape[], int b_ndim, double* result) {
-    // calculate this one stride that we need
-    int row_size = 1;
-    for (int k = 1; k < b_ndim; k ++)
+    // calculate what the two components of b's size would be if it were a compatible DenseSparseArray
+    int dot_ndim = a.elements[0].ndim; // these dimensions map to and dot with a's sparse dimensions
+    int row_size = 1; // these "row" dimensions do not participate in the matmul
+    for (int k = dot_ndim; k < b_ndim; k ++)
         row_size *= b_shape[k];
 
     // then compute each row as a linear combination of rows from b
-    for (int i = 0; i < a.size; i ++) {
-        struct SparseArray vector = a.elements[i];
-        if (vector.ndim != 1) {
-            printf("Error! the first matrix must only have one sparse dim, to match the zeroth dim of b.\n");
-            return;
-        }
-
-        for (int l = 0; l < row_size; l ++) {
-            result[i*row_size + l] = 0.;
-            for (int j = 0; j < vector.nitems; j ++)
-                result[i*row_size + l] += vector.values[j]*b[vector.indices[j]*row_size + l];
+    for (int i_a = 0; i_a < a.size; i_a ++) {
+        for (int l = 0; l < row_size; l ++)
+            result[i_a*row_size + l] = 0;
+        for (int j = 0; j < a.elements[i_a].nitems; j ++) {
+            int i_b = 0;
+            for (int k = 0; k < dot_ndim; k ++)
+                i_b = i_b*b_shape[k] + a.elements[i_a].indices[j*dot_ndim + k];
+            for (int l = 0; l < row_size; l ++)
+                result[i_a*row_size + l] += a.elements[i_a].values[j]*b[i_b*row_size + l];
         }
     }
 }
 
+/**
+ * calculate an elementwise operation between the values of a SparseArrayArray and a scalar.
+ */
 struct SparseArrayArray elementwise_f(enum Operator operator, struct SparseArrayArray a, double b) {
     struct SparseArrayArray c = {.ndim=a.ndim, .size=a.size};
     c.shape = copy_of_ia(a.shape, a.ndim);
@@ -800,6 +866,55 @@ EXPORT struct SparseArrayArray power_f(
         struct SparseArrayArray a, double power) {
     return elementwise_f(POWER, a, power);
 }
+
+/**
+ * perform an elementwise unary operation: the absolute value
+ */
+/*EXPORT struct SparseArrayArray abs_saa(struct SparseArrayArray a) {
+    struct SparseArrayArray c = {.ndim=a.ndim, .size=a.size};
+    c.shape = copy_of_ia(a.shape, a.ndim);
+    c.elements = malloc(c.size*sizeof(struct SparseArray));
+    for (int i = 0; i < c.size; i ++) {
+        struct SparseArray new = {.ndim=a.elements[i].ndim, .nitems=a.elements[i].nitems};
+        new.indices = copy_of_ia(a.elements[i].indices, a.elements[i].nitems*a.elements[i].ndim);
+        new.values = malloc(a.elements[i].nitems*sizeof(double));
+        for (int j = 0; j < new.nitems; j ++) {
+            if (a.elements[i].values[j] >= 0)
+                new.values[j] = a.elements[i].values[j];
+            else
+                new.values[j] = -a.elements[i].values[j];
+        }
+        c.elements[i] = new;
+    }
+    return c;
+}*/
+
+/*EXPORT struct inverse_multiply_nda(
+        struct SparseArray a, const double* b, const int[] b_shape, int b_ndim, double* result) {
+    if (a.ndim != 1) {
+        printf("Error! invertible matrices must have one dense dimension.\n");
+        return;
+    }
+    if (b_ndim != 1) {
+        printf("Error! the vector must be a vector.");
+    }
+    const int n = a.shape[0];
+    if (b_size != n) {
+        printf("Error! the vector and the array must have the same length.\n");
+        return;
+    }
+
+    double* x_old = calloc(n, sizeof(double));
+    double* Ax_old = matmul_nda(a, b, b_shape, b_ndim);
+    double* r_old = subtract_nda(b, Ax, n);
+    double* d_old = copy_of_da(r_old);
+    for (int t = 0; true; t ++) {
+        double* Ad = matmul_nda(a, d, b_shape, b_ndim);
+        double alpha = dot_product_da(r, r, n)/dot_product_da(d, Ad, n);
+        double* x_new = add_nda(x_old, multiply_nda(alpha, d_old), n);
+        double*
+    }
+}*/
 
 /**
  * sum a SparseArrayArray along one of the dense axes.
@@ -1035,6 +1150,26 @@ EXPORT struct SparseArrayArray get_slice_saa(
 }
 
 /**
+ * index the array on one axis, extracting a slice that is all of the elements where the
+ * index on that axis matches what's given
+ */
+EXPORT void get_diagonal_saa(struct SparseArrayArray a, double* result) {
+    for (int i = 0; i < a.size; i ++) {
+        if (a.elements[i].ndim != a.ndim) {
+            printf("Error! arrays with sparse axes that don't match their dense axes don't have diagonals.");
+            return;
+        }
+        int* index = decompose_index(i, a.shape, a.ndim);
+        int j = binary_search(a.elements[i].indices, a.elements[i].nitems, index, a.elements[i].ndim);
+        free(index);
+        if (j >= 0)
+            result[i] = a.elements[i].values[j];
+        else
+            result[i] = 0;
+    }
+}
+
+/**
  * rearrange a SparseArrayArray along a particular axis using a 1D int array as an index
  * @param a the array to be reindexed
  * @param index the array of indices at which to evaluate the given axis
@@ -1092,12 +1227,85 @@ EXPORT struct SparseArrayArray get_reindex_saa(
 }
 
 /**
+ * convert the first few sparse axes of a DenseSparseArray to dense ones
+ */
+EXPORT struct SparseArrayArray densify_axes(
+        struct SparseArrayArray a, const int new_shape[], int new_ndim) {
+    // first, you must determine the shape
+    struct SparseArrayArray c = {.ndim=a.ndim + new_ndim};
+    c.shape = malloc(c.ndim*sizeof(int));
+    for (int k = 0; k < a.ndim; k ++)
+        c.shape[k] = a.shape[k];
+    c.size = a.size;
+    for (int k = a.ndim; k < c.ndim; k ++) {
+        c.shape[k] = new_shape[k - a.ndim];
+        c.size *= c.shape[k];
+    }
+    int new_size = c.size/a.size;
+
+    // allocate the main array
+    c.elements = malloc(c.size*sizeof(struct SparseArray));
+
+    // then, set the values by binning the floats from each SparseArray
+    for (int i_a = 0; i_a < a.size; i_a ++) {
+        struct SparseArray source = a.elements[i_a];
+        struct SparseArray* destination = c.elements + i_a*new_size;
+        // iterate thru the values and build up the new child SparseArrays as you go
+        int j_source_start = 0;
+        int num_completed = 0;
+        for (int j_source = 0; j_source <= source.nitems; j_source ++) {
+            // bin each value into the relevant i_new
+            int i_new;
+            if (j_source < source.nitems) {
+                i_new = 0;
+                for (int k = 0; k < new_ndim; k ++)
+                    i_new = i_new*new_shape[k] + source.indices[j_source*source.ndim + k]; // find the newly dense part of the index
+            }
+            else {
+                i_new = new_size;
+            }
+            // each time i_new changes, fill in the previous new SparseArray
+            while (num_completed < i_new) {
+                if (j_source > j_source_start) {
+                    // transfer any pending values from source into children
+                    struct SparseArray child = {.ndim=source.ndim - new_ndim,
+                                                .nitems=j_source - j_source_start};
+                    child.indices = malloc(child.nitems*child.ndim*sizeof(int));
+                    child.values = malloc(child.nitems*sizeof(double));
+                    for (int j_child = 0; j_child < child.nitems; j_child ++) {
+                        for (int k = 0; k < child.ndim; k ++)
+                            child.indices[j_child*child.ndim + k] = source.indices[(j_source_start + j_child)*source.ndim + (new_ndim + k)];
+                        child.values[j_child] = source.values[j_source_start + j_child];
+                    }
+                    destination[num_completed] = child;
+                    j_source_start = j_source;
+                }
+                else {
+                    // or if there are no values for this child, leave it empty
+                    struct SparseArray child = {.ndim=source.ndim - new_ndim,
+                                                .nitems=0, .indices=NULL, .values=NULL};
+                    destination[num_completed] = child;
+                }
+                num_completed ++;
+            }
+        }
+    }
+
+    return c;
+}
+
+/**
  * convert a SparseArrayArray to a plain dense ndarray (flattend)
  */
 EXPORT void to_dense(
-        struct SparseArrayArray a, const int sparse_shape[], double* result) {
+        struct SparseArrayArray a, const int sparse_shape[], int sparse_ndim, double* result) {
     // first, you must determine the shape
-    int total_ndim = a.ndim + a.elements[0].ndim;
+    if (a.size > 0 && a.elements[0].ndim != sparse_ndim) {
+        printf("Error! the number of sparse dimensions in this SparseArrayArray is %d, but you seem to think it %d.\n",
+               a.elements[0].ndim, sparse_ndim);
+        return;
+    }
+    int total_ndim = a.ndim + sparse_ndim;
     int* shape = malloc(total_ndim*sizeof(int));
     for (int k = 0; k < a.ndim; k ++)
         shape[k] = a.shape[k];

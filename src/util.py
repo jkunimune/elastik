@@ -300,7 +300,7 @@ def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float]
 
 
 def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, polytope_lim: float | NDArray[float],
-                     tolerance: float, certainty: float = 30) -> NDArray[float]:
+                     tolerance: float, certainty: float = 60) -> NDArray[float]:
 	""" project a given point onto a polytope defined by the inequality
 	        all(ploytope_mat@point <= polytope_lim + tolerance)
 	    I learned this fast dual-based proximal gradient strategy from
@@ -343,7 +343,7 @@ def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, poly
 	candidates = []
 	# loop thru the proximal gradient descent of the dual problem
 	for i in range(1_000):
-		grad_F = polytope_mat@(point + polytope_mat.T@w_old)
+		grad_F = polytope_mat@(point + polytope_mat.T@w_old) # TODO: it would be better to have a method that does transpose_matmul in one go
 		prox_G = np.minimum(polytope_lim, grad_F - L*w_old)
 		y_new = w_old - (grad_F - prox_G)/L
 		t_new = (1 + sqrt(1 + 4*t_old**2))/2  # this inertia term is what makes it fast
