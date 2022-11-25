@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, c_bool, c_char
+from math import sqrt
 from typing import Callable, Sequence, Collection
 
 import numpy as np
@@ -398,8 +399,8 @@ class DenseSparseArray:
 		if other.shape != self.sparse_shape:
 			raise ValueError("b must be a vector that matches self")
 		absolute_tolerance = np.sum(other**2)*tolerance
-		# diag = sign*self.diagonal() # TODO: I'm curius if replacing this with ones would make this faster
-		guess = np.zeros(other.shape)#other/np.maximum(diag, np.quantile(abs(diag[diag != 0]), 1/sqrt(diag.size)))
+		diag = self.diagonal()
+		guess = other/np.maximum(diag, np.quantile(abs(diag[diag != 0]), 1/sqrt(diag.size)))
 		residue_old = other - self@guess - damping*guess
 		direction = residue_old
 		num_iterations = 0
@@ -542,8 +543,8 @@ if __name__ == "__main__":
 
 	A = DenseSparseArray.from_coordinates(
 		[3],
-		np.array([[[0], [1]], [[0], [1]], [[2], [0]]]),
-		np.array([[ 1.,  0.], [-2.,  3.], [ 4., -5.]]),
+		np.array([[[0], [1]], [[0], [2]], [[1], [2]]]),
+		np.array([[ 1., -2.], [-2., -3.], [-3.,  4.]]),
 	)
 	b = np.array([-1., 4., 1.])
 	print("A =", A)

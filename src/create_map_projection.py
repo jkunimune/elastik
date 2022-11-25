@@ -769,7 +769,8 @@ def create_map_projection(configuration_file: str):
 	print("begin fitting process.")
 	for i, (mesh_factor, bounds_coarseness, final) in enumerate(schedule):
 		print(f"fitting pass {i}/{len(schedule)} (coarsened {mesh_factor}x, "
-		      f"{'final' if final else 'lenient'} cost function)")
+		      f"{'final' if final else 'lenient'} cost function, "
+		      f"{'bounded' if bounds_coarseness > 0 else 'unbounded'})")
 
 		# progress from coarser to finer mesh skeletons
 		if mesh_factor > 0:
