@@ -25,8 +25,8 @@ LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
 class Variable:
 	def __init__(self, values: NDArray[float] | Variable,
-	             gradients: NDArray[float] = None,
-	             curvatures: NDArray[float] = None,
+	             gradients: DenseSparseArray = None,
+	             curvatures: DenseSparseArray = None,
 	             independent: bool = False, ndim: int = 0):
 		""" an array of values with gradient information attached, for computing gradients
 		    of vectorized functions
@@ -69,25 +69,30 @@ class Variable:
 			# if no gradients are given and these are not independent
 			else:
 				# take the values to be constant
-				self.gradients = np.array(0)
+				self.gradients = DenseSparseArray.zeros((), ())
 			# if curvatures are given
 			if curvatures is not None:
-				if curvatures.shape != self.gradients.shape:
+				assert type(curvatures) is DenseSparseArray
+				if curvatures.shape != self.values.shape + 2*self.gradients.shape[self.values.ndim:]:
 					raise IndexError("the given array dimensions do not match")
 				self.curvatures = curvatures
 			elif self.gradients.ndim > 0:
 				self.curvatures = DenseSparseArray.zeros(
-					self.values.shape, self.gradients.shape[self.values.ndim:])
+					self.values.shape, 2*self.gradients.shape[self.values.ndim:])
 			else:
-				self.curvatures = np.array(0)
+				self.curvatures = DenseSparseArray.zeros((), ())
 
 		self.shape = self.values.shape
 		""" the shape of self.values """
 		self.space = self.gradients.shape[self.values.ndim:]
 		""" the shape of each gradient """
-		self.bc = (slice(None),)*len(self.shape) + (np.newaxis,)*len(self.space)
+		self.g_shp = (slice(None),)*len(self.shape) + (np.newaxis,)*len(self.space)
 		""" this tuple should be used to index self.values when they need to broadcast
 		    to the shape of self.gradients
+		"""
+		self.c_shp = (slice(None),)*len(self.shape) + (np.newaxis,)*len(self.space)*2
+		""" this tuple should be used to index self.values when they need to broadcast
+		    to the shape of self.curvatures
 		"""
 
 		self.ndim = len(self.shape)
@@ -101,9 +106,10 @@ class Variable:
 			item = (item,)
 		value_index = item
 		gradient_index = (slice(None),)*len(self.space)
+		curvature_index = (slice(None),)*2*len(self.space)
 		return Variable(self.values[value_index],
 		                self.gradients[(*value_index, *gradient_index)],
-		                self.curvatures[(*value_index, *gradient_index)])
+		                self.curvatures[(*value_index, *curvature_index)])
 
 	def __add__(self, other):
 		other = Variable(other)
@@ -130,21 +136,22 @@ class Variable:
 	def __mul__(self, other):
 		other = Variable(other, ndim=self.ndim)
 		return Variable(values=self.values * other.values,
-		                gradients=self.gradients * other.values[self.bc] +
-		                          other.gradients * self.values[self.bc],
-		                curvatures=self.curvatures * other.values[self.bc] +
-		                           self.gradients * other.gradients * 2 +
-		                           other.curvatures * self.values[self.bc])
+		                gradients=self.gradients*other.values[self.g_shp] +
+		                          other.gradients*self.values[self.g_shp],
+		                curvatures=self.curvatures * other.values[self.c_shp] +
+		                           self.gradients.outer_multiply(other.gradients) +
+		                           other.gradients.outer_multiply(self.gradients) +
+		                           other.curvatures * self.values[self.c_shp])
 
 	def __neg__(self):
 		return self * (-1)
 
 	def __pow__(self, power):
-		return Variable(self.values ** power,
-		                self.gradients * self.values[self.bc]**(power - 1) * power,
-		                (self.gradients**2 * (power - 1) +
-		                 self.curvatures * self.values[self.bc]) *
-		                self.values[self.bc]**(power - 2) * power)
+		return Variable(values=self.values**power,
+		                gradients=self.gradients*self.values[self.g_shp]**(power - 1)*power,
+		                curvatures=(self.gradients.outer_multiply(self.gradients)*(power - 1) +
+		                            self.curvatures*self.values[self.c_shp])*
+		                           self.values[self.c_shp]**(power - 2)*power)
 
 	def __sub__(self, other):
 		other = Variable(other)
@@ -174,14 +181,16 @@ class Variable:
 		return self ** 0.5
 
 	def log(self):
-		return Variable(np.log(self.values),
-		                self.gradients / self.values[self.bc],
-		                self.curvatures / self.values[self.bc] - self.gradients**2 / self.values[self.bc]**2)
+		return Variable(values=np.log(self.values),
+		                gradients=self.gradients/self.values[self.g_shp],
+		                curvatures=(-self.gradients.outer_multiply(self.gradients)/self.values[self.c_shp] +
+		                             self.curvatures)/self.values[self.c_shp])
 
 	def exp(self):
-		return Variable(np.exp(self.values),
-		                self.gradients * np.exp(self.values[self.bc]),
-		                (self.curvatures + self.gradients**2) * np.exp(self.values[self.bc]))
+		return Variable(values=np.exp(self.values),
+		                gradients=self.gradients*np.exp(self.values[self.g_shp]),
+		                curvatures=(self.gradients.outer_multiply(self.gradients) +
+		                            self.curvatures)*np.exp(self.values[self.c_shp]))
 
 	def sum(self, axis=None):
 		if axis is None:
@@ -191,7 +200,7 @@ class Variable:
 			axis = (axis + self.ndim)%self.ndim
 			axis = tuple(axis)
 		return Variable(self.values.sum(axis=axis),
-		                self.gradients.sum(axis=axis),
+		                self.gradients.sum(axis=axis, make_dense=True),
 		                self.curvatures.sum(axis=axis))
 
 
@@ -264,11 +273,11 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			raise RuntimeError(f"there are nan values at x = {x}")
 		return value
 	# define a utility function to use Variable to get the gradient of the value
-	def get_gradient(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+	def get_gradient(x: np.ndarray) -> tuple[NDArray[float], DenseSparseArray]:
 		variable = func(Variable(x, independent=True))
 		if np.any(np.isnan(variable.gradients)):
 			raise RuntimeError(f"there are nan gradients at x = {x}")
-		return variable.gradients, variable.curvatures
+		return np.array(variable.gradients), variable.curvatures.make_axes_dense(2)
 
 	initial_value = get_value(guess)
 
@@ -288,7 +297,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	# instantiate the loop state variables
 	value = initial_value
 	state = guess
-	step_limiter = np.quantile(abs(curvature), .01)
+	step_limiter = np.quantile(abs(curvature.diagonal()), 1e-2)
 	# descend until we can't descend any further
 	num_line_searches = 0
 	while True:
@@ -296,7 +305,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		num_step_sizes = 0
 		while True:
 			# step according to the gradient and step limiter for this inner loop, projecting onto the legal subspace
-			ideal_step = -gradient/np.maximum(curvature, step_limiter)
+			ideal_step = -curvature.inv_matmul(gradient, damping=step_limiter)
 			new_state = polytope_project(
 				state + ideal_step,
 				bounds_matrix, bounds_limits, bounds_tolerance)
@@ -342,10 +351,20 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 
 if __name__ == "__main__":
 	import matplotlib.pyplot as plt
-	x = Variable(np.linspace(0, 1, 26), np.ones((26, 1)), np.zeros((26, 1)))
-	y = (x - 3)*x
-	plt.plot(x.values, y.values, label="value")
-	plt.plot(x.values, y.gradients, label="dy/dx")
-	plt.plot(x.values, y.curvatures, label="d2y/dx2")
-	plt.legend()
+	x0 = Variable(np.linspace(1, 3, 6).reshape((2, 3)), DenseSparseArray.identity((2, 3)))
+	d = np.linspace(-2, -3, 6).reshape((2, 3))
+	def f(x):
+		return (np.log(x)**3).sum()
+	f0 = f(x0)
+	value = f0.values[()]
+	gradient = np.array(f0.gradients)
+	curvature = f0.curvatures.make_axes_dense(d.ndim)
+	steps, values, expectations = [], [], []
+	for h in np.linspace(-1, 1):
+		steps.append(h)
+		values.append(f(x0 + h*d).values[()])
+		expectations.append(value + np.sum((h*d)*gradient) + 1/2*np.sum((h*d)*(curvature@(h*d))))
+	plt.figure()
+	plt.plot(steps, values)
+	plt.plot(steps, expectations, "--")
 	plt.show()
