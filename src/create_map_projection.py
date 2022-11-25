@@ -701,22 +701,12 @@ def create_map_projection(configuration_file: str):
 	coastlines = load_coastline_data()
 
 	# now we can bild up the progression schedule
-	schedule: list[tuple[Tensor, Tensor, int, bool]] = []
-	# start by optimizing a reduced set of node positions
 	skeleton_factors = np.ceil(np.geomspace(
-		ф_mesh.size/10, 1., int(log2(ф_mesh.size/10)) + 1))
-	for factor in skeleton_factors:
-		reduce, restore = mesh_skeleton(node_indices, factor, ф_mesh)
-		schedule.append((reduce, restore, 0, False))
-	# once you're done, switch to the final cost function
-	minorly_reduce, minorly_restore = mesh_skeleton(node_indices, 1, ф_mesh)
-	schedule.append((minorly_reduce, minorly_restore, 0, True))
-	# then impose bounds with reduced resolutions
-	if np.any(np.isfinite(map_size)):
-		for factor in [3, 1]:
-			schedule.append((minorly_reduce, minorly_restore, factor, True))
-	# finally, optimize the completely unreduced mesh
-	schedule.append((Scalar(1), Scalar(1), 1, True))
+		ф_mesh.size/10, 1., int(log2(ф_mesh.size/10)) + 1)).astype(int)
+	schedule = [(skeleton_factors[0], 0, False),  # start with the roughest fit, with no bounds
+	            (skeleton_factors[0], 0, True)]  # switch to the strict cost function before imposing bounds
+	schedule += [(factor, factor, True) for factor in skeleton_factors]  # impose the bounds and then make the mesh finer
+	schedule += [(0, 1, True)]  # and finally switch to the complete mesh
 
 	# set up the plotting axes and state variables
 	small_fig = plt.figure(figsize=(3, 5), num=f"Elastik-{configuration_file} fitting")
@@ -777,8 +767,14 @@ def create_map_projection(configuration_file: str):
 
 	# then minimize! follow the scheduled progression.
 	print("begin fitting process.")
-	for i, (reduce, restore, bounds_coarseness, final) in enumerate(schedule):
+	for i, (mesh_factor, bounds_coarseness, final) in enumerate(schedule):
 		print(f"fitting pass {i}/{len(schedule)}")
+
+		# progress from coarser to finer mesh skeletons
+		if mesh_factor > 0:
+			reduce, restore = mesh_skeleton(node_indices, mesh_factor, ф_mesh)
+		else:
+			reduce, restore = Scalar(1), Scalar(1)
 
 		# progress from coarser to finer domain polytopes
 		if bounds_coarseness == 0:
@@ -799,14 +795,13 @@ def create_map_projection(configuration_file: str):
 					                              np.min(border[:, k]), np.max(border[:, k]),
 					                              -bounds_limits[k], bounds_limits[k])
 
+		node_positions = reduce @ node_positions
+
 		# progress from the quickly-converging approximation to the true cost function
 		if not final:
 			primary_func, backup_func = compute_energy_lenient, None
 		else:
 			primary_func, backup_func = compute_energy_strict, compute_energy_aggressive
-
-		# progress from coarser to finer mesh skeletons
-		node_positions = reduce @ node_positions
 
 		# each time, run the projected gradient descent routine
 		success = False
@@ -819,7 +814,7 @@ def create_map_projection(configuration_file: str):
 			                          bounds_limits=bounds_limits,
 			                          report=record_status,
 			                          gradient_tolerance=tolerance,
-			                          cosine_tolerance=1e-1)
+			                          cosine_tolerance=5e-2)
 			success = True
 		calculation = threading.Thread(target=calculation_function)
 		calculation.start()
