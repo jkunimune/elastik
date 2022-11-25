@@ -812,8 +812,49 @@ EXPORT void matmul_nda(
             int i_b = 0;
             for (int k = 0; k < dot_ndim; k ++)
                 i_b = i_b*b_shape[k] + a.elements[i_a].indices[j*dot_ndim + k];
+            double coef = a.elements[i_a].values[j];
             for (int l = 0; l < row_size; l ++)
-                result[i_a*row_size + l] += a.elements[i_a].values[j]*b[i_b*row_size + l];
+                result[i_a*row_size + l] += coef*b[i_b*row_size + l];
+        }
+    }
+}
+
+/**
+ * perform matrix multiplication between a SparseArrayArray and a plain dense array, but where the
+ * SparseArrayArray is transposed first (only works for 1 dense dim and 1 sparse dim).
+ */
+EXPORT void transpose_matmul_nda(
+        struct SparseArrayArray a, int sparse_size, const double* b, const int b_shape[], int b_ndim, double* result) {
+    if (a.ndim != 1 || a.elements[0].ndim != 1) {
+        printf("Error! this method only works when a is 1D and its elements are 1D.\n");
+        return;
+    }
+    if (a.size != b_shape[0]) {
+        printf("Error! these shapes are not matmul-compatible.\n");
+        return;
+    }
+
+    // calculate what the two components of b's size would be if it were a compatible DenseSparseArray
+    int row_size = 1; // these "row" dimensions do not participate in the matmul
+    for (int k = 1; k < b_ndim; k ++)
+        row_size *= b_shape[k];
+
+    // initialize result to 0
+    for (int i_c = 0; i_c < sparse_size; i_c ++)
+        for (int l = 0; l < row_size; l ++)
+            result[i_c*row_size + l] = 0;
+
+    // then compute each row as a linear combination of rows from b
+    for (int i_a = 0; i_a < a.size; i_a ++) {
+        for (int j = 0; j < a.elements[i_a].nitems; j ++) {
+            int i_c = a.elements[i_a].indices[j];
+            double coef = a.elements[i_a].values[j];
+            if (i_c < 0 || i_c >= sparse_size) {
+                printf("Error! the index %d is outside of the specified sparse size %d.\n", i_c, sparse_size);
+                return;
+            }
+            for (int l = 0; l < row_size; l ++)
+                result[i_c*row_size + l] += coef*b[i_a*row_size + l];
         }
     }
 }
@@ -1010,65 +1051,6 @@ EXPORT void sum_all_dense(
             result[l] += a.elements[i].values[j]; // and add it there
         }
     }
-}
-
-/**
- * reflect the axes of this array and switch the dense axis for the sparse one
- */
-EXPORT struct SparseArrayArray transpose(struct SparseArrayArray a, int sparse_size) {
-    if (a.ndim != 1) {
-        printf("Error! I only can transpose SparseArrayArrays with exactly 1 dense axis.");
-        struct SparseArrayArray null = {.ndim=-1};
-        return null;
-    }
-
-    // first, iterate thru the input array to count how many elements are in each collum
-    int* nitems = calloc(sparse_size, sizeof(int));
-    for (int i = 0; i < a.size; i ++) {
-        struct SparseArray row = a.elements[i];
-        if (row.ndim != 1) {
-            printf("Error! I can only transpose SparseArrayArrays with exactly 1 sparse axis.");
-            struct SparseArrayArray null = {.ndim=-1};
-            free(nitems);
-            return null;
-        }
-        for (int j = 0; j < row.nitems; j ++) {
-            if (row.indices[j] < 0 || row.indices[j] >= sparse_size) {
-                printf("Error! the sparse array had indices out of bounds of the given sparse_size.");
-                struct SparseArrayArray null = {.ndim=-1};
-                free(nitems);
-                return null;
-            }
-            nitems[row.indices[j]] ++;
-        }
-    }
-
-    // then bild each row of the transpose, allocating however much memory was deemd necessary
-    struct SparseArrayArray c = {.ndim=1, .size=sparse_size};
-    c.shape = malloc(sizeof(int));
-    c.shape[0] = sparse_size;
-    c.elements = malloc(sparse_size*sizeof(struct SparseArray));
-    for (int i = 0; i < c.size; i ++) {
-        struct SparseArray row = {.ndim=1, .nitems=nitems[i]};
-        row.indices = malloc(nitems[i]*sizeof(int));
-        row.values = malloc(nitems[i]*sizeof(double));
-        c.elements[i] = row;
-    }
-    free(nitems);
-
-    // finally, iterate thru the old array to transfer the values
-    int* nfilled = calloc(sparse_size, sizeof(int));
-    for (int i_a = 0; i_a < a.size; i_a ++) {
-        for (int j = 0; j < a.elements[i_a].nitems; j ++) {
-            int i_c = a.elements[i_a].indices[j];
-            c.elements[i_c].indices[nfilled[i_c]] = i_a;
-            c.elements[i_c].values[nfilled[i_c]] = a.elements[i_a].values[j];
-            nfilled[i_c] ++;
-        }
-    }
-    free(nfilled);
-
-    return c;
 }
 
 /**

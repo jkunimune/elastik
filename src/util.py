@@ -343,12 +343,12 @@ def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, poly
 	candidates = []
 	# loop thru the proximal gradient descent of the dual problem
 	for i in range(1_000):
-		grad_F = polytope_mat@(point + polytope_mat.T@w_old) # TODO: it would be better to have a method that does transpose_matmul in one go
+		grad_F = polytope_mat@(point + polytope_mat.transpose_matmul(w_old))
 		prox_G = np.minimum(polytope_lim, grad_F - L*w_old)
 		y_new = w_old - (grad_F - prox_G)/L
 		t_new = (1 + sqrt(1 + 4*t_old**2))/2  # this inertia term is what makes it fast
 		w_new = y_new + (t_old - 1)/t_new*(y_new - y_old)
-		x_new = point + polytope_mat.T@y_new
+		x_new = point + polytope_mat.transpose_matmul(y_new)
 		# save any points that are close enough to being in
 		if np.all(polytope_mat@x_new <= polytope_lim + tolerance):
 			candidates.append(x_new)

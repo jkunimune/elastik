@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import sys
 from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, c_bool, c_char
-from functools import cached_property
 from typing import Callable, Sequence, Collection
 
 import numpy as np
@@ -64,6 +63,7 @@ declare_c_func(c_lib.new_saa, [c_int, c_int_p, c_int, c_int, c_int_ndarray, c_nd
 declare_c_func(c_lib.multiply_nda, [c_SparseArrayArray, c_ndarray, c_int_p], c_SparseArrayArray)
 declare_c_func(c_lib.divide_nda, [c_SparseArrayArray, c_ndarray, c_int_p], c_SparseArrayArray)
 declare_c_func(c_lib.matmul_nda, [c_SparseArrayArray, c_ndarray, c_int_p, c_int, c_ndarray], None)
+declare_c_func(c_lib.transpose_matmul_nda, [c_SparseArrayArray, c_int, c_ndarray, c_int_p, c_int, c_ndarray], None)
 declare_c_func(c_lib.multiply_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
 declare_c_func(c_lib.divide_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
 declare_c_func(c_lib.power_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
@@ -72,7 +72,6 @@ declare_c_func(c_lib.sum_all_sparse, [c_SparseArrayArray, c_ndarray], None)
 declare_c_func(c_lib.sum_all_dense, [c_SparseArrayArray, c_int_p, c_ndarray], None)
 declare_c_func(c_lib.densify_axes, [c_SparseArrayArray, c_int_p, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.to_dense, [c_SparseArrayArray, c_int_p, c_int, c_ndarray], None)
-declare_c_func(c_lib.transpose, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.expand_dims, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_slice_saa, [c_SparseArrayArray, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_diagonal_saa, [c_SparseArrayArray, c_ndarray], None)
@@ -190,14 +189,6 @@ class DenseSparseArray:
 			c_SparseArrayArray_array([element._as_parameter_ for element in corrected_elements]),
 			c_int(len(corrected_elements))))
 
-	@cached_property
-	def T(self) -> DenseSparseArray:
-		""" the transpose of the array """
-		if self.dense_ndim != 1 or self.sparse_ndim != 1:
-			raise ValueError("this is only designed to work for 2d matmulable matrices")
-		thing = c_lib.transpose(self, c_int(self.shape[1]))
-		return DenseSparseArray(self.shape[::-1], thing)
-
 	def __add__(self, other: DenseSparseArray | NDArray[float] | float) -> DenseSparseArray:
 		if type(other) is DenseSparseArray:
 			if self.dense_shape == other.dense_shape and self.sparse_shape == other.sparse_shape:
@@ -310,6 +301,16 @@ class DenseSparseArray:
 			return result
 		else:
 			return NotImplemented
+
+	def transpose_matmul(self, other: NDArray[float]) -> NDArray[float]:
+		""" the transpose of this array matrix multiplied by something """
+		if self.dense_ndim != 1 or self.sparse_ndim != 1:
+			raise ValueError("this is only designed to work for 2d matmulable matrices")
+		if self.dense_size != other.shape[0]:
+			raise ValueError(f"the given shapes {self.sparse_shape}+{self.dense_shape} @ {other.shape} aren't matrix-multiplication compatible")
+		result = np.empty(self.sparse_shape + other.shape[1:])
+		c_lib.transpose_matmul_nda(self, self.sparse_size, other, c_int_array(other.shape), c_int(other.ndim), result)
+		return result
 
 	def outer_multiply(self, other: DenseSparseArray) -> DenseSparseArray:
 		if self.ndim == 0 and np.array(self) == 0:
@@ -540,15 +541,16 @@ if __name__ == "__main__":
 	print("sum axis 2:", array.sum(axis=2))
 
 	A = DenseSparseArray.from_coordinates(
-		[2, 3],
-		np.array([[[[1, 1], [0, 1]], [[0, 0], [1, 0]], [[0, 2], [1, 0]]], [[[0, 1], [0, 2]], [[0, 0], [1, 2]], [[1, 2], [1, 1]]]]),
-		np.array([[[    5.,     3.], [    3.,    -2.], [    7.,    -4.]], [[   -2.,    -4.], [    5.,    -6.], [    1.,   -6.]]]),
+		[3],
+		np.array([[[0], [1]], [[0], [1]], [[2], [0]]]),
+		np.array([[ 1.,  0.], [-2.,  3.], [ 4., -5.]]),
 	)
-	b = np.array([[-1., 4., 1.], [-2., 2., -3.]])
+	b = np.array([-1., 4., 1.])
 	print("A =", A)
 	print("b =", b)
 	print("Ab =", A@b)
 	print("A^-1(Ab) =", A.inv_matmul(A@b))
+	print("A^T(b) =", A.transpose_matmul(b))
 	print("diag(A) =", A.diagonal())
 
 	amatrix = DenseSparseArray.from_coordinates(

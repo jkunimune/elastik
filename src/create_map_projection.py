@@ -552,7 +552,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 	# plot the error function over time
 	valu_axes.clear()
 	valu_axes.plot(values)
-	valu_axes.set_xlim(len(values) - 1000, len(values))
+	valu_axes.set_xlim(len(values) - 200, len(values))
 	valu_axes.set_ylim(0, 6*values[-1] if values else 1)
 	valu_axes.minorticks_on()
 	valu_axes.yaxis.set_tick_params(which='both')
@@ -763,12 +763,13 @@ def create_map_projection(configuration_file: str):
 		latest_step = step
 		values.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
-		angles.append(1 - freedom)
+		angles.append(-np.log(1 - freedom) if freedom < 1 else inf)
 
 	# then minimize! follow the scheduled progression.
 	print("begin fitting process.")
 	for i, (mesh_factor, bounds_coarseness, final) in enumerate(schedule):
-		print(f"fitting pass {i}/{len(schedule)}")
+		print(f"fitting pass {i}/{len(schedule)} (coarsened {mesh_factor}x, "
+		      f"{'final' if final else 'lenient'} cost function)")
 
 		# progress from coarser to finer mesh skeletons
 		if mesh_factor > 0:
