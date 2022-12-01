@@ -13,6 +13,10 @@ from numpy.typing import NDArray
 from sparse import DenseSparseArray
 
 
+class MaxIterationsException(Exception):
+	pass
+
+
 class Scalar:
 	def __init__(self, value):
 		""" a float with a matmul method """
@@ -300,7 +304,7 @@ def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float]
 
 
 def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, polytope_lim: float | NDArray[float],
-                     tolerance: float, certainty: float = 60) -> NDArray[float]:
+                     certainty=30) -> NDArray[float]: # TODO: should it be 60?  would that work better?
 	""" project a given point onto a polytope defined by the inequality
 	        all(ploytope_mat@point <= polytope_lim + tolerance)
 	    I learned this fast dual-based proximal gradient strategy from
@@ -312,7 +316,6 @@ def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, poly
 	    :param polytope_lim: the quantity that defines the size of the polytope.  it may be an array
 	                         if point is 2d.  a point is in the polytope iff
 	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
-	    :param tolerance: how far outside of the polytope a returned point may be
 	    :param certainty: how many iterations it should try once it's within the tolerance to ensure
 	                      it's finding the best point
 	"""
@@ -320,7 +323,7 @@ def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, poly
 		if point.shape[1] != polytope_lim.size:
 			raise ValueError(f"if you want this fancy functionality, the shapes must match")
 		# if there are multiple dimensions, do each dimension one at a time
-		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[k], tolerance, certainty)
+		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[k], certainty)
 		                 for k in range(point.shape[1])]).T
 	elif point.ndim != 1 or np.ndim(polytope_lim) != 0:
 		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
@@ -332,17 +335,23 @@ def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, poly
 	if np.all(polytope_mat@point <= polytope_lim):
 		return point
 
-	# try not to have the tolerance be bigger than the current position; it screws with stuff
-	tolerance = min(tolerance, np.max(polytope_mat@point - polytope_lim)*1e-1)
+	# do a naive coercion-type thing to get a good initial gess
+	y_guess = np.zeros(polytope_mat.shape[0])
+	# for i in range(polytope_mat.shape[0]):
+	# 	x_guess = point + polytope_mat.transpose_matmul(y_guess)
+	# 	normal = polytope_mat[i, :]
+	# 	offset = normal@x_guess
+	# 	if offset > polytope_lim:
+	# 		y_guess[i] = (polytope_lim - offset)/(normal**2).sum(axis=[0])
 
 	# establish the parameters and persisting variables
 	L = np.linalg.norm(polytope_mat, ord=2)**2
-	x_new = None
-	w_old = y_old = np.zeros(polytope_mat.shape[0])
+	w_old = y_old = y_guess
 	t_old = 1
 	candidates = []
+	num_iterations = 0
 	# loop thru the proximal gradient descent of the dual problem
-	for i in range(1_000):
+	while True:
 		grad_F = polytope_mat@(point + polytope_mat.transpose_matmul(w_old))
 		prox_G = np.minimum(polytope_lim, grad_F - L*w_old)
 		y_new = w_old - (grad_F - prox_G)/L
@@ -350,11 +359,27 @@ def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, poly
 		w_new = y_new + (t_old - 1)/t_new*(y_new - y_old)
 		x_new = point + polytope_mat.transpose_matmul(y_new)
 		# save any points that are close enough to being in
-		if np.all(polytope_mat@x_new <= polytope_lim + tolerance):
+		if np.all(polytope_mat@x_new <= polytope_lim):
 			candidates.append(x_new)
 			# and terminate once we get enough of them
 			if len(candidates) >= certainty:
 				best = np.argmin(np.linalg.norm(np.array(candidates) - point, axis=1))
 				return candidates[best]
 		t_old, w_old, y_old = t_new, w_new, y_new
-	return x_new
+		# make sure it doesn't run for too long
+		num_iterations += 1
+		if (num_iterations >= 10_000 and len(candidates) == 0) or num_iterations >= 20_000:
+			raise MaxIterationsException("The maximum number of iterations was reached in fast dual-based proximal gradient polytope projection")
+
+
+if __name__ == "__main__":
+	import matplotlib.pyplot as plt
+	polytope = DenseSparseArray.from_coordinates(
+		[2],
+		np.array([[[0], [1]], [[0], [1]], [[0], [1]], [[0], [1]], [[0], [1]], [[0], [1]], [[0], [1]]]),
+		np.array([[2., 2.], [0., 1.], [1., -1.], [1., 0.], [-1., -2.], [-1., 0.], [1., 3.]]))
+	X, Y = np.meshgrid(np.linspace(-1.5, 1.5, 101), np.linspace(-1.5, 1.5, 101), indexing="ij")
+	plt.contour(X, Y, np.all(polytope@np.stack([X, Y]) <= 1, axis=0))
+	print(polytope_project(np.array([-10., -10.]), polytope, 1))
+	plt.axis("equal")
+	plt.show()

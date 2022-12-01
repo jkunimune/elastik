@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, c_bool, c_char
+from functools import cache
 from math import sqrt
 from typing import Callable, Sequence, Collection
 
@@ -68,6 +69,9 @@ declare_c_func(c_lib.transpose_matmul_nda, [c_SparseArrayArray, c_int, c_ndarray
 declare_c_func(c_lib.multiply_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
 declare_c_func(c_lib.divide_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
 declare_c_func(c_lib.power_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
+declare_c_func(c_lib.abs_saa, [c_SparseArrayArray], c_SparseArrayArray)
+declare_c_func(c_lib.min_saa, [c_SparseArrayArray], c_double)
+declare_c_func(c_lib.max_saa, [c_SparseArrayArray], c_double)
 declare_c_func(c_lib.sum_along_axis, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.sum_all_sparse, [c_SparseArrayArray, c_ndarray], None)
 declare_c_func(c_lib.sum_all_dense, [c_SparseArrayArray, c_int_p, c_ndarray], None)
@@ -325,6 +329,18 @@ class DenseSparseArray:
 	def __pow__(self, power: float) -> DenseSparseArray:
 		return DenseSparseArray(self.shape, c_lib.power_f(self, c_double(power)))
 
+	@cache
+	def __abs__(self) -> DenseSparseArray:
+		return DenseSparseArray(self.shape, c_lib.abs_saa(self))
+
+	@cache
+	def min(self) -> float:
+		return c_lib.min_saa(self)
+
+	@cache
+	def max(self) -> float:
+		return c_lib.max_saa(self)
+
 	def __getitem__(self, index: tuple) -> DenseSparseArray:
 		if type(index) is not tuple:
 			index = (index,)
@@ -380,7 +396,7 @@ class DenseSparseArray:
 		c_lib.get_diagonal_saa(self, result)
 		return result
 
-	def inv_matmul(self, other: NDArray[float], tolerance=1e-8, damping=0) -> NDArray[float]:
+	def inv_matmul(self, other: NDArray[float], tolerance=1e-4, damping=0) -> NDArray[float]:
 		""" compute self**-1 @ b, iteratively
 		    :param other: the vector by which to multiply the inverse
 		    :param tolerance: the relative tolerance; the residual magnitude will be this factor
@@ -398,8 +414,12 @@ class DenseSparseArray:
 			raise ValueError(f"only square matrices can be inverted, not {self.dense_shape}x{self.sparse_shape}")
 		if other.shape != self.sparse_shape:
 			raise ValueError("b must be a vector that matches self")
-		absolute_tolerance = np.sum(other**2)*tolerance
-		diag = self.diagonal()
+		if damping > abs(self).max()*1e3:
+			raise ValueError("it's inefficient to do this when the damping is so much stronger than the matrix, and has roundoff issues besides, so I'm going to just stop you rite there.")
+
+		magnitude_tolerance = np.linalg.norm(other)*tolerance
+		component_tolerance = magnitude_tolerance/other.size
+		diag = self.diagonal() + damping
 		guess = other/np.maximum(diag, np.quantile(abs(diag[diag != 0]), 1/sqrt(diag.size)))
 		residue_old = other - self@guess - damping*guess
 		direction = residue_old
@@ -409,8 +429,14 @@ class DenseSparseArray:
 			α = np.sum(residue_old**2)/np.sum(direction*Ad)
 			guess += α*direction
 			residue_new = residue_old - α*Ad
-			if np.sum(residue_new**2) < absolute_tolerance:
-				if np.sum((other - self@guess - damping*guess)**2) < absolute_tolerance:
+			residue_exact = other - self@guess - damping*guess
+			if np.linalg.norm(residue_exact - residue_new) > magnitude_tolerance:
+				raise RuntimeError("the residue approximation got way off at some point")
+			if np.all(abs(residue_new) < component_tolerance) or \
+					np.linalg.norm(residue_new) < magnitude_tolerance:
+				residue_exact = other - self@guess - damping*guess  # make sure to double check the stop condition with te exact
+				if np.all(abs(residue_exact) < component_tolerance) or \
+						np.linalg.norm(residue_exact) < magnitude_tolerance:
 					return guess
 			β = np.sum(residue_new**2)/np.sum(residue_old**2)
 			direction = residue_new + β*direction

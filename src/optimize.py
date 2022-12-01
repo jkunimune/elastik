@@ -16,11 +16,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sparse import DenseSparseArray
-from util import polytope_project
+from util import polytope_project, MaxIterationsException
 
 STEP_REDUCTION = 5.
 STEP_RELAXATION = STEP_REDUCTION**2
 LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
+
+np.seterr("raise")
 
 
 class Variable:
@@ -252,12 +254,10 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			raise ValueError("you mustn't pass bounds_limits without bounds_matrix")
 		bounds_matrix = DenseSparseArray.zeros((0,), guess.shape[:1])
 		bounds_limits = np.full(guess.shape[1], inf)
-		bounds_tolerance = None
 	else:
 		if bounds_limits is None:
 			raise ValueError("you mustn't pass bounds_matrix without bounds_limits")
-		guess = polytope_project(guess, bounds_matrix, bounds_limits, tolerance=0, certainty=60)
-		bounds_tolerance = np.min(bounds_limits)*1e-4
+		guess = polytope_project(guess, bounds_matrix, bounds_limits)
 
 	# if a backup objective function is provided, start with that
 	if backup_func is not None:
@@ -305,20 +305,27 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		num_step_sizes = 0
 		while True:
 			# step according to the gradient and step limiter for this inner loop, projecting onto the legal subspace
-			ideal_step = -curvature.inv_matmul(gradient, damping=step_limiter)
-			new_state = polytope_project(
-				state + ideal_step,
-				bounds_matrix, bounds_limits, bounds_tolerance)
-			actual_step = new_state - state
-			new_value = get_value(new_state)
-			# if this is infinitely good, jump to the followup function now
-			if new_value == -np.inf and followup_func is not None:
-				print(f"Reached the valid domain in {num_line_searches} iterations.")
-				return minimize(followup_func, new_state, gradient_tolerance, cosine_tolerance,
-				                bounds_matrix, bounds_limits, report, None)
-			# if the line search condition is met, take it
-			if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(actual_step*gradient):
-				break
+			if step_limiter > abs(curvature).max()*10:
+				ideal_step = -gradient/step_limiter
+			else:
+				ideal_step = -curvature.inv_matmul(gradient, damping=step_limiter)
+			try:
+				new_state = polytope_project(
+					state + ideal_step,
+					bounds_matrix, bounds_limits)
+			except MaxIterationsException:
+				new_state = None
+			if new_state is not None:
+				actual_step = new_state - state
+				new_value = get_value(new_state)
+				# if this is infinitely good, jump to the followup function now
+				if new_value == -np.inf and followup_func is not None:
+					print(f"Reached the valid domain in {num_line_searches} iterations.")
+					return minimize(followup_func, new_state, gradient_tolerance, cosine_tolerance,
+					                bounds_matrix, bounds_limits, report, None)
+				# if the line search condition is met, take it
+				if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(actual_step*gradient):
+					break
 			# if the condition is not met, decrement the step size and try agen
 			step_limiter *= STEP_REDUCTION
 			num_step_sizes += 1
@@ -334,7 +341,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		# if the termination condition is met, finish
 		if gradient_magnitude < gradient_tolerance or gradient_angle < cosine_tolerance:
 			print(f"Completed in {num_line_searches} iterations.")
-			return polytope_project(state, bounds_matrix, bounds_limits, 0, 100)
+			return state
 
 		# take the new state and error value
 		state = new_state
@@ -353,12 +360,15 @@ if __name__ == "__main__":
 	import matplotlib.pyplot as plt
 	x0 = Variable(np.linspace(1, 3, 6).reshape((2, 3)), DenseSparseArray.identity((2, 3)))
 	d = np.linspace(-2, -3, 6).reshape((2, 3))
+
 	def f(x):
 		return (np.log(x)**3).sum()
+
 	f0 = f(x0)
 	value = f0.values[()]
 	gradient = np.array(f0.gradients)
 	curvature = f0.curvatures.make_axes_dense(d.ndim)
+
 	steps, values, expectations = [], [], []
 	for h in np.linspace(-1, 1):
 		steps.append(h)

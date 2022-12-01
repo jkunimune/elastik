@@ -229,6 +229,12 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
 	has_defined_neibors = np.full(n_full + 1, False) # (this array has an extra False at the end so that -1 works nicely)
 	is_defined = np.full(n_full, False)
 	# start by marking some evenly spaced interior points
+	if factor >= 1.5:
+		num_ф = max(3, round((lookup_table.shape[1] - 1)/factor))
+		important_ф = np.linspace(-90, 90, num_ф, endpoint=False)
+		important_i = np.round((important_ф + 90)*(lookup_table.shape[1] - 1)/180)
+	else:
+		important_i = np.arange(lookup_table.shape[1])
 	for h in range(lookup_table.shape[0]):
 		for i in range(lookup_table.shape[1]):
 			num_λ = max(1, round((lookup_table.shape[2] - 1)*np.cos(ф[i])/factor))
@@ -239,7 +245,7 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
 				important_j = np.arange(lookup_table.shape[2])
 			for j in range(lookup_table.shape[2]):
 				if lookup_table[h, i, j] != -1:
-					important_row = (min(i, ф.size - 1 - i)%factor == 0)
+					important_row = i in important_i
 					important_col = j in important_j
 					has_defined_neibors[lookup_table[h, i, j]] |= important_row
 					is_defined[lookup_table[h, i, j]] |= important_col
@@ -769,8 +775,8 @@ def create_map_projection(configuration_file: str):
 	print("begin fitting process.")
 	for i, (mesh_factor, bounds_coarseness, final) in enumerate(schedule):
 		print(f"fitting pass {i}/{len(schedule)} (coarsened {mesh_factor}x, "
-		      f"{'final' if final else 'lenient'} cost function, "
-		      f"{'bounded' if bounds_coarseness > 0 else 'unbounded'})")
+		      f"{'bounded' if bounds_coarseness > 0 else 'unbounded'}, "
+		      f"{'final' if final else 'lenient'} cost function)")
 
 		# progress from coarser to finer mesh skeletons
 		if mesh_factor > 0:

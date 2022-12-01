@@ -911,7 +911,7 @@ EXPORT struct SparseArrayArray power_f(
 /**
  * perform an elementwise unary operation: the absolute value
  */
-/*EXPORT struct SparseArrayArray abs_saa(struct SparseArrayArray a) {
+EXPORT struct SparseArrayArray abs_saa(struct SparseArrayArray a) {
     struct SparseArrayArray c = {.ndim=a.ndim, .size=a.size};
     c.shape = copy_of_ia(a.shape, a.ndim);
     c.elements = malloc(c.size*sizeof(struct SparseArray));
@@ -928,7 +928,31 @@ EXPORT struct SparseArrayArray power_f(
         c.elements[i] = new;
     }
     return c;
-}*/
+}
+
+/**
+ * perform an elementwise reduction operation: the maximum
+ */
+EXPORT double min_saa(struct SparseArrayArray a) {
+    double min = 0;
+    for (int i = 0; i < a.size; i ++)
+        for (int j = 0; j < a.elements[i].nitems; j ++)
+            if (a.elements[i].values[j] < min)
+                min = a.elements[i].values[j];
+    return min;
+}
+
+/**
+ * perform an elementwise reduction operation: the maximum
+ */
+EXPORT double max_saa(struct SparseArrayArray a) {
+    double max = 0;
+    for (int i = 0; i < a.size; i ++)
+        for (int j = 0; j < a.elements[i].nitems; j ++)
+            if (a.elements[i].values[j] > max)
+                max = a.elements[i].values[j];
+    return max;
+}
 
 /*EXPORT struct inverse_multiply_nda(
         struct SparseArray a, const double* b, const int[] b_shape, int b_ndim, double* result) {
