@@ -825,11 +825,15 @@ EXPORT void matmul_nda(
  */
 EXPORT void transpose_matmul_nda(
         struct SparseArrayArray a, int sparse_size, const double* b, const int b_shape[], int b_ndim, double* result) {
-    if (a.ndim != 1 || a.elements[0].ndim != 1) {
-        printf("Error! this method only works when a is 1D and its elements are 1D.\n");
+    if (a.ndim != 1) {
+        printf("Error! this method only works when a is 1D.\n");
         return;
     }
-    if (a.size != b_shape[0]) {
+    else if (a.size >= 1 && a.elements[0].ndim != 1) {
+        printf("Error! this method only works when a's elements are 1D.\n");
+        return;
+    }
+    else if (a.size != b_shape[0]) {
         printf("Error! these shapes are not matmul-compatible.\n");
         return;
     }

@@ -341,6 +341,12 @@ class DenseSparseArray:
 	def max(self) -> float:
 		return c_lib.max_saa(self)
 
+	@cache
+	def norm(self, orde: int):
+		return np.linalg.norm(np.reshape(np.array(self),
+		                                 (self.dense_size, self.sparse_size)),
+		                      ord=orde)  # just convert it to dense for this; I think it's fine
+
 	def __getitem__(self, index: tuple) -> DenseSparseArray:
 		if type(index) is not tuple:
 			index = (index,)
@@ -417,21 +423,28 @@ class DenseSparseArray:
 		if damping > abs(self).max()*1e3:
 			raise ValueError("it's inefficient to do this when the damping is so much stronger than the matrix, and has roundoff issues besides, so I'm going to just stop you rite there.")
 
+		# check if the solution is trivial, because that will break this algorithm
+		if np.min(other) == 0 and np.max(other) == 0:
+			return other
+
 		magnitude_tolerance = np.linalg.norm(other)*tolerance
 		component_tolerance = magnitude_tolerance/other.size
 		diag = self.diagonal() + damping
 		guess = other/np.maximum(diag, np.quantile(abs(diag[diag != 0]), 1/sqrt(diag.size)))
 		residue_old = other - self@guess - damping*guess
+		if np.all(abs(residue_old) < component_tolerance) or \
+				np.linalg.norm(residue_old) < magnitude_tolerance:
+			return guess
 		direction = residue_old
 		num_iterations = 0
 		while True:
 			Ad = self@direction + damping*direction
-			α = np.sum(residue_old**2)/np.sum(direction*Ad)
+			try:
+				α = np.sum(residue_old**2)/np.sum(direction*Ad)
+			except FloatingPointError:
+				raise
 			guess += α*direction
 			residue_new = residue_old - α*Ad
-			residue_exact = other - self@guess - damping*guess
-			if np.linalg.norm(residue_exact - residue_new) > magnitude_tolerance:
-				raise RuntimeError("the residue approximation got way off at some point")
 			if np.all(abs(residue_new) < component_tolerance) or \
 					np.linalg.norm(residue_new) < magnitude_tolerance:
 				residue_exact = other - self@guess - damping*guess  # make sure to double check the stop condition with te exact

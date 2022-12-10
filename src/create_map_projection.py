@@ -6,7 +6,7 @@ take a basic mesh and optimize it according to a particular cost function in ord
 create a new Elastic Projection.
 """
 import threading
-from math import inf, pi, log2, nan
+from math import inf, pi, log2, nan, floor
 
 import h5py
 import numpy as np
@@ -230,7 +230,7 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
 	is_defined = np.full(n_full, False)
 	# start by marking some evenly spaced interior points
 	if factor >= 1.5:
-		num_ф = max(3, round((lookup_table.shape[1] - 1)/factor))
+		num_ф = max(3, floor((lookup_table.shape[1] - 1)/factor))
 		important_ф = np.linspace(-90, 90, num_ф, endpoint=False)
 		important_i = np.round((important_ф + 90)*(lookup_table.shape[1] - 1)/180)
 	else:
@@ -793,15 +793,15 @@ def create_map_projection(configuration_file: str):
 			coarse_border_matrix = border_matrix[np.arange(0, border_matrix.shape[0], bounds_coarseness), :]
 			double_border_matrix = DenseSparseArray.concatenate([coarse_border_matrix, -coarse_border_matrix])
 			bounds_matrix = double_border_matrix @ restore
-			bounds_limits = map_size/2
+			bounds_limits = np.array([map_size/2])
 			# fit the initial conditions into the bounds each time you impose them
 			node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))
 			border = border_matrix@node_positions
 			for k in range(bounds_limits.size):
-				if np.ptp(border[:, k]) > 2*bounds_limits[k]:
+				if np.ptp(border[:, k]) > 2*bounds_limits[0, k]:
 					node_positions[:, k] = interp(node_positions[:, k],
 					                              np.min(border[:, k]), np.max(border[:, k]),
-					                              -bounds_limits[k], bounds_limits[k])
+					                              -bounds_limits[0, k], bounds_limits[0, k])
 
 		node_positions = reduce @ node_positions
 
@@ -813,7 +813,7 @@ def create_map_projection(configuration_file: str):
 
 		# each time, run the projected gradient descent routine
 		success = False
-		def calculation_function():
+		def calculate():
 			nonlocal node_positions, success
 			node_positions = minimize(func=primary_func,
 			                          backup_func=backup_func,
@@ -822,9 +822,9 @@ def create_map_projection(configuration_file: str):
 			                          bounds_limits=bounds_limits,
 			                          report=record_status,
 			                          gradient_tolerance=tolerance,
-			                          cosine_tolerance=5e-2)
+			                          cosine_tolerance=1e-1)
 			success = True
-		calculation = threading.Thread(target=calculation_function)
+		calculation = threading.Thread(target=calculate)
 		calculation.start()
 		while True:
 			done = not calculation.is_alive()

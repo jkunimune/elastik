@@ -10,25 +10,25 @@ progress as it goes.
 from __future__ import annotations
 
 from math import inf
-from typing import Callable
+from typing import Callable, Optional
 
 import numpy as np
 from numpy.typing import NDArray
 
 from sparse import DenseSparseArray
-from util import polytope_project, MaxIterationsException
+from util import polytope_project, MaxIterationsException, minimize_quadratic_in_polytope
 
 STEP_REDUCTION = 5.
-STEP_RELAXATION = STEP_REDUCTION**2
+STEP_RELAXATION = STEP_REDUCTION**1.5
 LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
-np.seterr("raise")
+np.seterr(under="ignore", all="raise")
 
 
 class Variable:
 	def __init__(self, values: NDArray[float] | Variable,
 	             gradients: DenseSparseArray = None,
-	             curvatures: DenseSparseArray = None,
+	             hessians: DenseSparseArray = None,
 	             independent: bool = False, ndim: int = 0):
 		""" an array of values with gradient information attached, for computing gradients
 		    of vectorized functions
@@ -38,7 +38,7 @@ class Variable:
 			                  independent basis variables, and the gradients are set to
 			                  orthogonal unit vectors. unless independent is False; then
 			                  they're just zero.
-			:param curvatures: the diagonals of the hessian with respect to some basis.
+			:param hessians: the diagonals of the hessian with respect to some basis.
 			                   if none are specified, it is assumed to be all zero.
 		    :param independent: whether the gradient should be set to an identity matrix
 		                        (otherwise it's zero)
@@ -52,7 +52,7 @@ class Variable:
 				raise ValueError("You must not supply gradients when the first argument is already a Variable")
 			self.values = values.values
 			self.gradients = values.gradients
-			self.curvatures = values.curvatures
+			self.hessians = values.hessians
 
 		else:
 			# ensure the values have at least num_dimensions dimensions
@@ -72,17 +72,17 @@ class Variable:
 			else:
 				# take the values to be constant
 				self.gradients = DenseSparseArray.zeros((), ())
-			# if curvatures are given
-			if curvatures is not None:
-				assert type(curvatures) is DenseSparseArray
-				if curvatures.shape != self.values.shape + 2*self.gradients.shape[self.values.ndim:]:
+			# if hessians are given
+			if hessians is not None:
+				assert type(hessians) is DenseSparseArray
+				if hessians.shape != self.values.shape + 2*self.gradients.shape[self.values.ndim:]:
 					raise IndexError("the given array dimensions do not match")
-				self.curvatures = curvatures
+				self.hessians = hessians
 			elif self.gradients.ndim > 0:
-				self.curvatures = DenseSparseArray.zeros(
+				self.hessians = DenseSparseArray.zeros(
 					self.values.shape, 2*self.gradients.shape[self.values.ndim:])
 			else:
-				self.curvatures = DenseSparseArray.zeros((), ())
+				self.hessians = DenseSparseArray.zeros((), ())
 
 		self.shape = self.values.shape
 		""" the shape of self.values """
@@ -94,7 +94,7 @@ class Variable:
 		"""
 		self.c_shp = (slice(None),)*len(self.shape) + (np.newaxis,)*len(self.space)*2
 		""" this tuple should be used to index self.values when they need to broadcast
-		    to the shape of self.curvatures
+		    to the shape of self.hessians
 		"""
 
 		self.ndim = len(self.shape)
@@ -108,16 +108,16 @@ class Variable:
 			item = (item,)
 		value_index = item
 		gradient_index = (slice(None),)*len(self.space)
-		curvature_index = (slice(None),)*2*len(self.space)
+		hessian_index = (slice(None),)*2*len(self.space)
 		return Variable(self.values[value_index],
 		                self.gradients[(*value_index, *gradient_index)],
-		                self.curvatures[(*value_index, *curvature_index)])
+		                self.hessians[(*value_index, *hessian_index)])
 
 	def __add__(self, other):
 		other = Variable(other)
 		return Variable(self.values + other.values,
 		                self.gradients + other.gradients,
-		                self.curvatures + other.curvatures)
+		                self.hessians + other.hessians)
 
 	def __le__(self, other):
 		other = Variable(other, ndim=self.ndim)
@@ -140,10 +140,10 @@ class Variable:
 		return Variable(values=self.values * other.values,
 		                gradients=self.gradients*other.values[self.g_shp] +
 		                          other.gradients*self.values[self.g_shp],
-		                curvatures=self.curvatures * other.values[self.c_shp] +
-		                           self.gradients.outer_multiply(other.gradients) +
-		                           other.gradients.outer_multiply(self.gradients) +
-		                           other.curvatures * self.values[self.c_shp])
+		                hessians=self.hessians * other.values[self.c_shp] +
+		                         self.gradients.outer_multiply(other.gradients) +
+		                         other.gradients.outer_multiply(self.gradients) +
+		                         other.hessians * self.values[self.c_shp])
 
 	def __neg__(self):
 		return self * (-1)
@@ -151,15 +151,15 @@ class Variable:
 	def __pow__(self, power):
 		return Variable(values=self.values**power,
 		                gradients=self.gradients*self.values[self.g_shp]**(power - 1)*power,
-		                curvatures=(self.gradients.outer_multiply(self.gradients)*(power - 1) +
-		                            self.curvatures*self.values[self.c_shp])*
-		                           self.values[self.c_shp]**(power - 2)*power)
+		                hessians=(self.gradients.outer_multiply(self.gradients)*(power - 1) +
+		                          self.hessians*self.values[self.c_shp])*
+		                         self.values[self.c_shp]**(power - 2)*power)
 
 	def __sub__(self, other):
 		other = Variable(other)
 		return Variable(self.values - other.values,
 		                self.gradients - other.gradients,
-		                self.curvatures - other.curvatures)
+		                self.hessians - other.hessians)
 
 	def __truediv__(self, other):
 		return self * other**(-1)
@@ -174,7 +174,7 @@ class Variable:
 		return -self + other
 
 	def __rmatmul__(self, other):
-		return Variable(other@self.values, other@self.gradients, other@self.curvatures)
+		return Variable(other@self.values, other@self.gradients, other@self.hessians)
 
 	def __rmul__(self, other): # watch out! never multiply ndarray*Variable, as I can't figure out how to override Numpy's bad behavior there
 		return self * other
@@ -185,14 +185,14 @@ class Variable:
 	def log(self):
 		return Variable(values=np.log(self.values),
 		                gradients=self.gradients/self.values[self.g_shp],
-		                curvatures=(-self.gradients.outer_multiply(self.gradients)/self.values[self.c_shp] +
-		                             self.curvatures)/self.values[self.c_shp])
+		                hessians=(-self.gradients.outer_multiply(self.gradients)/self.values[self.c_shp] +
+		                           self.hessians)/self.values[self.c_shp])
 
 	def exp(self):
 		return Variable(values=np.exp(self.values),
 		                gradients=self.gradients*np.exp(self.values[self.g_shp]),
-		                curvatures=(self.gradients.outer_multiply(self.gradients) +
-		                            self.curvatures)*np.exp(self.values[self.c_shp]))
+		                hessians=(self.gradients.outer_multiply(self.gradients) +
+		                          self.hessians)*np.exp(self.values[self.c_shp]))
 
 	def sum(self, axis=None):
 		if axis is None:
@@ -202,19 +202,19 @@ class Variable:
 			axis = (axis + self.ndim)%self.ndim
 			axis = tuple(axis)
 		return Variable(self.values.sum(axis=axis),
-		                self.gradients.sum(axis=axis, make_dense=True),
-		                self.curvatures.sum(axis=axis))
+		                self.gradients.sum(axis=axis),
+		                self.hessians.sum(axis=axis))
 
 
 def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
              guess: NDArray[float],
              gradient_tolerance: float,
              cosine_tolerance: float,
-             bounds_matrix: DenseSparseArray = None,
-             bounds_limits: NDArray[float] | list[float] = None,
-             report: Callable[[NDArray[float], float, NDArray[float], NDArray[float], float], None] = None,
-             backup_func: Callable[[NDArray[float] | Variable], float | Variable] = None,
-             ) -> np.ndarray:
+             bounds_matrix: Optional[DenseSparseArray] = None,
+             bounds_limits: Optional[NDArray[float]] = None,
+             report: Optional[Callable[[NDArray[float], float, NDArray[float], NDArray[float], float], None]] = None,
+             backup_func: Optional[Callable[[NDArray[float] | Variable], float | Variable]] = None,
+             ) -> NDArray[float]:
 	""" find the vector that minimizes a function of a list of points using projected gradient
 	    descent with a dynamically chosen step size. unlike a more generic minimization routine,
 	    this one assumes that each datum is a vector, not a scalar, so many things have one more
@@ -253,7 +253,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		if bounds_limits is not None:
 			raise ValueError("you mustn't pass bounds_limits without bounds_matrix")
 		bounds_matrix = DenseSparseArray.zeros((0,), guess.shape[:1])
-		bounds_limits = np.full(guess.shape[1], inf)
+		bounds_limits = np.full((1, *guess.shape[1:]), inf)
 	else:
 		if bounds_limits is None:
 			raise ValueError("you mustn't pass bounds_matrix without bounds_limits")
@@ -277,7 +277,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		variable = func(Variable(x, independent=True))
 		if np.any(np.isnan(variable.gradients)):
 			raise RuntimeError(f"there are nan gradients at x = {x}")
-		return np.array(variable.gradients), variable.curvatures.make_axes_dense(2)
+		return np.array(variable.gradients), variable.hessians.make_axes_dense(2)
 
 	initial_value = get_value(guess)
 
@@ -290,32 +290,30 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_value}")
 
 	# calculate the initial gradient
-	gradient, curvature = get_gradient(guess)
+	gradient, hessian = get_gradient(guess)
 	if gradient.shape != guess.shape:
 		raise ValueError(f"the gradient function returned the wrong shape ({gradient.shape}, should be {guess.shape})")
 
 	# instantiate the loop state variables
 	value = initial_value
 	state = guess
-	step_limiter = np.quantile(abs(curvature.diagonal()), 1e-2)
+	step_limiter = np.quantile(abs(hessian.diagonal()), 1e-2)
 	# descend until we can't descend any further
 	num_line_searches = 0
 	while True:
 		# do a line search to choose a good step size
 		num_step_sizes = 0
 		while True:
-			# step according to the gradient and step limiter for this inner loop, projecting onto the legal subspace
-			if step_limiter > abs(curvature).max()*10:
-				ideal_step = -gradient/step_limiter
-			else:
-				ideal_step = -curvature.inv_matmul(gradient, damping=step_limiter)
+			# choose a step by minimizing this quadratic approximation, projecting onto the legal subspace
 			try:
-				new_state = polytope_project(
-					state + ideal_step,
-					bounds_matrix, bounds_limits)
+				new_state, ideal_new_state = minimize_quadratic_in_polytope(
+					state, hessian, step_limiter, gradient,
+					bounds_matrix, bounds_limits,
+					return_unbounded_solution=True)
 			except MaxIterationsException:
-				new_state = None
-			if new_state is not None:
+				pass
+			else:
+				ideal_step = ideal_new_state - state
 				actual_step = new_state - state
 				new_value = get_value(new_state)
 				# if this is infinitely good, jump to the followup function now
@@ -335,7 +333,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 
 		# do a few final calculations
 		gradient_magnitude = np.linalg.norm(gradient)
-		gradient_angle = np.sum(actual_step*ideal_step)/np.sum(ideal_step**2)
+		gradient_angle = np.linalg.norm(actual_step)/np.linalg.norm(ideal_step)
 		report(state, value, gradient, actual_step, gradient_angle)
 
 		# if the termination condition is met, finish
@@ -347,7 +345,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		state = new_state
 		value = new_value
 		# recompute the gradient once per outer loop
-		gradient, curvature = get_gradient(state)
+		gradient, hessian = get_gradient(state)
 		# set the step size back a bit
 		step_limiter /= STEP_RELAXATION
 		# keep track of the number of iterations
@@ -357,24 +355,59 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 
 
 if __name__ == "__main__":
+	# import matplotlib.pyplot as plt
+	# x0 = Variable(np.linspace(1, 3, 6).reshape((2, 3)), DenseSparseArray.identity((2, 3)))
+	# d = np.linspace(-2, -3, 6).reshape((2, 3))
+	#
+	# def f(x):
+	# 	return (np.log(x)**3).sum()
+	#
+	# f0 = f(x0)
+	# value = f0.values[()]
+	# gradient = np.array(f0.gradients)
+	# hessian = f0.hessians.make_axes_dense(d.ndim)
+	#
+	# steps, values, expectations = [], [], []
+	# for h in np.linspace(-1, 1):
+	# 	steps.append(h)
+	# 	values.append(f(x0 + h*d).values[()])
+	# 	expectations.append(value + np.sum((h*d)*gradient) + 1/2*np.sum((h*d)*(hessian@(h*d))))
+	# plt.figure()
+	# plt.plot(steps, values)
+	# plt.plot(steps, expectations, "--")
+	# plt.show()
+
 	import matplotlib.pyplot as plt
-	x0 = Variable(np.linspace(1, 3, 6).reshape((2, 3)), DenseSparseArray.identity((2, 3)))
-	d = np.linspace(-2, -3, 6).reshape((2, 3))
+	import numpy as np
 
-	def f(x):
-		return (np.log(x)**3).sum()
+	x0 = np.array([1., -1.])
+	gradient = np.array([2.5, -3.0])
+	hessian = DenseSparseArray.from_coordinates([2],
+	                                            np.array([[[0], [1]], [[0], [1]]]),
+	                                            np.array([[1.0, -0.9], [-0.9, 1.0]]))
 
-	f0 = f(x0)
-	value = f0.values[()]
-	gradient = np.array(f0.gradients)
-	curvature = f0.curvatures.make_axes_dense(d.ndim)
+	bounds_matrix = DenseSparseArray.from_coordinates(
+		[2],
+		np.array([[[0], [1]], [[0], [1]], [[0], [1]], [[0], [1]], [[0], [1]]]),
+		np.array([[.7, .3], [0., 1.1], [0., -.8], [-.6, 0.], [-.7, -.7]]))
+	bounds_limits = np.array(1.)
 
-	steps, values, expectations = [], [], []
-	for h in np.linspace(-1, 1):
-		steps.append(h)
-		values.append(f(x0 + h*d).values[()])
-		expectations.append(value + np.sum((h*d)*gradient) + 1/2*np.sum((h*d)*(curvature@(h*d))))
-	plt.figure()
-	plt.plot(steps, values)
-	plt.plot(steps, expectations, "--")
+	X, Y = np.meshgrid(np.linspace(-2, 2, 101), np.linspace(-2, 2, 101), indexing="ij")
+	dX, dY = X - x0[0], Y - x0[1]
+	plt.contour(X, Y, np.max(bounds_matrix@np.stack([X, Y]), axis=0), levels=[1.], colors="k")
+	np.seterr(all="warn")
+	plt.contourf(X, Y, dX*gradient[0] + dY*gradient[1] +
+	             1/2*(dX**2*np.array(hessian)[0, 0] + 2*dX*dY*np.array(hessian)[0, 1] + dY**2*np.array(hessian)[1, 1]))
+	plt.axis("equal")
+
+	solutions = []
+	for caution in [0, .01, .1, 1, 10, 100, 10000]:
+		print(f"using caution of {caution}")
+		solution, _ = minimize_quadratic_in_polytope(x0, hessian, caution, gradient,
+		                                             bounds_matrix, bounds_limits,
+		                                             return_unbounded_solution=True)
+		print("done!\n\n")
+		solutions.append(solution)
+	plt.plot(x0[0], x0[1], "wo")
+	plt.plot([p[0] for p in solutions], [p[1] for p in solutions], "w-x")
 	plt.show()

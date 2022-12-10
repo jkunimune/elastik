@@ -5,7 +5,7 @@ util.py
 some handy utility functions that are used in multiple places
 """
 from math import hypot, pi, cos, sin, inf, copysign, sqrt
-from typing import Sequence, Iterable
+from typing import Sequence, Iterable, Callable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -303,73 +303,142 @@ def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float]
 	return inside
 
 
-def polytope_project(point: NDArray[float], polytope_mat: DenseSparseArray, polytope_lim: float | NDArray[float],
-                     certainty=30) -> NDArray[float]: # TODO: should it be 60?  would that work better?
+def polytope_project(point: NDArray[float],
+                     polytope_mat: DenseSparseArray, polytope_lim: NDArray[float]
+                     ) -> NDArray[float]:
 	""" project a given point onto a polytope defined by the inequality
-	        all(ploytope_mat@point <= polytope_lim + tolerance)
-	    I learned this fast dual-based proximal gradient strategy from
-	        Beck, A. & Teboulle, M. "A fast dual proximal gradient algorithm for
-	        convex minimization and applications", <i>Operations Research Letters</i> <b>42</b> 1
-	        (2014), p. 1–6. doi:10.1016/j.orl.2013.10.007,
+	        all(polytope_mat@point <= polytope_lim + tolerance)
 	    :param point: the point to project
-	    :param polytope_mat: the matrix that defines the normals of the polytope faces
+	    :param polytope_mat: the normal vectors of the polytope faces, by which the polytope is defined
 	    :param polytope_lim: the quantity that defines the size of the polytope.  it may be an array
 	                         if point is 2d.  a point is in the polytope iff
 	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
-	    :param certainty: how many iterations it should try once it's within the tolerance to ensure
-	                      it's finding the best point
 	"""
 	if point.ndim == 2:
 		if point.shape[1] != polytope_lim.size:
 			raise ValueError(f"if you want this fancy functionality, the shapes must match")
-		# if there are multiple dimensions, do each dimension one at a time
-		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[k], certainty)
+		# if there are multiple dimensions, do each dimension one at a time; it's faster, I think
+		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[:, k])
 		                 for k in range(point.shape[1])]).T
-	elif point.ndim != 1 or np.ndim(polytope_lim) != 0:
-		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
-	if polytope_mat.ndim != 2:
-		raise ValueError(f"the matrix should be a (2d) matrix, not a {polytope_mat.ndim}d-array")
-	if point.shape[0] != polytope_mat.shape[1]:
-		raise ValueError("these polytope definitions don't jive")
-	# check to see if we're already done
-	if np.all(polytope_mat@point <= polytope_lim):
-		return point
+	return minimize_quadratic_in_polytope(point, DenseSparseArray.identity(point.shape), 0,
+	                                      np.zeros_like(point), polytope_mat, polytope_lim, True)[0]
 
-	# do a naive coercion-type thing to get a good initial gess
-	y_guess = np.zeros(polytope_mat.shape[0])
-	# for i in range(polytope_mat.shape[0]):
-	# 	x_guess = point + polytope_mat.transpose_matmul(y_guess)
-	# 	normal = polytope_mat[i, :]
-	# 	offset = normal@x_guess
-	# 	if offset > polytope_lim:
-	# 		y_guess[i] = (polytope_lim - offset)/(normal**2).sum(axis=[0])
+
+def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
+                                   hessian: DenseSparseArray, damping: float,
+                                   gradient: NDArray[float],
+                                   polytope_mat: DenseSparseArray, polytope_lim: NDArray[float],
+                                   return_unbounded_solution: bool,
+                                   ) -> tuple[NDArray[float], NDArray[float]]:
+	""" find the global extremum of the concave-up multivariate quadratic function:
+	        f(x) = (x - x0)⋅(hessian + additional_convexity*I)@(x - x0) + gradient⋅(x - x0)
+	    subject to the inequality constraint
+	        all(polytope_mat@point <= polytope_lim + tolerance)
+	    :param fixed_point: the point at which the quadratic function is defined; generally the
+	                        quadratic function is a Taylor expansion, and this will be the point
+	                        about which Taylor is expanding
+	    :param hessian: the primary twoth-derivative matrix of the quadratic function at the fixed
+	                    point. it must be symmetric and should be positive definite.
+	    :param damping: a scalar term with which to augment the hessian matrix (hessian + additional_convexity*I)
+	    :param gradient: the gradient of the quadratic function at the fixed point.
+	    :param polytope_mat: the normal vectors of the polytope faces, by which the polytope is defined
+	    :param polytope_lim: the quantity that defines the size of the polytope. a point is in the polytope iff
+	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
+	    :param return_unbounded_solution: whether to also return the solution if there were no bounds
+	    :return: the bounded solution, and also -- if return_unbounded_solution is true -- the unbounded solution
+	"""
+	if not return_unbounded_solution:
+		raise NotImplementedError("no you can't do that")
+
+	# if the damping is much larger than the hessian, save some time with this simpler calculation
+	if damping > abs(hessian).max()*10:
+		unbounded_solution = fixed_point - gradient/damping
+		bounded_solution = polytope_project(unbounded_solution, polytope_mat, polytope_lim)
+		return bounded_solution, unbounded_solution
+
+	def func(x):
+		dx = x - fixed_point
+		quad_term = 1/2*np.sum(dx*(hessian@dx + damping*dx))
+		lin_term = np.sum(gradient*dx)
+		return quad_term + lin_term
+
+	def unbounded_solution(x):
+		step = -hessian.inv_matmul(gradient + x, damping=damping)
+		return fixed_point + step
+
+	return (
+		minimize_with_constraints(
+			func, unbounded_solution,
+			lambda z: np.all(z <= polytope_lim),
+			lambda z: np.minimum(polytope_lim, z),
+			polytope_mat,
+			hessian.norm(orde=-2) + damping,
+			fixed_point.shape),
+		unbounded_solution(0)
+	)
+
+
+def minimize_with_constraints(f: Callable[[NDArray[float]], float],
+                              argmin_f: Callable[[NDArray[float]], NDArray[float]],
+                              g: Callable[[NDArray[float]], bool],
+                              prox_g: Callable[[NDArray[float]], NDArray[float]],
+                              A: DenseSparseArray,
+                              σ: float, shape: Sequence[int], certainty: int = 30) -> NDArray[float]: # TODO: should it be 60?  would that work better?
+	""" minimize a smooth multivariate function f(x) subject to a simple inequality constraint g(A@x)
+	    I learned this fast dual-based proximal gradient strategy from
+	        Beck, A. & Teboulle, M. "A fast dual proximal gradient algorithm for
+	        convex minimization and applications", <i>Operations Research Letters</i> <b>42</b> 1
+	        (2014), p. 1–6. doi:10.1016/j.orl.2013.10.007,
+	    but I added a little twist.
+	    that's not true.  I removed the twist because it wasn't very good, but then I couldn't bring
+	    myself to remove that reference.
+	    :param f: the smooth part of the function.  it must be continuusly differentiable or this won't work.
+	    :param argmin_f: a function of d that returns the x that minimizes the expression f(x) + d⋅x
+	    :param g: the constraint.  only values of x where g(A@x) is True are considered valid solutions
+	    :param A: the matrix used to convert from real space to constraint space
+	    :param prox_g: a function of z that returns the projection of z into the space where g(z)
+	    :param σ: an upper bound on the convexity parameter of f
+	    :param shape: the array shape that f and argmin_f expect
+	    :param certainty: how many iterations it should try once it's within the tolerance to ensure
+	                      it's finding the best point
+	"""
+	if A.ndim != 2:
+		raise ValueError(f"the matrix should be a (2d) matrix, not a {A.ndim}d-array")
+
+	def dual_to_primal(y):
+		return argmin_f(-A.transpose_matmul(y))
+	# check to see if we're already done
+	y_old = np.zeros(A.dense_shape + shape[A.sparse_ndim:])
+	x_guess = dual_to_primal(y_old)
+	if g(A@x_guess):
+		return x_guess
 
 	# establish the parameters and persisting variables
-	L = np.linalg.norm(polytope_mat, ord=2)**2
-	w_old = y_old = y_guess
+	L = A.norm(orde=2)**2/σ
+	w_old = y_old
 	t_old = 1
-	candidates = []
+	candidates: list[tuple[float, NDArray[float]]] = []
 	num_iterations = 0
 	# loop thru the proximal gradient descent of the dual problem
 	while True:
-		grad_F = polytope_mat@(point + polytope_mat.transpose_matmul(w_old))
-		prox_G = np.minimum(polytope_lim, grad_F - L*w_old)
-		y_new = w_old - (grad_F - prox_G)/L
+		u_new = argmin_f(-A.transpose_matmul(w_old))
+		grad_F = A@u_new
+		v_new = prox_g(grad_F - L*w_old)
+		y_new = w_old - (grad_F - v_new)/L
 		t_new = (1 + sqrt(1 + 4*t_old**2))/2  # this inertia term is what makes it fast
 		w_new = y_new + (t_old - 1)/t_new*(y_new - y_old)
-		x_new = point + polytope_mat.transpose_matmul(y_new)
-		# save any points that are close enough to being in
-		if np.all(polytope_mat@x_new <= polytope_lim):
-			candidates.append(x_new)
+		x_new = dual_to_primal(y_new)
+		# save the value of any point that meets the constraint
+		if g(A@x_new):
+			candidates.append((f(x_new), x_new))
 			# and terminate once we get enough of them
 			if len(candidates) >= certainty:
-				best = np.argmin(np.linalg.norm(np.array(candidates) - point, axis=1))
-				return candidates[best]
+				_, best = min(candidates, key=lambda candidate: candidate[0])
 		t_old, w_old, y_old = t_new, w_new, y_new
 		# make sure it doesn't run for too long
 		num_iterations += 1
 		if (num_iterations >= 10_000 and len(candidates) == 0) or num_iterations >= 20_000:
-			raise MaxIterationsException("The maximum number of iterations was reached in fast dual-based proximal gradient polytope projection")
+			raise MaxIterationsException("The maximum number of iterations was reached in the fast dual-based proximal gradient routine")
 
 
 if __name__ == "__main__":
@@ -380,6 +449,10 @@ if __name__ == "__main__":
 		np.array([[2., 2.], [0., 1.], [1., -1.], [1., 0.], [-1., -2.], [-1., 0.], [1., 3.]]))
 	X, Y = np.meshgrid(np.linspace(-1.5, 1.5, 101), np.linspace(-1.5, 1.5, 101), indexing="ij")
 	plt.contour(X, Y, np.all(polytope@np.stack([X, Y]) <= 1, axis=0))
-	print(polytope_project(np.array([-10., -10.]), polytope, 1))
+	point = np.array([-1., -1.])
+	projection = polytope_project(point, polytope, np.array(1.))
+	plt.plot(point[0], point[1], "x")
+	plt.plot(projection[0], projection[1], "o")
+	print(projection)
 	plt.axis("equal")
 	plt.show()
