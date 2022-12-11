@@ -195,8 +195,14 @@ def polytope_project(point: NDArray[float],
 		# if there are multiple dimensions, do each dimension one at a time; it's faster, I think
 		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[:, k])
 		                 for k in range(point.shape[1])]).T
-	return minimize_quadratic_in_polytope(point, DenseSparseArray.identity(point.shape), 0,
-	                                      np.zeros_like(point), polytope_mat, polytope_lim, True)[0]
+	elif point.ndim != 1:
+		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
+	return minimize_with_constraints(
+		lambda x: 1/2*np.linalg.norm(point - x),
+		lambda x: point - x,
+		lambda z: np.all(z <= polytope_lim),
+		lambda z: np.minimum(polytope_lim, z),
+		polytope_mat, 1, point.shape)
 
 
 def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
