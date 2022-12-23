@@ -22,7 +22,7 @@ ANTARCTIC_CUTOFF = -56.
 # latitude of northernmost settlement
 ARCTIC_CUTOFF = 78.
 # coordinates of sahara and australian desert ellipses
-DESERT_ELLIPSES = [(23, 8, 7, 20), (-24, 132, 7, 15)]
+DESERT_ELLIPSES = [(23, 8, 7, 20), (-24, 132, 7, 15), (90, -90, 35, 50)]
 # coordinates of small, remote, uninhabited islands
 EXCLUDED_ISLANDS = [(-6, 72), # chagos islands
                     (-54, 3), # bouvet island

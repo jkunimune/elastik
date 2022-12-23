@@ -25,7 +25,6 @@ else:
 
 
 c_int_p = POINTER(c_int)
-c_double_p = POINTER(c_double)
 c_mut_char_p = POINTER(c_char) # does not automaticly copy to a Python bytes object, unlike c_char_p
 c_ndarray = np.ctypeslib.ndpointer(dtype=c_double, flags='C_CONTIGUOUS')
 c_int_ndarray = np.ctypeslib.ndpointer(dtype=c_int, flags='C_CONTIGUOUS')
@@ -52,7 +51,6 @@ def declare_c_func(func: Callable, args: list[type], res: type | None):
 # declare all of the C functions we plan to use and their parameters' types
 declare_c_func(c_lib.free_char_p, [c_mut_char_p], None)
 declare_c_func(c_lib.free_saa, [c_SparseArrayArray], None)
-declare_c_func(c_lib.free_nda, [c_ndarray], None)
 declare_c_func(c_lib.add_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.subtract_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.multiply_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
@@ -80,6 +78,7 @@ declare_c_func(c_lib.to_dense, [c_SparseArrayArray, c_int_p, c_int, c_ndarray], 
 declare_c_func(c_lib.expand_dims, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_slice_saa, [c_SparseArrayArray, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_diagonal_saa, [c_SparseArrayArray, c_ndarray], None)
+declare_c_func(c_lib.inverse_matmul_nda, [c_SparseArrayArray, c_double, c_ndarray, c_double, c_ndarray, c_ndarray], c_int)
 declare_c_func(c_lib.get_reindex_saa, [c_SparseArrayArray, c_int_p, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.to_string, [c_SparseArrayArray], c_mut_char_p)
 
@@ -301,9 +300,9 @@ class DenseSparseArray:
 		elif type(other) is np.ndarray:
 			if not other.flags["C_CONTIGUOUS"]:
 				other = np.ascontiguousarray(other)
-			result = np.empty(self.dense_shape + other.shape[self.sparse_ndim:])
-			c_lib.matmul_nda(self, other, c_int_array(other.shape), c_int(other.ndim), result)
-			return result
+			out = np.empty(self.dense_shape + other.shape[self.sparse_ndim:])
+			c_lib.matmul_nda(self, other, c_int_array(other.shape), c_int(other.ndim), out)
+			return out
 		else:
 			return NotImplemented
 
@@ -313,9 +312,10 @@ class DenseSparseArray:
 			raise ValueError("this is only designed to work for 2d matmulable matrices")
 		if self.dense_size != other.shape[0]:
 			raise ValueError(f"the given shapes {self.sparse_shape}+{self.dense_shape} @ {other.shape} aren't matrix-multiplication compatible")
-		result = np.empty(self.sparse_shape + other.shape[1:])
-		c_lib.transpose_matmul_nda(self, self.sparse_size, other, c_int_array(other.shape), c_int(other.ndim), result)
-		return result
+		out = np.empty(self.sparse_shape + other.shape[1:])
+		c_lib.transpose_matmul_nda(
+			self, self.sparse_size, other, c_int_array(other.shape), c_int(other.ndim), out)
+		return out
 
 	def outer_multiply(self, other: DenseSparseArray) -> DenseSparseArray:
 		if self.ndim == 0 and np.array(self) == 0:
@@ -394,16 +394,18 @@ class DenseSparseArray:
 				raise NotImplementedError(f"I can't do this index, {index[k]!r}")
 		return result
 
+	@cache
 	def diagonal(self):
 		""" return a dense vector containing the items self[i, i] for all i """
 		if self.dense_shape != self.sparse_shape:
 			raise ValueError(f"only square arrays have diagonals, not {self.dense_shape}x{self.sparse_shape}.")
-		result = np.empty(self.dense_shape)
-		c_lib.get_diagonal_saa(self, result)
-		return result
+		out = np.empty(self.dense_shape)
+		c_lib.get_diagonal_saa(self, out)
+		return out
 
 	def inv_matmul(self, other: NDArray[float], tolerance=1e-4, damping=0) -> NDArray[float]:
-		""" compute self**-1 @ b, iteratively
+		""" compute self**-1 @ b for a symmetric positive definite matrix, iteratively.  this won't
+		    work if self is not symmetric, but it may work if it's positive definite
 		    :param other: the vector by which to multiply the inverse
 		    :param tolerance: the relative tolerance; the residual magnitude will be this factor
 		                      less than b's magnitude.
@@ -414,49 +416,19 @@ class DenseSparseArray:
 		                    other/damping.
 		    :return: the vector x that solves self@x = b
 		"""
-		if type(other) is not np.ndarray:
-			return NotImplemented
 		if self.dense_shape != self.sparse_shape:
-			raise ValueError(f"only square matrices can be inverted, not {self.dense_shape}x{self.sparse_shape}")
-		if other.shape != self.sparse_shape:
-			raise ValueError("b must be a vector that matches self")
-		if damping > abs(self).max()*1e3:
-			raise ValueError("it's inefficient to do this when the damping is so much stronger than the matrix, and has roundoff issues besides, so I'm going to just stop you rite there.")
-
-		# check if the solution is trivial, because that will break this algorithm
-		if np.min(other) == 0 and np.max(other) == 0:
-			return other
-
-		magnitude_tolerance = np.linalg.norm(other)*tolerance
-		component_tolerance = magnitude_tolerance/other.size
-		diag = self.diagonal() + damping
+			raise ValueError(f"this only works for square arrays")
+		if self.dense_shape != other.shape:
+			raise ValueError(f"the shapes don't match: {self.dense_shape}+{self.sparse_shape} × {other.shape}")
+		absolute_tolerance = np.linalg.norm(other)*tolerance
+		diag = self.diagonal()
 		guess = other/np.maximum(diag, np.quantile(abs(diag[diag != 0]), 1/sqrt(diag.size)))
-		residue_old = other - self@guess - damping*guess
-		if np.all(abs(residue_old) < component_tolerance) or \
-				np.linalg.norm(residue_old) < magnitude_tolerance:
-			return guess
-		direction = residue_old
-		num_iterations = 0
-		while True:
-			Ad = self@direction + damping*direction
-			try:
-				α = np.sum(residue_old**2)/np.sum(direction*Ad)
-			except FloatingPointError:
-				raise
-			guess += α*direction
-			residue_new = residue_old - α*Ad
-			if np.all(abs(residue_new) < component_tolerance) or \
-					np.linalg.norm(residue_new) < magnitude_tolerance:
-				residue_exact = other - self@guess - damping*guess  # make sure to double check the stop condition with te exact
-				if np.all(abs(residue_exact) < component_tolerance) or \
-						np.linalg.norm(residue_exact) < magnitude_tolerance:
-					return guess
-			β = np.sum(residue_new**2)/np.sum(residue_old**2)
-			direction = residue_new + β*direction
-			residue_old = residue_new
-			num_iterations += 1
-			if num_iterations > 10*self.shape[0]:
-				raise RuntimeError("conjugate gradients did not converge; we may be in a saddle region.")
+		out = np.empty(self.dense_shape)
+		result = c_lib.inverse_matmul_nda(
+			self, c_double(damping), other, c_double(absolute_tolerance), guess, out)
+		if result != 0:
+			raise RuntimeError("conjugate gradients did not succeed.")
+		return out
 
 	def __len__(self) -> int:
 		if self.ndim > 0:
@@ -474,9 +446,9 @@ class DenseSparseArray:
 		return f"{self.dense_shape}x{self.sparse_shape}:\n  {values}"
 
 	def __array__(self) -> NDArray[float]:
-		result = np.empty(self.shape)
-		c_lib.to_dense(self, c_int_array(self.sparse_shape), c_int(self.sparse_ndim), result)
-		return result
+		out = np.empty(self.shape)
+		c_lib.to_dense(self, c_int_array(self.sparse_shape), c_int(self.sparse_ndim), out)
+		return out
 
 	def to_array_array(self) -> NDArray[float]:
 		""" convert all of the dense axes to numpy axes. the result is a numpy object array with dtype=DenseSparseArray
@@ -516,16 +488,16 @@ class DenseSparseArray:
 			raise ValueError("the axes can't have duplicates")
 		# if summing over all sparse axes, there's no need for the sparse data structure anymore
 		if len(axis) == self.sparse_ndim and np.all(np.greater_equal(axis, self.dense_ndim)):
-			result = np.empty(self.dense_shape)
-			c_lib.sum_all_sparse(self, result)
-			return result
+			out = np.empty(self.dense_shape)
+			c_lib.sum_all_sparse(self, out)
+			return out
 		elif np.any(np.greater_equal(axis, self.dense_ndim)):
 			raise ValueError("I haven't implemented summing on individual sparse axes")
 		# if summing over all dense axes, convert to a regular dense array
 		if len(axis) == self.dense_ndim and make_dense:
-			result = np.empty(self.sparse_shape)
-			c_lib.sum_all_dense(self, c_int_array(self.sparse_shape), result)
-			return result
+			out = np.empty(self.sparse_shape)
+			c_lib.sum_all_dense(self, c_int_array(self.sparse_shape), out)
+			return out
 		# otherwise, do them one at a time
 		else:
 			result = self

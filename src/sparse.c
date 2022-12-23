@@ -29,7 +29,7 @@ enum Operator {
 struct SparseArray {
     int ndim;
     int nitems;
-    int* indices;
+    int* indices; // TODO: I can't help feel like it would be cleaner if these were 1d indices
     double* values;
 };
 
@@ -99,15 +99,6 @@ EXPORT void free_saa(
         free_sa(a.elements[i]);
     free(a.elements);
     free(a.shape);
-}
-
-/**
- * free the memory allocated to an nd-array, given the location of its memory.
- * this is really just an alias for the existing free function; I only have it
- * here so that I only haff to import one dll file.
- */
-EXPORT void free_nda(double* a) {
-    free(a);
 }
 
 /**
@@ -340,41 +331,28 @@ struct SparseArray outer_multiply_sa(struct SparseArray a, struct SparseArray b)
 }
 
 /**
- * compute the dot product of two SparseArrays
+ * compute the dot product two dense arrays
  */
-double dot_product_sa(struct SparseArray a, struct SparseArray b) {
-    if (a.ndim != b.ndim) {
-        printf("Error!  can't dot things whose shapes don't match.");
-        return NAN;
-    }
+double dot_product_nda(double* a, double* b, int size) {
+    double product = 0;
+    for (int i = 0; i < size; i ++)
+        product += a[i]*b[i];
+    return product;
+}
 
-		double product = 0;
-
-    // they're both sorted, so iterate thru them simultaneously
-    int j_a = 0, j_b = 0;
-    while (j_a < a.nitems || j_b < b.nitems) {
-        int *a_index = (j_a < a.nitems) ? a.indices + j_a*a.ndim : NULL;
-        int *b_index = (j_b < b.nitems) ? b.indices + j_b*b.ndim : NULL;
-        // each iteration, see which index comes next
-        int comparison;
-        if (a_index == NULL)
-            comparison = 1; // 1: the b index is sooner
-        else if (b_index == NULL)
-            comparison = -1; // -1: the a index is sooner
-        else
-            comparison = compare(a_index, b_index, a.ndim);
-
-        if (comparison < 0) // if the a index is sooner, pass it
-            j_a ++;
-        else if (comparison > 0) // if the b index is sooner, pass it
-            j_b ++;
-        else { // if they are simultaneus, product them
-            product += a.values[j_a]*b.values[j_b];
-            j_a ++;
-            j_b ++;
+/**
+ * compute the dot product of a SparseArray with a dense array
+ */
+double dot_product_sa(struct SparseArray a, double* b, int* b_shape) {
+    double product = 0;
+    for (int j = 0; j < a.nitems; j ++) {
+        int l = 0;
+        int* index = a.indices + j*a.ndim;
+        for (int k = 0; k < a.ndim; k ++) {
+            l = l*b_shape[k] + index[k];
         }
+        product += a.values[j]*b[l];
     }
-
     return product;
 }
 
@@ -958,32 +936,112 @@ EXPORT double max_saa(struct SparseArrayArray a) {
     return max;
 }
 
-/*EXPORT struct inverse_multiply_nda(
-        struct SparseArray a, const double* b, const int[] b_shape, int b_ndim, double* result) {
-    if (a.ndim != 1) {
-        printf("Error! invertible matrices must have one dense dimension.\n");
-        return;
-    }
-    if (b_ndim != 1) {
-        printf("Error! the vector must be a vector.");
-    }
-    const int n = a.shape[0];
-    if (b_size != n) {
-        printf("Error! the vector and the array must have the same length.\n");
-        return;
+/**
+ * sum the squares of the elements of a vector
+ */
+double sqr_nda(double* array, int size) {
+    double sum = 0;
+    for (int i = 0; i < size; i ++)
+        sum += array[i]*array[i];
+    return sum;
+}
+
+/**
+ * evaluate the magnitude of a vector
+ */
+double norm_nda(double* array, int size) {
+    return sqrt(sqr_nda(array, size));
+}
+
+/**
+ * find the max magnitude in this array
+ */
+int all_abs_lessequal(const double* array, int size, double threshold) {
+    for (int i = 0; i < size; i ++)
+        if (array[i] > threshold || -array[i] > threshold)
+            return 0;
+    return 1;
+}
+
+/**
+ * iteratively invert a matrix and multiply that by the given vector,
+ * using the conjugate gradients technique.  a must be square,
+ * and b must have the same size and shape as a.
+ */
+EXPORT int inverse_matmul_nda(
+        struct SparseArrayArray a, double damping, const double* b,
+        double magnitude_tolerance, const double* guess, double* out) {
+    // check if the solution is trivial, because that will break this algorithm
+    if (all_abs_lessequal(b, a.size, 0.)) {
+        for (int i = 0; i < a.size; i ++)
+            out[i] = b[i];
+        return 0;
     }
 
-    double* x_old = calloc(n, sizeof(double));
-    double* Ax_old = matmul_nda(a, b, b_shape, b_ndim);
-    double* r_old = subtract_nda(b, Ax, n);
-    double* d_old = copy_of_da(r_old);
-    for (int t = 0; true; t ++) {
-        double* Ad = matmul_nda(a, d, b_shape, b_ndim);
-        double alpha = dot_product_da(r, r, n)/dot_product_da(d, Ad, n);
-        double* x_new = add_nda(x_old, multiply_nda(alpha, d_old), n);
-        double*
+    // transfer guess into out and then stop reading guess
+    for (int i = 0; i < a.size; i ++)
+        out[i] = guess[i];
+
+    // check the stop condition just in case the gess is correct (sometimes it is)
+    double component_tolerance = magnitude_tolerance/a.size;
+    double* residue_old = malloc(a.size*sizeof(double));
+    for (int i = 0; i < a.size; i ++)
+        residue_old[i] = b[i] - (dot_product_sa(a.elements[i], out, a.shape) + damping*out[i]);
+    if (all_abs_lessequal(residue_old, a.size, component_tolerance) ||
+        norm_nda(residue_old, a.size) <= magnitude_tolerance) {
+        free(residue_old);
+        return 0;
     }
-}*/
+    // initialize the loop to step in the direction of steepest descent
+    double* direction = copy_of_da(residue_old, a.size);
+    double* Ad = malloc(a.size*sizeof(double));
+    double* residue_new = malloc(a.size*sizeof(double));
+
+    // do the iterations
+    int num_iterations = 0;
+    while (1) {
+        // precompute this matrix product for later
+        for (int i = 0; i < a.size; i ++)
+            Ad[i] = dot_product_sa(a.elements[i], direction, a.shape) + damping*direction[i];
+        // take the step
+        double alpha = sqr_nda(residue_old, a.size)/dot_product_nda(direction, Ad, a.size);
+        for (int i = 0; i < a.size; i ++) {
+            out[i] += alpha*direction[i];
+            residue_new[i] = residue_old[i] - alpha*Ad[i];
+        }
+        // check the stop condition
+        if (all_abs_lessequal(residue_new, a.size, component_tolerance) ||
+            norm_nda(residue_new, a.size) <= magnitude_tolerance) {
+            // make sure to double check the stop condition with the exact residue
+            for (int i = 0; i < a.size; i ++)
+                residue_new[i] = b[i] - (dot_product_sa(a.elements[i], out, a.shape) + damping*out[i]);
+            if (all_abs_lessequal(residue_new, a.size, component_tolerance) ||
+                norm_nda(residue_new, a.size) <= magnitude_tolerance) {
+                free(residue_old);
+                free(residue_new);
+                free(direction);
+                free(Ad);
+                return 0;
+            }
+        }
+        // update the step direction
+        double beta = sqr_nda(residue_new, a.size)/sqr_nda(residue_old, a.size);
+        for (int i = 0; i < a.size; i ++) {
+            direction[i] = residue_new[i] + beta*direction[i];
+            residue_old[i] = residue_new[i];
+        }
+        // check the backup stop condition
+        num_iterations ++;
+        if (num_iterations > 10*a.size) {
+            printf("conjugate gradients did not converge; we may be in a saddle region.\n");
+            free(residue_old);
+            free(residue_new);
+            free(direction);
+            free(Ad);
+            return 1;
+        }
+    }
+}
 
 /**
  * sum a SparseArrayArray along one of the dense axes.
