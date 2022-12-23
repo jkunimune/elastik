@@ -331,16 +331,6 @@ struct SparseArray outer_multiply_sa(struct SparseArray a, struct SparseArray b)
 }
 
 /**
- * compute the dot product two dense arrays
- */
-double dot_product_nda(double* a, double* b, int size) {
-    double product = 0;
-    for (int i = 0; i < size; i ++)
-        product += a[i]*b[i];
-    return product;
-}
-
-/**
  * compute the dot product of a SparseArray with a dense array
  */
 double dot_product_sa(struct SparseArray a, double* b, int* b_shape) {
@@ -934,113 +924,6 @@ EXPORT double max_saa(struct SparseArrayArray a) {
             if (a.elements[i].values[j] > max)
                 max = a.elements[i].values[j];
     return max;
-}
-
-/**
- * sum the squares of the elements of a vector
- */
-double sqr_nda(double* array, int size) {
-    double sum = 0;
-    for (int i = 0; i < size; i ++)
-        sum += array[i]*array[i];
-    return sum;
-}
-
-/**
- * evaluate the magnitude of a vector
- */
-double norm_nda(double* array, int size) {
-    return sqrt(sqr_nda(array, size));
-}
-
-/**
- * find the max magnitude in this array
- */
-int all_abs_lessequal(const double* array, int size, double threshold) {
-    for (int i = 0; i < size; i ++)
-        if (array[i] > threshold || -array[i] > threshold)
-            return 0;
-    return 1;
-}
-
-/**
- * iteratively invert a matrix and multiply that by the given vector,
- * using the conjugate gradients technique.  a must be square,
- * and b must have the same size and shape as a.
- */
-EXPORT int inverse_matmul_nda(
-        struct SparseArrayArray a, double damping, const double* b,
-        double magnitude_tolerance, const double* guess, double* out) {
-    // check if the solution is trivial, because that will break this algorithm
-    if (all_abs_lessequal(b, a.size, 0.)) {
-        for (int i = 0; i < a.size; i ++)
-            out[i] = b[i];
-        return 0;
-    }
-
-    // transfer guess into out and then stop reading guess
-    for (int i = 0; i < a.size; i ++)
-        out[i] = guess[i];
-
-    // check the stop condition just in case the gess is correct (sometimes it is)
-    double component_tolerance = magnitude_tolerance/a.size;
-    double* residue_old = malloc(a.size*sizeof(double));
-    for (int i = 0; i < a.size; i ++)
-        residue_old[i] = b[i] - (dot_product_sa(a.elements[i], out, a.shape) + damping*out[i]);
-    if (all_abs_lessequal(residue_old, a.size, component_tolerance) ||
-        norm_nda(residue_old, a.size) <= magnitude_tolerance) {
-        free(residue_old);
-        return 0;
-    }
-    // initialize the loop to step in the direction of steepest descent
-    double* direction = copy_of_da(residue_old, a.size);
-    double* Ad = malloc(a.size*sizeof(double));
-    double* residue_new = malloc(a.size*sizeof(double));
-
-    // do the iterations
-    int num_iterations = 0;
-    while (1) {
-        // precompute this matrix product for later
-        for (int i = 0; i < a.size; i ++)
-            Ad[i] = dot_product_sa(a.elements[i], direction, a.shape) + damping*direction[i];
-        // take the step
-        double alpha = sqr_nda(residue_old, a.size)/dot_product_nda(direction, Ad, a.size);
-        for (int i = 0; i < a.size; i ++) {
-            out[i] += alpha*direction[i];
-            residue_new[i] = residue_old[i] - alpha*Ad[i];
-        }
-        // check the stop condition
-        if (all_abs_lessequal(residue_new, a.size, component_tolerance) ||
-            norm_nda(residue_new, a.size) <= magnitude_tolerance) {
-            // make sure to double check the stop condition with the exact residue
-            for (int i = 0; i < a.size; i ++)
-                residue_new[i] = b[i] - (dot_product_sa(a.elements[i], out, a.shape) + damping*out[i]);
-            if (all_abs_lessequal(residue_new, a.size, component_tolerance) ||
-                norm_nda(residue_new, a.size) <= magnitude_tolerance) {
-                free(residue_old);
-                free(residue_new);
-                free(direction);
-                free(Ad);
-                return 0;
-            }
-        }
-        // update the step direction
-        double beta = sqr_nda(residue_new, a.size)/sqr_nda(residue_old, a.size);
-        for (int i = 0; i < a.size; i ++) {
-            direction[i] = residue_new[i] + beta*direction[i];
-            residue_old[i] = residue_new[i];
-        }
-        // check the backup stop condition
-        num_iterations ++;
-        if (num_iterations > 10*a.size) {
-            printf("conjugate gradients did not converge; we may be in a saddle region.\n");
-            free(residue_old);
-            free(residue_new);
-            free(direction);
-            free(Ad);
-            return 1;
-        }
-    }
 }
 
 /**

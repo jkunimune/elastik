@@ -558,7 +558,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 	# plot the error function over time
 	valu_axes.clear()
 	valu_axes.plot(values)
-	valu_axes.set_xlim(len(values) - 200, len(values))
+	valu_axes.set_xlim(len(values) - 100, len(values))
 	valu_axes.set_ylim(0, 6*values[-1] if values else 1)
 	valu_axes.minorticks_on()
 	valu_axes.yaxis.set_tick_params(which='both')
@@ -566,8 +566,8 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 
 	# plot the convergence criteria over time
 	diff_axes.clear()
-	diff_axes.scatter(np.arange(len(grads)), grads, s=.5, zorder=10)
-	diff_axes.scatter(np.arange(len(grads)), angles, s=.5, zorder=10)
+	diff_axes.scatter(np.arange(len(grads)), grads, s=2, zorder=10)
+	diff_axes.scatter(np.arange(len(grads)), angles, s=2, zorder=10)
 	ylim = max(2e-2, np.min(grads, initial=1e3)*5e2)
 	diff_axes.set_ylim(ylim/1e3, ylim)
 	diff_axes.set_yscale("log")

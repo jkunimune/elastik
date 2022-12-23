@@ -22,7 +22,7 @@ STEP_REDUCTION = 5.
 STEP_RELAXATION = STEP_REDUCTION**1.5
 LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
-np.seterr(under="ignore", all="raise")
+np.seterr(under="ignore", over="raise", divide="raise", invalid="raise")
 
 
 class MaxIterationsException(Exception):
@@ -237,6 +237,10 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 		bounded_solution = polytope_project(unbounded_solution, polytope_mat, polytope_lim)
 		return bounded_solution, unbounded_solution
 
+	# calculate the eigen decomposition of the inverse hessian to save time later
+	Λ, Q = hessian.symmetric_eigen_decomposition()
+	Λ = (Λ + damping)**-1
+
 	def func(x):
 		dx = x - fixed_point
 		quad_term = 1/2*np.sum(dx*(hessian@dx + damping*dx))
@@ -244,7 +248,9 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 		return quad_term + lin_term
 
 	def unbounded_solution(x):
-		step = -hessian.inv_matmul(gradient + x, damping=damping)
+		argument = np.ravel(gradient + x)
+		step = -Q@(Λ*(Q.T@argument))  # -hessian^-1 (gradient + x)
+		step = np.reshape(step, fixed_point.shape)
 		return fixed_point + step
 
 	return (
@@ -291,8 +297,18 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 	# check to see if we're already done
 	y_old = np.zeros(A.dense_shape + shape[A.sparse_ndim:])
 	x_guess = dual_to_primal(y_old)
-	if g(A@x_guess):
-		return x_guess
+	try:
+		if g(A@x_guess):
+			return x_guess
+	except OSError:
+		print("let me see if I can extract some more useful information.")
+		print(y_old.shape)
+		print(x_guess.shape)
+		print(A.dense_shape, A.sparse_shape)
+		print(y_old)
+		print(x_guess)
+		print(A)
+		raise
 
 	# establish the parameters and persisting variables
 	L = A.norm(orde=2)**2/σ
@@ -320,7 +336,7 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 		t_old, w_old, y_old = t_new, w_new, y_new
 		# make sure it doesn't run for too long
 		num_iterations += 1
-		if (num_iterations >= 10_000 and len(candidates) == 0) or num_iterations >= 20_000:
+		if (num_iterations >= 20_000 and len(candidates) == 0) or num_iterations >= 40_000:
 			raise MaxIterationsException("The maximum number of iterations was reached in the fast dual-based proximal gradient routine")
 
 

@@ -78,7 +78,6 @@ declare_c_func(c_lib.to_dense, [c_SparseArrayArray, c_int_p, c_int, c_ndarray], 
 declare_c_func(c_lib.expand_dims, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_slice_saa, [c_SparseArrayArray, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_diagonal_saa, [c_SparseArrayArray, c_ndarray], None)
-declare_c_func(c_lib.inverse_matmul_nda, [c_SparseArrayArray, c_double, c_ndarray, c_double, c_ndarray, c_ndarray], c_int)
 declare_c_func(c_lib.get_reindex_saa, [c_SparseArrayArray, c_int_p, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.to_string, [c_SparseArrayArray], c_mut_char_p)
 
@@ -395,7 +394,7 @@ class DenseSparseArray:
 		return result
 
 	@cache
-	def diagonal(self):
+	def diagonal(self) -> NDArray[float]:
 		""" return a dense vector containing the items self[i, i] for all i """
 		if self.dense_shape != self.sparse_shape:
 			raise ValueError(f"only square arrays have diagonals, not {self.dense_shape}x{self.sparse_shape}.")
@@ -403,32 +402,14 @@ class DenseSparseArray:
 		c_lib.get_diagonal_saa(self, out)
 		return out
 
-	def inv_matmul(self, other: NDArray[float], tolerance=1e-4, damping=0) -> NDArray[float]:
-		""" compute self**-1 @ b for a symmetric positive definite matrix, iteratively.  this won't
-		    work if self is not symmetric, but it may work if it's positive definite
-		    :param other: the vector by which to multiply the inverse
-		    :param tolerance: the relative tolerance; the residual magnitude will be this factor
-		                      less than b's magnitude.
-		    :param damping: this doesn't actually compute self**-1 @ b; it <i>actually</i> computes
-		                    (self + damping*I)**-1 @ b.  damping is a value that will be added to
-		                    all of the diagonal elements.  increasing it will decrease the magnitude
-		                    of the result, and when it is very large, the result will approach
-		                    other/damping.
-		    :return: the vector x that solves self@x = b
-		"""
+	@cache
+	def symmetric_eigen_decomposition(self) -> tuple[NDArray[float], NDArray[float]]:
+		""" return the eigenvalues in a vector and the flattend eigenvectors in a collum matrix,
+		    assuming this is symmetric """
 		if self.dense_shape != self.sparse_shape:
-			raise ValueError(f"this only works for square arrays")
-		if self.dense_shape != other.shape:
-			raise ValueError(f"the shapes don't match: {self.dense_shape}+{self.sparse_shape} × {other.shape}")
-		absolute_tolerance = np.linalg.norm(other)*tolerance
-		diag = self.diagonal()
-		guess = other/np.maximum(diag, np.quantile(abs(diag[diag != 0]), 1/sqrt(diag.size)))
-		out = np.empty(self.dense_shape)
-		result = c_lib.inverse_matmul_nda(
-			self, c_double(damping), other, c_double(absolute_tolerance), guess, out)
-		if result != 0:
-			raise RuntimeError("conjugate gradients did not succeed.")
-		return out
+			raise ValueError("this only works for square matrices")
+		values, vectors = np.linalg.eigh(np.array(self).reshape((self.dense_size, self.sparse_size)))
+		return values, vectors
 
 	def __len__(self) -> int:
 		if self.ndim > 0:
@@ -561,7 +542,6 @@ if __name__ == "__main__":
 	print("A =", A)
 	print("b =", b)
 	print("Ab =", A@b)
-	print("A^-1(Ab) =", A.inv_matmul(A@b))
 	print("A^T(b) =", A.transpose_matmul(b))
 	print("diag(A) =", A.diagonal())
 
