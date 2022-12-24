@@ -32,7 +32,6 @@ class MaxIterationsException(Exception):
 def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
              guess: NDArray[float],
              gradient_tolerance: float,
-             cosine_tolerance: float,
              bounds_matrix: Optional[DenseSparseArray] = None,
              bounds_limits: Optional[NDArray[float]] = None,
              report: Optional[Callable[[NDArray[float], float, NDArray[float], NDArray[float], float], None]] = None,
@@ -45,11 +44,9 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	    :param func: the objective function to minimize. it takes an array of size n×m as
 	                 argument and returns a single scalar value
 	    :param guess: the initial input to the function, from which the gradients will descend.
-	    :param gradient_tolerance: the absolute tolerance. if the magnitude of the gradient at any
-	                               given point dips below this, we are done.
-	    :param cosine_tolerance: the relative tolerance. if the ratio of the magnitude step it would
-	                             have taken if the problem was unbounded to the magnitude of the
-	                             actual bounded step dips below this, we are done.
+	    :param gradient_tolerance: the absolute tolerance. if the portion of the magnitude of the
+	                               gradient that is not against the bounds dips below this at any
+	                               given point , we are done.
 	    :param bounds_matrix: a list of inequality constraints on various linear combinations.
 	                          it should be some object that matrix-multiplies by the state array to
 	                          produce an l×m vector of tracer particle positions
@@ -143,7 +140,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 				# if this is infinitely good, jump to the followup function now
 				if new_value == -np.inf and followup_func is not None:
 					print(f"Reached the valid domain in {num_line_searches} iterations.")
-					return minimize(followup_func, new_state, gradient_tolerance, cosine_tolerance,
+					return minimize(followup_func, new_state, gradient_tolerance,
 					                bounds_matrix, bounds_limits, report, None)
 				# if the line search condition is met, take it
 				if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(actual_step*gradient):
@@ -161,7 +158,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		report(state, value, gradient, actual_step, gradient_angle)
 
 		# if the termination condition is met, finish
-		if gradient_magnitude < gradient_tolerance or gradient_angle < cosine_tolerance:
+		if gradient_magnitude*gradient_angle < gradient_tolerance:
 			print(f"Completed in {num_line_searches} iterations.")
 			return state
 
@@ -254,12 +251,12 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 		return fixed_point + step
 
 	return (
-		minimize_with_constraints(
+		minimize_with_constraints(  # TODO: can I make this a projection in eigenspace??
 			func, unbounded_solution,
 			lambda z: np.all(z <= polytope_lim),
 			lambda z: np.minimum(polytope_lim, z),
 			polytope_mat,
-			hessian.norm(orde=-2) + damping,
+			1/np.max(Λ),
 			fixed_point.shape),
 		unbounded_solution(0)
 	)
@@ -336,7 +333,8 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 		t_old, w_old, y_old = t_new, w_new, y_new
 		# make sure it doesn't run for too long
 		num_iterations += 1
-		if (num_iterations >= 20_000 and len(candidates) == 0) or num_iterations >= 40_000:
+		if (num_iterations >= 100_000 and len(candidates) == 0) or num_iterations >= 200_000:
+			print(num_iterations, end=", ")
 			raise MaxIterationsException("The maximum number of iterations was reached in the fast dual-based proximal gradient routine")
 
 

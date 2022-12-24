@@ -502,7 +502,7 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 
 
 def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np.ndarray,
-              values: list[float], grads: list[float], angles: list[float], final: bool,
+              values: list[float], grads: list[float], projected_grads: list[float], final: bool,
               ф_mesh: np.ndarray, λ_mesh: np.ndarray, dΦ: np.ndarray, dΛ: np.ndarray,
               mesh_index: np.ndarray, cell_definitions: np.ndarray, cell_weights: np.ndarray,
               coastlines: list[np.array], border: np.ndarray | DenseSparseArray,
@@ -566,8 +566,8 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 
 	# plot the convergence criteria over time
 	diff_axes.clear()
-	diff_axes.scatter(np.arange(len(grads)), grads, s=2, zorder=10)
-	diff_axes.scatter(np.arange(len(grads)), angles, s=2, zorder=10)
+	diff_axes.scatter(np.arange(len(grads)), grads, s=2, zorder=11)
+	diff_axes.scatter(np.arange(len(grads)), projected_grads, s=2, zorder=10)
 	ylim = max(2e-2, np.min(grads, initial=1e3)*5e2)
 	diff_axes.set_ylim(ylim/1e3, ylim)
 	diff_axes.set_yscale("log")
@@ -726,7 +726,7 @@ def create_map_projection(configuration_file: str):
 	current_state = node_positions
 	current_positions = node_positions
 	latest_step = np.zeros_like(node_positions)
-	values, grads, angles = [], [], []
+	values, grads, projected_grads = [], [], []
 
 	# define the objective functions
 	def compute_energy_aggressive(positions: np.ndarray) -> float:
@@ -769,7 +769,7 @@ def create_map_projection(configuration_file: str):
 		latest_step = step
 		values.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
-		angles.append(-np.log(1 - freedom) if freedom < 1 else inf)
+		projected_grads.append(grads[-1]*freedom)
 
 	# then minimize! follow the scheduled progression.
 	print("begin fitting process.")
@@ -780,16 +780,16 @@ def create_map_projection(configuration_file: str):
 
 		# progress from coarser to finer mesh skeletons
 		if mesh_factor > 0:
+			tolerance = 1e-3/EARTH.R
 			reduce, restore = mesh_skeleton(node_indices, mesh_factor, ф_mesh)
 		else:
+			tolerance = 1e-4/EARTH.R
 			reduce, restore = Scalar(1), Scalar(1)
 
 		# progress from coarser to finer domain polytopes
 		if bounds_coarseness == 0:
-			tolerance = 1e-2/EARTH.R
 			bounds_matrix, bounds_limits = None, None
 		else:
-			tolerance = 1e-4/EARTH.R
 			coarse_border_matrix = border_matrix[np.arange(0, border_matrix.shape[0], bounds_coarseness), :]
 			double_border_matrix = DenseSparseArray.concatenate([coarse_border_matrix, -coarse_border_matrix])
 			bounds_matrix = double_border_matrix @ restore
@@ -821,15 +821,14 @@ def create_map_projection(configuration_file: str):
 			                          bounds_matrix=bounds_matrix,
 			                          bounds_limits=bounds_limits,
 			                          report=record_status,
-			                          gradient_tolerance=tolerance,
-			                          cosine_tolerance=1e-1)
+			                          gradient_tolerance=tolerance)
 			success = True
 		calculation = threading.Thread(target=calculate)
 		calculation.start()
 		while True:
 			done = not calculation.is_alive()
 			show_mesh(current_state, current_positions, latest_step,
-			          values, grads, angles, done,
+			          values, grads, projected_grads, done,
 			          ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
 			          cell_definitions, cell_scale_weights,
 			          coastlines, border_matrix, width, height,
