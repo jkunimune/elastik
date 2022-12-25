@@ -9,6 +9,7 @@ progress as it goes.
 """
 from __future__ import annotations
 
+from math import inf, sqrt, isfinite
 from typing import Callable, Optional, Sequence
 
 import numpy as np
