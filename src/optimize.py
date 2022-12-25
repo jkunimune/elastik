@@ -9,7 +9,6 @@ progress as it goes.
 """
 from __future__ import annotations
 
-from math import inf, sqrt
 from typing import Callable, Optional, Sequence
 
 import numpy as np
@@ -236,7 +235,7 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 
 	# calculate the eigen decomposition of the inverse hessian to save time later
 	Λ, Q = hessian.symmetric_eigen_decomposition()
-	Λ = (Λ + damping)**-1
+	Λ = np.sqrt(Λ**2 + damping**2)**-1  # insert the damping here
 
 	def func(x):
 		dx = x - fixed_point
@@ -281,13 +280,15 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 	    :param g: the constraint.  only values of x where g(A@x) is True are considered valid solutions
 	    :param A: the matrix used to convert from real space to constraint space
 	    :param prox_g: a function of z that returns the projection of z into the space where g(z)
-	    :param σ: an upper bound on the convexity parameter of f
+	    :param σ: a lower bound on the convexity parameter of f
 	    :param shape: the array shape that f and argmin_f expect
 	    :param certainty: how many iterations it should try once it's within the tolerance to ensure
 	                      it's finding the best point
 	"""
 	if A.ndim != 2:
 		raise ValueError(f"the matrix should be a (2d) matrix, not a {A.ndim}d-array")
+	if not isfinite(σ) or σ >= 0:
+		raise ValueError(f"the strong convexity of f, by definition, must be positive.")
 
 	def dual_to_primal(y):
 		return argmin_f(-A.transpose_matmul(y))

@@ -171,6 +171,32 @@ class DenseSparseArray:
 		                                      values))
 
 	@staticmethod
+	def from_dense(dense: NDArray[float], n_dense_dims: int) -> "DenseSparseArray":
+		""" return a DenseSparseArray that corresponds to this dense array and takes up as little
+		    memory as possible.
+		    :param dense: the numpy array whose contents we want to copy
+		    :param n_dense_dims: the number of dense dimensions on the final array.  all dimenions
+		                         of the result that are not dense will be sparse.
+		"""
+		if n_dense_dims > dense.ndim:
+			raise ValueError("the specified number of dense dimensions shouldn't be greater than the total number of dimensions")
+		n_sparse_dims = dense.ndim - n_dense_dims
+		max_nelements = np.max(np.sum(dense != 0, axis=tuple(np.arange(n_dense_dims))))
+		indices = np.zeros(dense.shape[:n_dense_dims] + (max_nelements, n_sparse_dims), dtype=int)
+		values = np.zeros(dense.shape[:n_dense_dims] + (max_nelements,), dtype=float)
+		nelements = np.zeros(dense.shape[:n_dense_dims], dtype=int)
+		iterator = np.nditer(dense, flags=["multi_index"])
+		for value in iterator:
+			if value != 0:
+				dense_index = iterator.multi_index[:n_dense_dims]
+				sparse_index = iterator.multi_index[n_dense_dims:]
+				j = nelements[dense_index]
+				indices[dense_index + (j, slice(None))] = sparse_index
+				values[dense_index + (j,)] = value
+				nelements[dense_index] += 1
+		return DenseSparseArray.from_coordinates(dense.shape[n_dense_dims:], indices, values)
+
+	@staticmethod
 	def concatenate(elements: Sequence[DenseSparseArray]) -> DenseSparseArray:
 		""" create a densesparsearray by stacking some existing ones verticly """
 		corrected_elements = []
