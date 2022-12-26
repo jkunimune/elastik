@@ -174,34 +174,6 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		if num_line_searches >= 1e5:
 			raise RuntimeError(f"algorithm did not converge in {num_step_sizes} iterations")
 
-
-def polytope_project(point: NDArray[float],
-                     polytope_mat: DenseSparseArray, polytope_lim: NDArray[float]
-                     ) -> NDArray[float]:
-	""" project a given point onto a polytope defined by the inequality
-	        all(polytope_mat@point <= polytope_lim + tolerance)
-	    :param point: the point to project
-	    :param polytope_mat: the normal vectors of the polytope faces, by which the polytope is defined
-	    :param polytope_lim: the quantity that defines the size of the polytope.  it may be an array
-	                         if point is 2d.  a point is in the polytope iff
-	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
-	"""
-	if point.ndim == 2:
-		if point.shape[1] != polytope_lim.size:
-			raise ValueError(f"if you want this fancy functionality, the shapes must match")
-		# if there are multiple dimensions, do each dimension one at a time; it's faster, I think
-		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[:, k])
-		                 for k in range(point.shape[1])]).T
-	elif point.ndim != 1:
-		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
-	return minimize_with_constraints(
-		lambda x: 1/2*np.linalg.norm(point - x),
-		lambda x: point - x,
-		lambda z: np.all(z <= polytope_lim),
-		lambda z: np.minimum(polytope_lim, z),
-		polytope_mat, 1, point.shape)
-
-
 def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
                                    hessian: DenseSparseArray, damping: float,
                                    gradient: NDArray[float],
@@ -234,39 +206,82 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 		bounded_solution = polytope_project(unbounded_solution, polytope_mat, polytope_lim)
 		return bounded_solution, unbounded_solution
 
+	# convert to normal 1D vectors so that we can use real linear algebra
+	original_shape = fixed_point.shape
+	bonus_shape = original_shape[polytope_mat.sparse_ndim:]
+	fixed_point = np.ravel(fixed_point)
+	gradient = np.ravel(gradient)
+	polytope_lim = np.ravel(np.broadcast_to(
+		polytope_lim, polytope_mat.dense_shape + bonus_shape))
+
 	# calculate the eigen decomposition of the inverse hessian to save time later
 	Λ, Q = hessian.symmetric_eigen_decomposition()
-	Λ = np.sqrt(Λ**2 + damping**2)**-1  # insert the damping here
+	Λ = np.maximum(0, Λ) + damping  # insert the damping here
+	if np.any(Λ <= 0):
+		raise ValueError("you need a nonzero step limiter if the hessian is not positive-definite")
 
-	def func(x):
-		dx = x - fixed_point
-		quad_term = 1/2*np.sum(dx*(hessian@dx + damping*dx))
-		lin_term = np.sum(gradient*dx)
-		return quad_term + lin_term
+	# optimize the unbounded system of equations by flattening and inverting the decomposition
+	unbounded_solution = fixed_point - Q@(1/Λ*(Q.T@gradient))
 
-	def unbounded_solution(x):
-		argument = np.ravel(gradient + x)
-		step = -Q@(Λ*(Q.T@argument))  # -hessian^-1 (gradient + x)
-		step = np.reshape(step, fixed_point.shape)
-		return fixed_point + step
+	# convert to the eigenbasis so that bounding the solution becomes a matter of projection
+	eigenspace = np.sqrt(Λ)[:, np.newaxis]*Q.T
+	realspace = Q/np.sqrt(Λ)[np.newaxis, :]
+	eigen_unbounded_solution = eigenspace@unbounded_solution
+	try:
+		eigen_polytope_mat = (polytope_mat@realspace.reshape(
+			polytope_mat.sparse_shape + (-1,))).reshape(
+			(polytope_mat.dense_size*np.product(bonus_shape), realspace.shape[1]))  # be careful with the shaping on polytope_mat
+	except ValueError:
+		print(f"the polytope_mat is designed to convert from {polytope_mat.dense_shape} to {polytope_mat.sparse_shape}")
+		print(f"the realspace converter, tho, converts from {realspace.shape[1]} to {realspace.shape[0]}")
+		print(f"so we reshape realspace to {realspace.reshape(polytope_mat.sparse_shape + (-1,)).shape},")
+		print(f"multiply them so that the sparse axis aligns with the {polytope_mat.sparse_shape}")
+		print(f"(yielding {(polytope_mat@realspace.reshape(polytope_mat.sparse_shape + (-1,))).shape},")
+		print(f"and regroup the axes of the result to {(polytope_mat.dense_size, realspace.shape[1])}")
+		raise
 
-	return (
-		minimize_with_constraints(  # TODO: can I make this a projection in eigenspace??
-			func, unbounded_solution,
-			lambda z: np.all(z <= polytope_lim),
-			lambda z: np.minimum(polytope_lim, z),
-			polytope_mat,
-			1/np.max(Λ),
-			fixed_point.shape),
-		unbounded_solution(0)
-	)
+	# perform the projection in eigenspace
+	eigen_bounded_solution = polytope_project(eigen_unbounded_solution,
+	                                          eigen_polytope_mat,
+	                                          polytope_lim)
+
+	# remember to reshape before returning
+	bounded_solution = realspace@eigen_bounded_solution
+	return bounded_solution.reshape(original_shape), unbounded_solution.reshape(original_shape)
+
+def polytope_project(point: NDArray[float],
+                     polytope_mat: DenseSparseArray | NDArray[float],
+                     polytope_lim: NDArray[float]
+                     ) -> NDArray[float]:
+	""" project a given point onto a polytope defined by the inequality
+	        all(polytope_mat@point <= polytope_lim + tolerance)
+	    :param point: the point to project
+	    :param polytope_mat: the normal vectors of the polytope faces, by which the polytope is defined
+	    :param polytope_lim: the quantity that defines the size of the polytope.  it may be an array
+	                         if point is 2d.  a point is in the polytope iff
+	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
+	"""
+	if point.ndim == 2:
+		if point.shape[1] != polytope_lim.size:
+			raise ValueError(f"if you want this fancy functionality, the shapes must match")
+		# if there are multiple dimensions, do each dimension one at a time; it's faster, I think
+		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[:, k])
+		                 for k in range(point.shape[1])]).T
+	elif point.ndim != 1:
+		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
+	return minimize_with_constraints(
+		lambda x: 1/2*np.linalg.norm(point - x),
+		lambda x: point - x,
+		lambda z: np.all(z <= polytope_lim),
+		lambda z: np.minimum(polytope_lim, z),
+		polytope_mat, 1, point.shape)
 
 
 def minimize_with_constraints(f: Callable[[NDArray[float]], float],
                               argmin_f: Callable[[NDArray[float]], NDArray[float]],
                               g: Callable[[NDArray[float]], bool],
                               prox_g: Callable[[NDArray[float]], NDArray[float]],
-                              A: DenseSparseArray,
+                              A: DenseSparseArray | NDArray[float],
                               σ: float, shape: Sequence[int], certainty: int = 30) -> NDArray[float]: # TODO: should it be 60?  would that work better?
 	""" minimize a smooth multivariate function f(x) subject to a simple inequality constraint g(A@x)
 	    I learned this fast dual-based proximal gradient strategy from
@@ -288,13 +303,13 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 	"""
 	if A.ndim != 2:
 		raise ValueError(f"the matrix should be a (2d) matrix, not a {A.ndim}d-array")
-	if not isfinite(σ) or σ >= 0:
+	if not isfinite(σ) or σ <= 0:
 		raise ValueError(f"the strong convexity of f, by definition, must be positive.")
 
 	def dual_to_primal(y):
-		return argmin_f(-A.transpose_matmul(y))
+		return argmin_f(-A.T@y)
 	# check to see if we're already done
-	y_old = np.zeros(A.dense_shape + shape[A.sparse_ndim:])
+	y_old = np.zeros((A.shape[0],) + tuple(shape[1:]))
 	x_guess = dual_to_primal(y_old)
 	try:
 		if g(A@x_guess):
@@ -303,14 +318,14 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 		print("let me see if I can extract some more useful information.")
 		print(y_old.shape)
 		print(x_guess.shape)
-		print(A.dense_shape, A.sparse_shape)
+		print(A.shape)
 		print(y_old)
 		print(x_guess)
 		print(A)
 		raise
 
 	# establish the parameters and persisting variables
-	L = A.norm(orde=2)**2/σ
+	L = DenseSparseArray.linalg_norm(A, orde=2)**2/σ
 	w_old = y_old
 	t_old = 1
 	candidates: list[tuple[float, NDArray[float]]] = []
@@ -318,7 +333,7 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 	# loop thru the proximal gradient descent of the dual problem
 	while True:
 		# history.append(np.concatenate([y_old, dual_to_primal(y_old)]))
-		u_new = argmin_f(-A.transpose_matmul(w_old))
+		u_new = argmin_f(-A.T@w_old)
 		grad_F = A@u_new
 		v_new = prox_g(grad_F - L*w_old)
 		y_new = w_old - (grad_F - v_new)/L
@@ -331,11 +346,12 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 			# and terminate once we get enough of them
 			if len(candidates) >= certainty:
 				_, best = min(candidates, key=lambda candidate: candidate[0])
+				print(num_iterations, end=", ")
 				return best
 		t_old, w_old, y_old = t_new, w_new, y_new
 		# make sure it doesn't run for too long
 		num_iterations += 1
-		if (num_iterations >= 100_000 and len(candidates) == 0) or num_iterations >= 200_000:
+		if (num_iterations >= 50_000 and len(candidates) == 0) or num_iterations >= 80_000:
 			print(num_iterations, end=", ")
 			raise MaxIterationsException("The maximum number of iterations was reached in the fast dual-based proximal gradient routine")
 

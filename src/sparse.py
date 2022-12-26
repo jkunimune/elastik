@@ -9,8 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, c_bool, c_char
-from functools import cache
-from math import sqrt
+from functools import cache, cached_property
 from typing import Callable, Sequence, Collection
 
 import numpy as np
@@ -254,6 +253,7 @@ class DenseSparseArray:
 		else:
 			return NotImplemented
 
+	@cache
 	def __neg__(self) -> DenseSparseArray:
 		return self * -1
 
@@ -419,6 +419,10 @@ class DenseSparseArray:
 				raise NotImplementedError(f"I can't do this index, {index[k]!r}")
 		return result
 
+	@cached_property
+	def T(self) -> TransposedDenseSparseArray:
+		return TransposedDenseSparseArray(self)
+
 	@cache
 	def diagonal(self) -> NDArray[float]:
 		""" return a dense vector containing the items self[i, i] for all i """
@@ -513,6 +517,29 @@ class DenseSparseArray:
 				shape.pop(k)
 				result = DenseSparseArray(shape, c_lib.sum_along_axis(result, c_int(k)))
 			return result
+
+	@staticmethod
+	def linalg_norm(array: DenseSparseArray | NDArray[float], orde: int) -> float:
+		try:
+			return array.norm(orde=orde)
+		except AttributeError:
+			return np.linalg.norm(array, ord=orde)
+
+
+class TransposedDenseSparseArray:
+	def __init__(self, transpose: DenseSparseArray):
+		""" an object that exists purely to matmul the transpose of an existing DenseSparseArray
+		    by other things
+		"""
+		self.transpose = transpose
+
+	def __matmul__(self, other: NDArray[float]) -> NDArray[float]:
+		""" call the transpose_matmul function of the original matrix """
+		return self.transpose.transpose_matmul(other)
+
+	@cache
+	def __neg__(self) -> TransposedDenseSparseArray:
+		return TransposedDenseSparseArray(-self.transpose)
 
 
 if __name__ == "__main__":
