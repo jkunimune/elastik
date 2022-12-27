@@ -1290,6 +1290,16 @@ EXPORT void to_dense(
 }
 
 /**
+ * return the number of nonzero values in this array
+ */
+EXPORT int count_items(struct SparseArrayArray a) {
+    int nitems = 0;
+    for (int i = 0; i < a.size; i ++)
+        nitems += a.elements[i].nitems;
+    return nitems;
+}
+
+/**
  * print out a SparseArrayArray (don't forget to free the output after you're done with it)
  */
 EXPORT char* to_string(struct SparseArrayArray a) {

@@ -78,6 +78,7 @@ declare_c_func(c_lib.expand_dims, [c_SparseArrayArray, c_int], c_SparseArrayArra
 declare_c_func(c_lib.get_slice_saa, [c_SparseArrayArray, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_diagonal_saa, [c_SparseArrayArray, c_ndarray], None)
 declare_c_func(c_lib.get_reindex_saa, [c_SparseArrayArray, c_int_p, c_int, c_int], c_SparseArrayArray)
+declare_c_func(c_lib.count_items, [c_SparseArrayArray], c_int)
 declare_c_func(c_lib.to_string, [c_SparseArrayArray], c_mut_char_p)
 
 
@@ -454,7 +455,9 @@ class DenseSparseArray:
 			res = c_lib.to_string(self)
 			values = str_from_c(res)
 		values = values.replace('\n', '\n  ')
-		return f"{self.dense_shape}x{self.sparse_shape}:\n  {values}"
+		return f"{list(self.dense_shape)}x{list(self.sparse_shape)} " \
+		       f"({c_lib.count_items(self)}):\n" \
+		       f"  {values}"
 
 	def __array__(self) -> NDArray[float]:
 		out = np.empty(self.shape)

@@ -9,6 +9,8 @@ progress as it goes.
 """
 from __future__ import annotations
 
+import logging
+import sys
 from math import inf, sqrt, isfinite
 from typing import Callable, Optional, Sequence
 
@@ -133,18 +135,26 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 					return_unbounded_solution=True)
 			except MaxIterationsException:
 				pass
+				logging.log(19, f"{step_limiter:7.2g} -> xx not valid")
 			else:
 				ideal_step = ideal_new_state - state
 				actual_step = new_state - state
 				new_value = get_value(new_state)
 				# if this is infinitely good, jump to the followup function now
 				if new_value == -np.inf and followup_func is not None:
-					print(f"Reached the valid domain in {num_line_searches} iterations.")
+					logging.log(19, f"Reached the valid domain in {num_line_searches} iterations.")
 					return minimize(followup_func, new_state, gradient_tolerance,
 					                bounds_matrix, bounds_limits, report, None)
 				# if the line search condition is met, take it
 				if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(actual_step*gradient):
+					logging.log(19, f"{step_limiter:.2g} -> !! good")
+					logging.log(19, f"traveld a distance of {np.linalg.norm(actual_step):.3g}km (would have been {np.linalg.norm(ideal_step):.3g}km)")
 					break
+				elif new_value < value:
+					logging.log(19, f"{step_limiter:7.2g} -> .. not better enuff")
+				else:
+					logging.log(19, f"{step_limiter:7.2g} -> .. not better")
+
 			# if the condition is not met, decrement the step size and try agen
 			step_limiter *= STEP_REDUCTION
 			num_step_sizes += 1
@@ -159,7 +169,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 
 		# if the termination condition is met, finish
 		if gradient_magnitude*gradient_angle < gradient_tolerance:
-			print(f"Completed in {num_line_searches} iterations.")
+			logging.log(20, f"Completed in {num_line_searches} iterations.")
 			return state
 
 		# take the new state and error value
@@ -206,48 +216,32 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 		bounded_solution = polytope_project(unbounded_solution, polytope_mat, polytope_lim)
 		return bounded_solution, unbounded_solution
 
-	# convert to normal 1D vectors so that we can use real linear algebra
-	original_shape = fixed_point.shape
-	bonus_shape = original_shape[polytope_mat.sparse_ndim:]
-	fixed_point = np.ravel(fixed_point)
-	gradient = np.ravel(gradient)
-	polytope_lim = np.ravel(np.broadcast_to(
-		polytope_lim, polytope_mat.dense_shape + bonus_shape))
-
 	# calculate the eigen decomposition of the inverse hessian to save time later
 	Λ, Q = hessian.symmetric_eigen_decomposition()
-	Λ = np.maximum(0, Λ) + damping  # insert the damping here
-	if np.any(Λ <= 0):
-		raise ValueError("you need a nonzero step limiter if the hessian is not positive-definite")
+	Λ = np.sqrt(Λ**2 + damping**2)**-1  # insert the damping here
 
-	# optimize the unbounded system of equations by flattening and inverting the decomposition
-	unbounded_solution = fixed_point - Q@(1/Λ*(Q.T@gradient))
+	def func(x):
+		dx = x - fixed_point
+		quad_term = 1/2*np.sum(dx*(hessian@dx + damping*dx))
+		lin_term = np.sum(gradient*dx)
+		return quad_term + lin_term
 
-	# convert to the eigenbasis so that bounding the solution becomes a matter of projection
-	eigenspace = np.sqrt(Λ)[:, np.newaxis]*Q.T
-	realspace = Q/np.sqrt(Λ)[np.newaxis, :]
-	eigen_unbounded_solution = eigenspace@unbounded_solution
-	try:
-		eigen_polytope_mat = (polytope_mat@realspace.reshape(
-			polytope_mat.sparse_shape + (-1,))).reshape(
-			(polytope_mat.dense_size*np.product(bonus_shape), realspace.shape[1]))  # be careful with the shaping on polytope_mat
-	except ValueError:
-		print(f"the polytope_mat is designed to convert from {polytope_mat.dense_shape} to {polytope_mat.sparse_shape}")
-		print(f"the realspace converter, tho, converts from {realspace.shape[1]} to {realspace.shape[0]}")
-		print(f"so we reshape realspace to {realspace.reshape(polytope_mat.sparse_shape + (-1,)).shape},")
-		print(f"multiply them so that the sparse axis aligns with the {polytope_mat.sparse_shape}")
-		print(f"(yielding {(polytope_mat@realspace.reshape(polytope_mat.sparse_shape + (-1,))).shape},")
-		print(f"and regroup the axes of the result to {(polytope_mat.dense_size, realspace.shape[1])}")
-		raise
+	def unbounded_solution(x):
+		argument = np.ravel(gradient + x)
+		step = -Q@(Λ*(Q.T@np.ravel(argument)))  # -hessian^-1 (gradient + x)
+		step = np.reshape(step, fixed_point.shape)
+		return fixed_point + step
 
-	# perform the projection in eigenspace
-	eigen_bounded_solution = polytope_project(eigen_unbounded_solution,
-	                                          eigen_polytope_mat,
-	                                          polytope_lim)
-
-	# remember to reshape before returning
-	bounded_solution = realspace@eigen_bounded_solution
-	return bounded_solution.reshape(original_shape), unbounded_solution.reshape(original_shape)
+	return (
+		minimize_with_constraints(
+			func, unbounded_solution,
+			lambda z: np.all(z <= polytope_lim),
+			lambda z: np.minimum(polytope_lim, z),
+			polytope_mat,
+			1/np.max(Λ),
+			fixed_point.shape),
+		unbounded_solution(0)
+	)
 
 def polytope_project(point: NDArray[float],
                      polytope_mat: DenseSparseArray | NDArray[float],
@@ -346,13 +340,13 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 			# and terminate once we get enough of them
 			if len(candidates) >= certainty:
 				_, best = min(candidates, key=lambda candidate: candidate[0])
-				print(num_iterations, end=", ")
+				print(num_iterations, end=": ")
 				return best
 		t_old, w_old, y_old = t_new, w_new, y_new
 		# make sure it doesn't run for too long
 		num_iterations += 1
 		if (num_iterations >= 50_000 and len(candidates) == 0) or num_iterations >= 80_000:
-			print(num_iterations, end=", ")
+			print(num_iterations, end=": ")
 			raise MaxIterationsException("The maximum number of iterations was reached in the fast dual-based proximal gradient routine")
 
 

@@ -12,3 +12,6 @@ cmake-build-debug/*
 
 # input data files (see README for where to get them)
 data/*
+
+# log files
+*.log
