@@ -33,6 +33,7 @@ class c_SparseArrayArray(Structure):
 	            ("size", c_int),
 	            ("shape", c_int_p),
 	            ("elements", c_void_p),
+	            ("element_ndim", c_int),
 	            ]
 
 c_SparseArrayArray_p = POINTER(c_SparseArrayArray)

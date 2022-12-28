@@ -10,15 +10,14 @@ progress as it goes.
 from __future__ import annotations
 
 import logging
-import sys
 from math import inf, sqrt, isfinite
 from typing import Callable, Optional, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
 
-from sparse import DenseSparseArray
 from autodiff import Variable
+from sparse import DenseSparseArray
 
 STEP_REDUCTION = 5.
 STEP_RELAXATION = STEP_REDUCTION**1.5
@@ -148,7 +147,6 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 				# if the line search condition is met, take it
 				if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(actual_step*gradient):
 					logging.log(19, f"{step_limiter:.2g} -> !! good")
-					logging.log(19, f"traveld a distance of {np.linalg.norm(actual_step):.3g}km (would have been {np.linalg.norm(ideal_step):.3g}km)")
 					break
 				elif new_value < value:
 					logging.log(19, f"{step_limiter:7.2g} -> .. not better enuff")
@@ -184,6 +182,32 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		if num_line_searches >= 1e5:
 			raise RuntimeError(f"algorithm did not converge in {num_step_sizes} iterations")
 
+def polytope_project(point: NDArray[float],
+                     polytope_mat: DenseSparseArray, polytope_lim: NDArray[float]
+                     ) -> NDArray[float]:
+	""" project a given point onto a polytope defined by the inequality
+	        all(polytope_mat@point <= polytope_lim + tolerance)
+	    :param point: the point to project
+	    :param polytope_mat: the normal vectors of the polytope faces, by which the polytope is defined
+	    :param polytope_lim: the quantity that defines the size of the polytope.  it may be an array
+	                         if point is 2d.  a point is in the polytope iff
+	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
+	"""
+	if point.ndim == 2:
+		if point.shape[1] != polytope_lim.size:
+			raise ValueError(f"if you want this fancy functionality, the shapes must match")
+		# if there are multiple dimensions, do each dimension one at a time; it's faster, I think
+		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[:, k])
+		                 for k in range(point.shape[1])]).T
+	elif point.ndim != 1:
+		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
+	return minimize_with_constraints(
+		lambda x: 1/2*np.linalg.norm(point - x),
+		lambda x: point - x,
+		lambda z: np.all(z <= polytope_lim),
+		lambda z: np.minimum(polytope_lim, z),
+		polytope_mat, 1, point.shape)
+
 def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
                                    hessian: DenseSparseArray, damping: float,
                                    gradient: NDArray[float],
@@ -218,6 +242,10 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 
 	# calculate the eigen decomposition of the inverse hessian to save time later
 	Λ, Q = hessian.symmetric_eigen_decomposition()
+	Λ = np.maximum(0, Λ) + damping  # insert the damping here
+	if np.any(Λ <= 0):
+		raise ValueError("you need a nonzero step limiter if the hessian is not positive-definite")
+
 	Λ = np.sqrt(Λ**2 + damping**2)**-1  # insert the damping here
 
 	def func(x):
@@ -228,9 +256,9 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 
 	def unbounded_solution(x):
 		argument = np.ravel(gradient + x)
-		step = -Q@(Λ*(Q.T@np.ravel(argument)))  # -hessian^-1 (gradient + x)
+		step = -Q@(Λ*(Q.T@argument))  # -hessian^-1 (gradient + x)
 		step = np.reshape(step, fixed_point.shape)
-		return fixed_point + step
+		return fixed_point + step  # TODO I think conjugate gradients actually would be faster... but I would need another way to enforce convexity
 
 	return (
 		minimize_with_constraints(
@@ -242,34 +270,6 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 			fixed_point.shape),
 		unbounded_solution(0)
 	)
-
-def polytope_project(point: NDArray[float],
-                     polytope_mat: DenseSparseArray | NDArray[float],
-                     polytope_lim: NDArray[float]
-                     ) -> NDArray[float]:
-	""" project a given point onto a polytope defined by the inequality
-	        all(polytope_mat@point <= polytope_lim + tolerance)
-	    :param point: the point to project
-	    :param polytope_mat: the normal vectors of the polytope faces, by which the polytope is defined
-	    :param polytope_lim: the quantity that defines the size of the polytope.  it may be an array
-	                         if point is 2d.  a point is in the polytope iff
-	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
-	"""
-	if point.ndim == 2:
-		if point.shape[1] != polytope_lim.size:
-			raise ValueError(f"if you want this fancy functionality, the shapes must match")
-		# if there are multiple dimensions, do each dimension one at a time; it's faster, I think
-		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[:, k])
-		                 for k in range(point.shape[1])]).T
-	elif point.ndim != 1:
-		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
-	return minimize_with_constraints(
-		lambda x: 1/2*np.linalg.norm(point - x),
-		lambda x: point - x,
-		lambda z: np.all(z <= polytope_lim),
-		lambda z: np.minimum(polytope_lim, z),
-		polytope_mat, 1, point.shape)
-
 
 def minimize_with_constraints(f: Callable[[NDArray[float]], float],
                               argmin_f: Callable[[NDArray[float]], NDArray[float]],
@@ -305,18 +305,8 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 	# check to see if we're already done
 	y_old = np.zeros((A.shape[0],) + tuple(shape[1:]))
 	x_guess = dual_to_primal(y_old)
-	try:
-		if g(A@x_guess):
-			return x_guess
-	except OSError:
-		print("let me see if I can extract some more useful information.")
-		print(y_old.shape)
-		print(x_guess.shape)
-		print(A.shape)
-		print(y_old)
-		print(x_guess)
-		print(A)
-		raise
+	if g(A@x_guess):
+		return x_guess
 
 	# establish the parameters and persisting variables
 	L = DenseSparseArray.linalg_norm(A, orde=2)**2/σ
