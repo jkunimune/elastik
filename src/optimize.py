@@ -10,7 +10,7 @@ progress as it goes.
 from __future__ import annotations
 
 import logging
-from math import inf, sqrt, isfinite
+from math import inf, isfinite, sqrt, isnan
 from typing import Callable, Optional, Sequence
 
 import numpy as np
@@ -20,7 +20,7 @@ from autodiff import Variable
 from sparse import DenseSparseArray
 
 STEP_REDUCTION = 5.
-STEP_RELAXATION = STEP_REDUCTION**1.5
+STEP_RELAXATION = STEP_REDUCTION**1.618
 LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
 np.seterr(under="ignore", over="raise", divide="raise", invalid="raise")
@@ -91,7 +91,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	# redefine the objective function to have some checks bilt in
 	def get_value(x: np.ndarray) -> float:
 		value = func(x)
-		if np.isnan(value):
+		if isnan(value):
 			raise RuntimeError(f"there are nan values at x = {x}")
 		return value
 	# define a utility function to use Variable to get the gradient of the value
@@ -104,11 +104,11 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	initial_value = get_value(guess)
 
 	# check just in case we instantly fall thru to the followup function
-	if initial_value == -np.inf and followup_func is not None:
+	if initial_value == -inf and followup_func is not None:
 		func = followup_func
 		followup_func = None
 		initial_value = get_value(guess)
-	elif not np.isfinite(initial_value):
+	elif not isfinite(initial_value):
 		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_value}")
 
 	# calculate the initial gradient
@@ -140,7 +140,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 				actual_step = new_state - state
 				new_value = get_value(new_state)
 				# if this is infinitely good, jump to the followup function now
-				if new_value == -np.inf and followup_func is not None:
+				if new_value == -inf and followup_func is not None:
 					logging.log(19, f"Reached the valid domain in {num_line_searches} iterations.")
 					return minimize(followup_func, new_state, gradient_tolerance,
 					                bounds_matrix, bounds_limits, report, None)
@@ -202,9 +202,10 @@ def polytope_project(point: NDArray[float],
 	elif point.ndim != 1:
 		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
 	return minimize_with_constraints(
-		lambda x: 1/2*np.linalg.norm(point - x),
+		lambda x: 1/2*np.sum((point - x)**2),
 		lambda x: point - x,
 		lambda z: np.all(z <= polytope_lim),
+		lambda y: np.sum(y*polytope_lim), #if np.all(y >= 0) else inf,
 		lambda z: np.minimum(polytope_lim, z),
 		polytope_mat, 1, point.shape)
 
@@ -248,7 +249,7 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 
 	Λ = np.sqrt(Λ**2 + damping**2)**-1  # insert the damping here
 
-	def func(x):
+	def function(x):
 		dx = x - fixed_point
 		quad_term = 1/2*np.sum(dx*(hessian@dx + damping*dx))
 		lin_term = np.sum(gradient*dx)
@@ -262,8 +263,9 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 
 	return (
 		minimize_with_constraints(
-			func, unbounded_solution,
+			function, unbounded_solution,
 			lambda z: np.all(z <= polytope_lim),
+			lambda y: np.sum(y*polytope_lim), #if np.all(y >= 0) else inf,
 			lambda z: np.minimum(polytope_lim, z),
 			polytope_mat,
 			1/np.max(Λ),
@@ -274,22 +276,26 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 def minimize_with_constraints(f: Callable[[NDArray[float]], float],
                               argmin_f: Callable[[NDArray[float]], NDArray[float]],
                               g: Callable[[NDArray[float]], bool],
+                              g_conj: Callable[[NDArray[float]], float],
                               prox_g: Callable[[NDArray[float]], NDArray[float]],
                               A: DenseSparseArray | NDArray[float],
-                              σ: float, shape: Sequence[int], certainty: int = 30) -> NDArray[float]: # TODO: should it be 60?  would that work better?
+                              σ: float,
+                              shape: Sequence[int],
+                              certainty: int = 30
+                              ) -> NDArray[float]: # TODO: should it be 60?  would that work better?
 	""" minimize a smooth multivariate function f(x) subject to a simple inequality constraint g(A@x)
 	    I learned this fast dual-based proximal gradient strategy from
 	        Beck, A. & Teboulle, M. "A fast dual proximal gradient algorithm for
 	        convex minimization and applications", <i>Operations Research Letters</i> <b>42</b> 1
 	        (2014), p. 1–6. doi:10.1016/j.orl.2013.10.007,
-	    but I added a little twist.
-	    that's not true.  I removed the twist because it wasn't very good, but then I couldn't bring
-	    myself to remove that reference.
+	    but I added a little twist.  by dynamicly modifying the step size, I can achieve much faster
+	    convergence when the hessian is highly anisotropic.
 	    :param f: the smooth part of the function.  it must be continuusly differentiable or this won't work.
 	    :param argmin_f: a function of d that returns the x that minimizes the expression f(x) + d⋅x
 	    :param g: the constraint.  only values of x where g(A@x) is True are considered valid solutions
-	    :param A: the matrix used to convert from real space to constraint space
 	    :param prox_g: a function of z that returns the projection of z into the space where g(z)
+		:param g_conj: the convex conjugate of g. g*(y) should return the greatest y⋅z accessible where g(z) is True
+	    :param A: the matrix used to convert from real space to constraint space
 	    :param σ: a lower bound on the convexity parameter of f
 	    :param shape: the array shape that f and argmin_f expect
 	    :param certainty: how many iterations it should try once it's within the tolerance to ensure
@@ -300,30 +306,45 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 	if not isfinite(σ) or σ <= 0:
 		raise ValueError(f"the strong convexity of f, by definition, must be positive.")
 
-	def dual_to_primal(y):
-		return argmin_f(-A.T@y)
+	def dual_to_primal(ATy):
+		return argmin_f(-ATy)
+
+	def dual_objective(ATy, y, x):
+		f_conj = np.sum(ATy*x) - f(x)
+		return f_conj + g_conj(-y)
+
 	# check to see if we're already done
-	y_old = np.zeros((A.shape[0],) + tuple(shape[1:]))
-	x_guess = dual_to_primal(y_old)
-	if g(A@x_guess):
-		return x_guess
+	y_initial = np.zeros((A.shape[0],) + tuple(shape[1:]))
+	ATy_initial = np.zeros(shape)
+	x_initial = dual_to_primal(ATy_initial)
+	if g(A@x_initial):
+		return x_initial
 
 	# establish the parameters and persisting variables
-	L = DenseSparseArray.linalg_norm(A, orde=2)**2/σ
-	w_old = y_old
+	step_size = σ/DenseSparseArray.linalg_norm(A, orde=2)**2
+	w_old = y_old = y_initial
 	t_old = 1
 	candidates: list[tuple[float, NDArray[float]]] = []
 	num_iterations = 0
 	# loop thru the proximal gradient descent of the dual problem
 	while True:
-		# history.append(np.concatenate([y_old, dual_to_primal(y_old)]))
 		u_new = argmin_f(-A.T@w_old)
 		grad_F = A@u_new
-		v_new = prox_g(grad_F - L*w_old)
-		y_new = w_old - (grad_F - v_new)/L
+		while True:
+			v_new = prox_g(grad_F - w_old/step_size)
+			y_new = w_old - step_size*(grad_F - v_new)
+			ATw_old, ATy_new = A.T@w_old, A.T@y_new
+			x_old, x_new = dual_to_primal(ATw_old), dual_to_primal(ATy_new)
+			q_old = dual_objective(ATw_old, w_old, x_old)
+			q_new = dual_objective(ATy_new, y_new, x_new)
+			if q_new <= q_old:# + LINE_SEARCH_STRICTNESS*np.sum(grad_objective(w_old)*(y_new - y_old)): TODO: if I can find an efficient way to computer grad_g_conj I can make this much safer
+				break
+			else:
+				if step_size < 1e-100:
+					raise RuntimeError("the dual line search did not converge.")
+				step_size /= STEP_REDUCTION
 		t_new = (1 + sqrt(1 + 4*t_old**2))/2  # this inertia term is what makes it fast
 		w_new = y_new + (t_old - 1)/t_new*(y_new - y_old)
-		x_new = dual_to_primal(y_new)
 		# save the value of any point that meets the constraint
 		if g(A@x_new):
 			candidates.append((f(x_new), x_new))
@@ -332,7 +353,9 @@ def minimize_with_constraints(f: Callable[[NDArray[float]], float],
 				_, best = min(candidates, key=lambda candidate: candidate[0])
 				print(num_iterations, end=": ")
 				return best
+		# make some final loop variable updates
 		t_old, w_old, y_old = t_new, w_new, y_new
+		step_size *= STEP_RELAXATION
 		# make sure it doesn't run for too long
 		num_iterations += 1
 		if (num_iterations >= 50_000 and len(candidates) == 0) or num_iterations >= 80_000:
@@ -351,10 +374,11 @@ if __name__ == "__main__":
 	polytope_limits = np.array(1.)
 
 	X, Y = np.meshgrid(np.linspace(-2, 2, 101), np.linspace(-2, 2, 101), indexing="ij")
-	plt.contour(X, Y, np.max(polytope_matrix@np.stack([X, Y]), axis=0), levels=[1.], colors="k")
 
 	point = np.array([2., 1.6])
 	projection = polytope_project(point, polytope_matrix, polytope_limits)
+
+	plt.contour(X, Y, np.max(polytope_matrix@np.stack([X, Y]), axis=0), levels=[polytope_limits], colors="k")
 	plt.plot(point[0], point[1], "x")
 	plt.plot(projection[0], projection[1], "o")
 	print(projection)
@@ -367,12 +391,6 @@ if __name__ == "__main__":
 	                                            np.array([[[0], [1]], [[0], [1]]]),
 	                                            np.array([[1.0, -0.9], [-0.9, 1.0]]))
 
-	plt.contour(X, Y, np.max(polytope_matrix@np.stack([X, Y]), axis=0), levels=[1.], colors="k")
-	dX, dY = X - x0[0], Y - x0[1]
-	plt.contourf(X, Y, dX*gradient[0] + dY*gradient[1] +
-	             1/2*(dX**2*np.array(hessian)[0, 0] + 2*dX*dY*np.array(hessian)[0, 1] + dY**2*np.array(hessian)[1, 1]))
-	plt.axis("equal")
-
 	solutions = []
 	for caution in [0, .01, .1, 1, 10, 100, 10000]:
 		print(f"using caution of {caution}")
@@ -381,6 +399,13 @@ if __name__ == "__main__":
 		                                             return_unbounded_solution=True)
 		print("done!\n\n")
 		solutions.append(solution)
+
+	plt.contour(X, Y, np.max(polytope_matrix@np.stack([X, Y]), axis=0), levels=[polytope_limits], colors="k")
+	dX, dY = X - x0[0], Y - x0[1]
+	plt.contourf(X, Y, dX*gradient[0] + dY*gradient[1] +
+	             1/2*(dX**2*np.array(hessian)[0, 0] + 2*dX*dY*np.array(hessian)[0, 1] + dY**2*np.array(hessian)[1, 1]))
+	plt.axis("equal")
+
 	plt.plot(x0[0], x0[1], "wo")
 	plt.plot([p[0] for p in solutions], [p[1] for p in solutions], "w-x")
 	plt.show()
