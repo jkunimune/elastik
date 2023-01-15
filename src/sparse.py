@@ -7,10 +7,12 @@ a custom sparse array class.  it dips into the shadow realm to make the big calc
 from __future__ import annotations
 
 import os
+import pickle
 import sys
 from ctypes import c_int, c_void_p, Structure, cdll, CDLL, Array, POINTER, c_double, c_bool, c_char
 from functools import cache, cached_property
-from typing import Callable, Sequence, Collection
+from math import sqrt
+from typing import Callable, Sequence, Collection, Optional
 
 import numpy as np
 from numpy.typing import NDArray
@@ -55,6 +57,7 @@ declare_c_func(c_lib.add_saa, [c_SparseArrayArray, c_SparseArrayArray], c_Sparse
 declare_c_func(c_lib.subtract_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.multiply_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.matmul_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
+declare_c_func(c_lib.transpose_matmul_saa, [c_SparseArrayArray, c_int_p, c_int, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.outer_multiply_saa, [c_SparseArrayArray, c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.zeros, [c_int, c_int_p, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.identity, [c_int, c_int_p, c_bool], c_SparseArrayArray)
@@ -64,18 +67,21 @@ declare_c_func(c_lib.multiply_nda, [c_SparseArrayArray, c_ndarray, c_int_p], c_S
 declare_c_func(c_lib.divide_nda, [c_SparseArrayArray, c_ndarray, c_int_p], c_SparseArrayArray)
 declare_c_func(c_lib.matmul_nda, [c_SparseArrayArray, c_ndarray, c_int_p, c_int, c_ndarray], None)
 declare_c_func(c_lib.transpose_matmul_nda, [c_SparseArrayArray, c_int, c_ndarray, c_int_p, c_int, c_ndarray], None)
+declare_c_func(c_lib.inverse_matmul_nda, [c_SparseArrayArray, c_ndarray, c_double, c_ndarray, c_ndarray], c_int)
 declare_c_func(c_lib.multiply_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
 declare_c_func(c_lib.divide_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
 declare_c_func(c_lib.power_f, [c_SparseArrayArray, c_double], c_SparseArrayArray)
 declare_c_func(c_lib.abs_saa, [c_SparseArrayArray], c_SparseArrayArray)
 declare_c_func(c_lib.min_saa, [c_SparseArrayArray], c_double)
 declare_c_func(c_lib.max_saa, [c_SparseArrayArray], c_double)
+declare_c_func(c_lib.is_positive_definite, [c_SparseArrayArray], c_int)
 declare_c_func(c_lib.sum_along_axis, [c_SparseArrayArray, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.sum_all_sparse, [c_SparseArrayArray, c_ndarray], None)
 declare_c_func(c_lib.sum_all_dense, [c_SparseArrayArray, c_int_p, c_ndarray], None)
 declare_c_func(c_lib.densify_axes, [c_SparseArrayArray, c_int_p, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.to_dense, [c_SparseArrayArray, c_int_p, c_int, c_ndarray], None)
 declare_c_func(c_lib.expand_dims, [c_SparseArrayArray, c_int], c_SparseArrayArray)
+declare_c_func(c_lib.repeat_diagonally, [c_SparseArrayArray, c_int_p, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_slice_saa, [c_SparseArrayArray, c_int, c_int], c_SparseArrayArray)
 declare_c_func(c_lib.get_diagonal_saa, [c_SparseArrayArray, c_ndarray], None)
 declare_c_func(c_lib.get_reindex_saa, [c_SparseArrayArray, c_int_p, c_int, c_int], c_SparseArrayArray)
@@ -233,7 +239,7 @@ class DenseSparseArray:
 			if np.all(np.equal(other, 0)):
 				return self
 			else:
-				raise TypeError("DenseSparseArrays cannot be added to normal arrays (unless the normal array is just 0)")
+				return other + np.array(self)
 		else:
 			return NotImplemented
 
@@ -251,7 +257,7 @@ class DenseSparseArray:
 			if np.all(np.equal(other, 0)):
 				return self
 			else:
-				raise TypeError("DenseSparseArrays cannot be subtracted from normal arrays (unless the normal array is just 0)")
+				return -other + np.array(self)
 		else:
 			return NotImplemented
 
@@ -320,29 +326,39 @@ class DenseSparseArray:
 			return NotImplemented
 		if self.sparse_shape != other.shape[:self.sparse_ndim]:
 			raise ValueError(f"the given shapes {self.dense_shape}+{self.sparse_shape} @ {other.shape} aren't matrix-multiplication compatible")
+		out_shape = self.dense_shape + other.shape[self.sparse_ndim:]
 		if type(other) is DenseSparseArray:
 			if other.dense_ndim < self.sparse_ndim:
 				raise ValueError(f"the twoth array doesn't have enough dense dimensions; there must be at least {self.sparse_ndim}")
-			return DenseSparseArray(self.shape[:-1] + other.shape[1:], c_lib.matmul_saa(self, other))
+			return DenseSparseArray(out_shape, c_lib.matmul_saa(self, other))
 		elif type(other) is np.ndarray:
 			if not other.flags["C_CONTIGUOUS"]:
 				other = np.ascontiguousarray(other)
-			out = np.empty(self.dense_shape + other.shape[self.sparse_ndim:])
+			out = np.empty(out_shape)
 			c_lib.matmul_nda(self, other, c_int_array(other.shape), c_int(other.ndim), out)
 			return out
 		else:
 			return NotImplemented
 
-	def transpose_matmul(self, other: NDArray[float]) -> NDArray[float]:
+	def transpose_matmul(self, other: DenseSparseArray | NDArray[float]) -> DenseSparseArray | NDArray[float]:
 		""" the transpose of this array matrix multiplied by something """
 		if self.dense_ndim != 1 or self.sparse_ndim != 1:
 			raise ValueError("this is only designed to work for 2d matmulable matrices")
 		if self.dense_size != other.shape[0]:
 			raise ValueError(f"the given shapes {self.sparse_shape}+{self.dense_shape} @ {other.shape} aren't matrix-multiplication compatible")
-		out = np.empty(self.sparse_shape + other.shape[1:])
-		c_lib.transpose_matmul_nda(
-			self, self.sparse_size, other, c_int_array(other.shape), c_int(other.ndim), out)
-		return out
+		out_shape = self.sparse_shape + other.shape[self.dense_ndim:]
+		if type(other) is DenseSparseArray:
+			if other.dense_ndim < self.dense_ndim:
+				raise ValueError(f"the twoth array doesn't have enough dense dimensions; there must be at least {self.dense_ndim}")
+			return DenseSparseArray(out_shape, c_lib.transpose_matmul_saa(
+				self, c_int_array(self.sparse_shape), self.sparse_size, other))
+		elif type(other) is np.ndarray:
+			out = np.empty(out_shape)
+			c_lib.transpose_matmul_nda(
+				self, self.sparse_size, other, c_int_array(other.shape), c_int(other.ndim), out)
+			return out
+		else:
+			return NotImplemented
 
 	def outer_multiply(self, other: DenseSparseArray) -> DenseSparseArray:
 		if self.ndim == 0 and np.array(self) == 0:
@@ -369,10 +385,15 @@ class DenseSparseArray:
 		return c_lib.max_saa(self)
 
 	@cache
-	def norm(self, orde: int):
+	def norm(self, orde: int) -> float:
 		return np.linalg.norm(np.reshape(np.array(self),
 		                                 (self.dense_size, self.sparse_size)),
 		                      ord=orde)  # just convert it to dense for this; I think it's fine
+
+	@cache
+	def transpose_matmul_self(self) -> DenseSparseArray:
+		""" this matrix's transpose times this matrix """
+		return self.transpose_matmul(self)
 
 	def __getitem__(self, index: tuple) -> DenseSparseArray:
 		if type(index) is not tuple:
@@ -435,13 +456,37 @@ class DenseSparseArray:
 		return out
 
 	@cache
-	def symmetric_eigen_decomposition(self) -> tuple[NDArray[float], NDArray[float]]:
-		""" return the eigenvalues in a vector and the flattend eigenvectors in a collum matrix,
-		    assuming this is symmetric """
+	def is_positive_definite(self) -> bool:
+		""" determine whether or not this matrix is positive definite """
 		if self.dense_shape != self.sparse_shape:
 			raise ValueError("this only works for square matrices")
-		values, vectors = np.linalg.eigh(np.array(self).reshape((self.dense_size, self.sparse_size)))
-		return values, vectors
+		return c_lib.is_positive_definite(self) > 0  # TODO: I'll implement this when I refactor the sparse arrays
+
+	def inverse_matmul(self, other: NDArray[float], tolerance=1e-8, guess: Optional[NDArray[float]] = None) -> NDArray[float]:
+		""" compute self**-1 @ b for a symmetric positive definite matrix, iteratively.  this won't
+			work if self is not symmetric, but it may work if it's positive definite
+			:param other: the vector by which to multiply the inverse
+			:param tolerance: the relative tolerance; the residual magnitude will be this factor
+							  less than b's magnitude.
+			:param guess: the initial gess for the conjugate gradient routine
+			:return: the vector x that solves self@x = b
+		"""
+		if self.dense_shape != self.sparse_shape:
+			raise ValueError(f"this only works for square arrays")
+		if self.dense_shape != other.shape:
+			raise ValueError(f"the shapes don't match: {self.dense_shape}+{self.sparse_shape} × {other.shape}")
+		absolute_tolerance = np.linalg.norm(other)*tolerance
+		if guess is None:
+			diag = self.diagonal()
+			guess = other/np.maximum(diag, np.quantile(abs(diag[diag != 0]), 1/sqrt(diag.size)))
+		elif not guess.flags["C_CONTIGUOUS"]:
+			guess = np.ascontiguousarray(guess)
+		out = np.empty(self.dense_shape)
+		result = c_lib.inverse_matmul_nda(
+			self, other, c_double(absolute_tolerance), guess, out)
+		if result != 0:
+			raise RuntimeError(f"conjugate gradients did not succeed (error code {result}).")
+		return out
 
 	def __len__(self) -> int:
 		if self.ndim > 0:
@@ -476,7 +521,7 @@ class DenseSparseArray:
 			array[index] = self[(*index, ...)]
 		return array
 
-	def expand_dims(self, ndim: int):
+	def expand_dims(self, ndim: int) -> DenseSparseArray:
 		""" add several new dense dimensions to the front of this's shape.  all new
 		    dimensions will have shape 1.
 		    :param ndim: the number of dimensions to add to the front.
@@ -486,7 +531,17 @@ class DenseSparseArray:
 		elif ndim > 0:
 			return DenseSparseArray((1,)*ndim + self.shape, c_lib.expand_dims(self, c_int(ndim)))
 
-	def make_axes_dense(self, num_axes: int):
+	def repeat_diagonally(self, shape: Sequence[int]) -> DenseSparseArray:
+		""" okay, this method is pretty specific and kind of hard to explain... take a square matrix
+		    and append the given shape to the end of both the dense shape and the sparse shape.  the
+		    result should have the equivalent effect when applied to a vector of the proper shape.
+		"""
+		if self.dense_shape != self.sparse_shape:
+			raise ValueError("this only works for square matrices")
+		return DenseSparseArray((self.dense_shape + tuple(shape))*2, c_lib.repeat_diagonally(
+			self, c_int_array(shape), c_int(len(shape))))
+
+	def make_axes_dense(self, num_axes: int) -> DenseSparseArray:
 		""" convert the first few sparse dimensions of this to dense ones.
 		    :param num_axes: the number of sparse dimensions to convert.
 		"""
@@ -537,8 +592,10 @@ class TransposedDenseSparseArray:
 		"""
 		self.transpose = transpose
 
-	def __matmul__(self, other: NDArray[float]) -> NDArray[float]:
+	def __matmul__(self, other: DenseSparseArray | NDArray[float]) -> DenseSparseArray | NDArray[float]:
 		""" call the transpose_matmul function of the original matrix """
+		if other == self.transpose:  # start with this check so we cache the result if we can
+			return self.transpose.transpose_matmul_self()
 		return self.transpose.transpose_matmul(other)
 
 	@cache
@@ -547,85 +604,117 @@ class TransposedDenseSparseArray:
 
 
 if __name__ == "__main__":
-	array = DenseSparseArray.from_coordinates(
-		[10],
-		np.array([[[[0], [1]],
-		           [[0], [4]],
-		           [[5], [6]]]]),
-		np.array([[[1., -1.],
-		           [0., 1.],
-		           [3., -2.]]]))
-	brray = DenseSparseArray.from_coordinates(
-		[10],
-		np.array([[[[0], [1]],
-		           [[0], [4]],
-		           [[0], [5]]]]),
-		np.array([[[0., 1.],
-		           [-2., 3.],
-		           [-2., -2.]]])
-	)
-	# brray = np.array([-3, 2, 0]).reshape((1, 3, 1))
-	# brray = np.array([[[-3]]])
-
-	print("A =", array)
-	print("B =", brray)
-	print("A + B =", array + brray)
-	print("A - B =", array - brray)
-	print("A*B =", array*brray)
-	# print("A/B =", array/brray)
-	print("AxB =", array.outer_multiply(brray))
-	print("BxA =", brray.outer_multiply(array))
-	print("A*2 =", array*2)
-	print("A/2 =", array/2)
-	print("A^2 =", array**2)
-	print("expand:", array.expand_dims(2))
-	print("densify:", array.make_axes_dense(1))
-	print("slice [0,...]:", array[0, :, :])
-	print("slice [:,1,:]:", array[:, 1, :])
-	print("reorder [2,1,0]:", array[:, np.array([2, 1, 0]), :])
-	print("slice and reorder:", array[0, np.array([2, 1, 0]), :])
-	print("sum axis 0:", array.sum(axis=[0]))
-	print("sum axis 1:", array.sum(axis=1))
-	print("sum both:", array.sum(axis=[0, 1]))
-	print("sum each:", array.sum(axis=0).sum(axis=[0]))
-	print("sum axis 2:", array.sum(axis=2))
-
-	A = DenseSparseArray.from_coordinates(
-		[3],
-		np.array([[[0], [1]], [[0], [2]], [[1], [2]]]),
-		np.array([[ 1., -2.], [-2., -3.], [-3.,  4.]]),
-	)
-	b = np.array([-1., 4., 1.])
-	print("A =", A)
-	print("b =", b)
-	print("Ab =", A@b)
-	print("A^T(b) =", A.transpose_matmul(b))
-	print("diag(A) =", A.diagonal())
-
-	amatrix = DenseSparseArray.from_coordinates(
-		[3],
-		np.array([[[2], [0]], [[0], [0]], [[1], [0]], [[0], [0]]]),
-		np.array([[-1., 0], [3., 0], [2., -2], [1., 0]]),
-	)
-	bmatrix = brray[0, ...]
-	cmatrix = np.array([[0., 1], [1, 0], [0, -1], [-3, 0], [0, 2], [-1, 0], [0, 3], [-2, 0], [0, -2], [2, 0]])
-	# cmatrix = DenseSparseArray.from_coordinates(
-	# 	[2, 2],
-	# 	np.array([[[[0, 0], [1, 1]]], [[[0, 1], [1, 0]]], [[[0, 0], [1, 0]]], [[[0, 1], [1, 1]]], [[[0, 0], [0, 1]]], [[[1, 0], [1, 1]]], [[[0, 0], [1, 1]]], [[[0, 0], [1, 1]]], [[[0, 0], [1, 1]]], [[[0, 0], [1, 1]]]]),
-	# 	np.array([[[-2.,     1.,]],   [[-1.,    -3.]],    [[ 2.,     1.]],    [[-2.,     1.,]],   [[-1.,    -3.]],    [[ 2.,     1.]],    [[-2.,     1.,]],   [[-1.,    -3.]],    [[ 2.,     1.]],     [[3.,    -1.]]]),
+	# array = DenseSparseArray.from_coordinates(
+	# 	[10],
+	# 	np.array([[[[0], [1]],
+	# 	           [[0], [4]],
+	# 	           [[5], [6]]]]),
+	# 	np.array([[[1., -1.],
+	# 	           [0., 1.],
+	# 	           [3., -2.]]]))
+	# brray = DenseSparseArray.from_coordinates(
+	# 	[10],
+	# 	np.array([[[[0], [1]],
+	# 	           [[0], [4]],
+	# 	           [[0], [5]]]]),
+	# 	np.array([[[0., 1.],
+	# 	           [-2., 3.],
+	# 	           [-2., -2.]]])
 	# )
+	# # brray = np.array([-3, 2, 0]).reshape((1, 3, 1))
+	# # brray = np.array([[[-3]]])
+	#
+	# print("A =", array)
+	# print("B =", brray)
+	# print("A + B =", array + brray)
+	# print("A - B =", array - brray)
+	# print("A*B =", array*brray)
+	# # print("A/B =", array/brray)
+	# print("AxB =", array.outer_multiply(brray))
+	# print("BxA =", brray.outer_multiply(array))
+	# print("A*2 =", array*2)
+	# print("A/2 =", array/2)
+	# print("A^2 =", array**2)
+	# print("expand:", array.expand_dims(2))
+	# print("densify:", array.make_axes_dense(1))
+	# print("slice [0,...]:", array[0, :, :])
+	# print("slice [:,1,:]:", array[:, 1, :])
+	# print("reorder [2,1,0]:", array[:, np.array([2, 1, 0]), :])
+	# print("slice and reorder:", array[0, np.array([2, 1, 0]), :])
+	# print("sum axis 0:", array.sum(axis=[0]))
+	# print("sum axis 1:", array.sum(axis=1))
+	# print("sum both:", array.sum(axis=[0, 1]))
+	# print("sum each:", array.sum(axis=0).sum(axis=[0]))
+	# print("sum axis 2:", array.sum(axis=2))
+	#
+	# A = DenseSparseArray.from_coordinates(
+	# 	[3],
+	# 	np.array([[[0], [1]], [[0], [2]], [[1], [2]]]),
+	# 	np.array([[ 1., -2.], [-2., -3.], [-3.,  4.]]),
+	# )
+	# b = np.array([-1., 4., 1.])
+	# print("A =", A)
+	# print("b =", b)
+	# print("Ab =", A@b)
+	# print("A^-1(Ab) =", A.inverse_matmul(A@b))
+	# print("A^T(b) =", A.transpose_matmul(b))
+	# print("diag(A) =", A.diagonal())
+	# print("expanded:", A.repeat_diagonally((2,)))
+	#
+	# amatrix = DenseSparseArray.from_coordinates(
+	# 	[3],
+	# 	np.array([[[2], [0]], [[0], [0]], [[1], [0]], [[0], [0]]]),
+	# 	np.array([[-1., 0], [3., 0], [2., -2], [1., 0]]),
+	# )
+	# bmatrix = brray[0, ...]
+	# cmatrix = np.array([[0., 1], [1, 0], [0, -1], [-3, 0], [0, 2], [-1, 0], [0, 3], [-2, 0], [0, -2], [2, 0]])
+	# # cmatrix = DenseSparseArray.from_coordinates(
+	# # 	[2, 2],
+	# # 	np.array([[[[0, 0], [1, 1]]], [[[0, 1], [1, 0]]], [[[0, 0], [1, 0]]], [[[0, 1], [1, 1]]], [[[0, 0], [0, 1]]], [[[1, 0], [1, 1]]], [[[0, 0], [1, 1]]], [[[0, 0], [1, 1]]], [[[0, 0], [1, 1]]], [[[0, 0], [1, 1]]]]),
+	# # 	np.array([[[-2.,     1.,]],   [[-1.,    -3.]],    [[ 2.,     1.]],    [[-2.,     1.,]],   [[-1.,    -3.]],    [[ 2.,     1.]],    [[-2.,     1.,]],   [[-1.,    -3.]],    [[ 2.,     1.]],     [[3.,    -1.]]]),
+	# # )
+	#
+	# print("A =", amatrix)
+	# print("B =", bmatrix)
+	# print("C =", cmatrix)
+	# print("AB = ", amatrix @ bmatrix)
+	# print("BC = ", bmatrix @ cmatrix)
+	# print("(AB)C = ", (amatrix @ bmatrix) @ cmatrix)
+	# print("A(BC) = ", amatrix @ (bmatrix @ cmatrix))
+	# print("A^TA = ", amatrix.T @ amatrix)
+	#
+	# eyes = DenseSparseArray.identity([4, 2])
+	# print(eyes)
+	#
+	# print(DenseSparseArray.identity(3, add_zero=True))
+	#
+	# print(DenseSparseArray.zeros((0,), (6,)))
 
-	print("A =", amatrix)
-	print("B =", bmatrix)
-	print("C =", cmatrix)
-	print("AB = ", amatrix @ bmatrix)
-	print("BC = ", bmatrix @ cmatrix)
-	print("(AB)C = ", (amatrix @ bmatrix) @ cmatrix)
-	print("A(BC) = ", amatrix @ (bmatrix @ cmatrix))
+	with open("hessian.pkl", "rb") as f:
+		hessian = pickle.load(f)
+	with open("polytope_mat.pkl", "rb") as f:
+		polytope_mat = pickle.load(f)
+	with open("total_gradient.pkl", "rb") as f:
+		total_gradient = pickle.load(f)
+	with open("total_hessian.pkl", "rb") as f:
+		total_hessian = pickle.load(f)
 
-	eyes = DenseSparseArray.identity([4, 2])
-	print(eyes)
+	preconditioner = np.diagflat(1/np.diagonal(hessian))
+	print(np.linalg.cond(hessian), "->", np.linalg.cond(preconditioner@hessian))
 
-	print(DenseSparseArray.identity(3, add_zero=True))
+	import matplotlib.pyplot as plt
+	hessian = preconditioner@hessian
+	plt.imshow(hessian, cmap="RdBu", vmin=-hessian.max(), vmax=hessian.max())
+	plt.show()
 
-	print(DenseSparseArray.zeros((0,), (6,)))
+	print(np.linalg.norm(total_hessian - total_hessian.T))
+
+	print(np.linalg.eigvals(total_hessian))
+	print(np.diagonal(total_hessian)[np.argsort(np.diagonal(total_hessian))[::-1]])
+
+	x_true = np.linalg.solve(total_hessian, total_gradient)
+	print(x_true)
+	total_hessian = DenseSparseArray.from_dense(total_hessian, 1)
+	for tolerance in [1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12]:
+		x_mine = total_hessian.inverse_matmul(total_gradient, tolerance=tolerance)
+		print(tolerance, "->", np.linalg.norm(total_hessian@x_mine - total_gradient))

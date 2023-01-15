@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from math import inf, isfinite, sqrt, isnan
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional
 
 import numpy as np
 from numpy.typing import NDArray
@@ -23,10 +23,17 @@ STEP_REDUCTION = 5.
 STEP_RELAXATION = STEP_REDUCTION**1.618
 LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
 
+FINE = 11
+INFO = logging.INFO
+logging.addLevelName(FINE, "FINE")  # define my own debug level so I don't have to see Matplotlib's debug messages
+
 np.seterr(under="ignore", over="raise", divide="raise", invalid="raise")
 
 
 class MaxIterationsException(Exception):
+	pass
+
+class ConcaveObjectiveFunctionException(Exception):
 	pass
 
 
@@ -115,6 +122,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	gradient, hessian = get_gradient(guess)
 	if gradient.shape != guess.shape:
 		raise ValueError(f"the gradient function returned the wrong shape ({gradient.shape}, should be {guess.shape})")
+	identity = DenseSparseArray.identity(hessian.dense_shape)
 
 	# instantiate the loop state variables
 	value = initial_value
@@ -128,30 +136,34 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		while True:
 			# choose a step by minimizing this quadratic approximation, projecting onto the legal subspace
 			try:
-				new_state, ideal_new_state = minimize_quadratic_in_polytope(
-					state, hessian, step_limiter, gradient,
-					bounds_matrix, bounds_limits,
-					return_unbounded_solution=True)
-			except MaxIterationsException:
+				if step_limiter < abs(hessian).max()*10:
+					new_state, ideal_new_state = minimize_quadratic_in_polytope(
+						state, hessian + identity*step_limiter, gradient,
+						bounds_matrix, bounds_limits,
+						return_unbounded_solution=True)
+				else:  # if the step limiter is big enuff, use this simpler approximation
+					ideal_new_state = state - gradient/step_limiter
+					new_state = polytope_project(ideal_new_state, bounds_matrix, bounds_limits)
+			except ConcaveObjectiveFunctionException:
 				pass
-				logging.log(19, f"{step_limiter:7.2g} -> xx not valid")
+				logging.log(FINE, f"{step_limiter:7.2g} -> xx not valid")
 			else:
 				ideal_step = ideal_new_state - state
 				actual_step = new_state - state
 				new_value = get_value(new_state)
 				# if this is infinitely good, jump to the followup function now
 				if new_value == -inf and followup_func is not None:
-					logging.log(19, f"Reached the valid domain in {num_line_searches} iterations.")
+					logging.log(FINE, f"Reached the valid domain in {num_line_searches} iterations.")
 					return minimize(followup_func, new_state, gradient_tolerance,
 					                bounds_matrix, bounds_limits, report, None)
 				# if the line search condition is met, take it
 				if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(actual_step*gradient):
-					logging.log(19, f"{step_limiter:.2g} -> !! good")
+					logging.log(FINE, f"{step_limiter:.2g} -> !! good !! (stepd {np.linalg.norm(actual_step):.3g})")
 					break
 				elif new_value < value:
-					logging.log(19, f"{step_limiter:7.2g} -> .. not better enuff")
+					logging.log(FINE, f"{step_limiter:7.2g} -> .. not better enuff")
 				else:
-					logging.log(19, f"{step_limiter:7.2g} -> .. not better")
+					logging.log(FINE, f"{step_limiter:7.2g} -> .. not better")
 
 			# if the condition is not met, decrement the step size and try agen
 			step_limiter *= STEP_REDUCTION
@@ -167,7 +179,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 
 		# if the termination condition is met, finish
 		if gradient_magnitude*gradient_angle < gradient_tolerance:
-			logging.log(20, f"Completed in {num_line_searches} iterations.")
+			logging.log(INFO, f"Completed in {num_line_searches} iterations.")
 			return state
 
 		# take the new state and error value
@@ -194,173 +206,163 @@ def polytope_project(point: NDArray[float],
 	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
 	"""
 	if point.ndim == 2:
-		if point.shape[1] != polytope_lim.size:
+		if point.shape[1] != polytope_lim.shape[1]:
 			raise ValueError(f"if you want this fancy functionality, the shapes must match")
 		# if there are multiple dimensions, do each dimension one at a time; it's faster, I think
 		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[:, k])
 		                 for k in range(point.shape[1])]).T
-	elif point.ndim != 1:
-		raise ValueError(f"I don't think this works with {point.ndim}d-arrays instead of (1d) vectors")
-	return minimize_with_constraints(
-		lambda x: 1/2*np.sum((point - x)**2),
-		lambda x: point - x,
-		lambda z: np.all(z <= polytope_lim),
-		lambda y: np.sum(y*polytope_lim), #if np.all(y >= 0) else inf,
-		lambda z: np.minimum(polytope_lim, z),
-		polytope_mat, 1, point.shape)
+	return minimize_quadratic_in_polytope(
+		point,
+		DenseSparseArray.identity(point.shape),
+		np.zeros(point.shape),
+		polytope_mat, polytope_lim)
+
 
 def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
-                                   hessian: DenseSparseArray, damping: float,
+                                   hessian: DenseSparseArray,
                                    gradient: NDArray[float],
                                    polytope_mat: DenseSparseArray, polytope_lim: NDArray[float],
-                                   return_unbounded_solution: bool,
-                                   ) -> tuple[NDArray[float], NDArray[float]]:
+                                   return_unbounded_solution: bool = False,
+                                   tolerance: float = 1e-8,
+                                   iterations_per_iteration: int = 1,
+                                   ) -> NDArray[float] | tuple[NDArray[float], NDArray[float]]:
 	""" find the global extremum of the concave-up multivariate quadratic function:
 	        f(x) = (x - x0)⋅(hessian + additional_convexity*I)@(x - x0) + gradient⋅(x - x0)
 	    subject to the inequality constraint
 	        all(polytope_mat@point <= polytope_lim + tolerance)
+	    using the alternating-direction method of multipliers, as is thoroly described in
+	        S. Boyd, N. Parikh, E. Chu, B. Peleato, and J. Eckstein. "Distributed Optimization and
+	        Statistical Learning via the Alternating Direction Method of Multipliers".
+	        *Foundations and Trends in Machine Learning* Vol. 3 No. 1 (2010) 1–122.
+	        DOI: 10.1561/2200000016
 	    :param fixed_point: the point at which the quadratic function is defined; generally the
 	                        quadratic function is a Taylor expansion, and this will be the point
 	                        about which Taylor is expanding
 	    :param hessian: the primary twoth-derivative matrix of the quadratic function at the fixed
 	                    point. it must be symmetric and should be positive definite.
-	    :param damping: a scalar term with which to augment the hessian matrix (hessian + additional_convexity*I)
 	    :param gradient: the gradient of the quadratic function at the fixed point.
 	    :param polytope_mat: the normal vectors of the polytope faces, by which the polytope is defined
 	    :param polytope_lim: the quantity that defines the size of the polytope. a point is in the polytope iff
 	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
 	    :param return_unbounded_solution: whether to also return the solution if there were no bounds
+	    :param tolerance: the relative tolerance at which to terminate iterations
+	    :param iterations_per_iteration: the number of times x and z are updated for each time y is
+	                                      updated.  I don't know what this is supposed to be.
 	    :return: the bounded solution, and also -- if return_unbounded_solution is true -- the unbounded solution
 	"""
-	if not return_unbounded_solution:
-		raise NotImplementedError("no you can't do that")
+	if polytope_mat.ndim != 2:
+		raise ValueError(f"the matrix should be a (2d) matrix, not a {polytope_mat.ndim}d-array")
 
-	# if the damping is much larger than the hessian, save some time with this simpler calculation
-	if damping > abs(hessian).max()*10:
-		unbounded_solution = fixed_point - gradient/damping
-		bounded_solution = polytope_project(unbounded_solution, polytope_mat, polytope_lim)
-		return bounded_solution, unbounded_solution
+	if iterations_per_iteration < 1:
+		raise ValueError("you must have at least one iteration per iteration")
 
-	# calculate the eigen decomposition of the inverse hessian to save time later
-	Λ, Q = hessian.symmetric_eigen_decomposition()
-	Λ = np.maximum(0, Λ) + damping  # insert the damping here
-	if np.any(Λ <= 0):
-		raise ValueError("you need a nonzero step limiter if the hessian is not positive-definite")
-
-	Λ = np.sqrt(Λ**2 + damping**2)**-1  # insert the damping here
-
-	def function(x):
-		dx = x - fixed_point
-		quad_term = 1/2*np.sum(dx*(hessian@dx + damping*dx))
-		lin_term = np.sum(gradient*dx)
-		return quad_term + lin_term
-
-	def unbounded_solution(x):
-		argument = np.ravel(gradient + x)
-		step = -Q@(Λ*(Q.T@argument))  # -hessian^-1 (gradient + x)
-		step = np.reshape(step, fixed_point.shape)
-		return fixed_point + step  # TODO I think conjugate gradients actually would be faster... but I would need another way to enforce convexity
-
-	return (
-		minimize_with_constraints(
-			function, unbounded_solution,
-			lambda z: np.all(z <= polytope_lim),
-			lambda y: np.sum(y*polytope_lim), #if np.all(y >= 0) else inf,
-			lambda z: np.minimum(polytope_lim, z),
-			polytope_mat,
-			1/np.max(Λ),
-			fixed_point.shape),
-		unbounded_solution(0)
-	)
-
-def minimize_with_constraints(f: Callable[[NDArray[float]], float],
-                              argmin_f: Callable[[NDArray[float]], NDArray[float]],
-                              g: Callable[[NDArray[float]], bool],
-                              g_conj: Callable[[NDArray[float]], float],
-                              prox_g: Callable[[NDArray[float]], NDArray[float]],
-                              A: DenseSparseArray | NDArray[float],
-                              σ: float,
-                              shape: Sequence[int],
-                              certainty: int = 30
-                              ) -> NDArray[float]: # TODO: should it be 60?  would that work better?
-	""" minimize a smooth multivariate function f(x) subject to a simple inequality constraint g(A@x)
-	    I learned this fast dual-based proximal gradient strategy from
-	        Beck, A. & Teboulle, M. "A fast dual proximal gradient algorithm for
-	        convex minimization and applications", <i>Operations Research Letters</i> <b>42</b> 1
-	        (2014), p. 1–6. doi:10.1016/j.orl.2013.10.007,
-	    but I added a little twist.  by dynamicly modifying the step size, I can achieve much faster
-	    convergence when the hessian is highly anisotropic.
-	    :param f: the smooth part of the function.  it must be continuusly differentiable or this won't work.
-	    :param argmin_f: a function of d that returns the x that minimizes the expression f(x) + d⋅x
-	    :param g: the constraint.  only values of x where g(A@x) is True are considered valid solutions
-	    :param prox_g: a function of z that returns the projection of z into the space where g(z)
-		:param g_conj: the convex conjugate of g. g*(y) should return the greatest y⋅z accessible where g(z) is True
-	    :param A: the matrix used to convert from real space to constraint space
-	    :param σ: a lower bound on the convexity parameter of f
-	    :param shape: the array shape that f and argmin_f expect
-	    :param certainty: how many iterations it should try once it's within the tolerance to ensure
-	                      it's finding the best point
-	"""
-	if A.ndim != 2:
-		raise ValueError(f"the matrix should be a (2d) matrix, not a {A.ndim}d-array")
-	if not isfinite(σ) or σ <= 0:
-		raise ValueError(f"the strong convexity of f, by definition, must be positive.")
-
-	def dual_to_primal(ATy):
-		return argmin_f(-ATy)
-
-	def dual_objective(ATy, y, x):
-		f_conj = np.sum(ATy*x) - f(x)
-		return f_conj + g_conj(-y)
+	if not hessian.is_positive_definite():
+		raise ConcaveObjectiveFunctionException("the given matrix is not positive definite")
 
 	# check to see if we're already done
-	y_initial = np.zeros((A.shape[0],) + tuple(shape[1:]))
-	ATy_initial = np.zeros(shape)
-	x_initial = dual_to_primal(ATy_initial)
-	if g(A@x_initial):
-		return x_initial
+	x_unbounded = fixed_point - hessian.inverse_matmul(gradient)
+	if hessian.is_positive_definite() and np.all(polytope_mat@x_unbounded <= polytope_lim):
+		if return_unbounded_solution:
+			return x_unbounded, x_unbounded
+		else:
+			return x_unbounded
+
+	# choose some initial gesses
+	x_old = crudely_polytope_project(x_unbounded, polytope_mat, polytope_lim)
+	z_old = polytope_mat@x_old
+	y_old = np.zeros(z_old.shape)
+
+	# redefine the gradient at the origin (so that we may discard fixed_point)
+	gradient = gradient - hessian@fixed_point
+
+	# compute this matrix (it's simple in principle but kind of annoying in practice)
+	polytope_mat_square = polytope_mat.T@polytope_mat
+	if z_old.ndim > 1:
+		polytope_mat_square = polytope_mat_square.repeat_diagonally(z_old.shape[1:])
 
 	# establish the parameters and persisting variables
-	step_size = σ/DenseSparseArray.linalg_norm(A, orde=2)**2
-	w_old = y_old = y_initial
-	t_old = 1
-	candidates: list[tuple[float, NDArray[float]]] = []
+	primal_tolerance = tolerance*np.linalg.norm(polytope_lim)
+	dual_tolerance = primal_tolerance*sqrt(x_old.size/z_old.size)
+	step_size = 1#np.linalg.norm(hessian.diagonal())/np.linalg.norm(polytope_mat.transpose_matmul_self().diagonal())
 	num_iterations = 0
-	# loop thru the proximal gradient descent of the dual problem
+
+	# loop thru the alternating direction multiplier method
+	history = []
 	while True:
-		u_new = argmin_f(-A.T@w_old)
-		grad_F = A@u_new
-		while True:
-			v_new = prox_g(grad_F - w_old/step_size)
-			y_new = w_old - step_size*(grad_F - v_new)
-			ATw_old, ATy_new = A.T@w_old, A.T@y_new
-			x_old, x_new = dual_to_primal(ATw_old), dual_to_primal(ATy_new)
-			q_old = dual_objective(ATw_old, w_old, x_old)
-			q_new = dual_objective(ATy_new, y_new, x_new)
-			if q_new <= q_old:# + LINE_SEARCH_STRICTNESS*np.sum(grad_objective(w_old)*(y_new - y_old)): TODO: if I can find an efficient way to computer grad_g_conj I can make this much safer
-				break
+		# update x, z, and then y
+		for i in range(iterations_per_iteration):
+			total_hessian = hessian + polytope_mat_square*step_size  # TODO: only recompute this when step_size changes
+			total_gradient = gradient - polytope_mat.T@(step_size*z_old - y_old)
+			x_new = total_hessian.inverse_matmul(-total_gradient)#, guess=x_old)
+			polytope_mat_x_new = polytope_mat@x_new
+			z_new = np.minimum(polytope_lim, polytope_mat_x_new + y_old/step_size)
+		y_new = y_old + step_size*(polytope_mat_x_new - z_new)
+
+		# check the stopping criteria
+		primal_residual = np.linalg.norm(polytope_mat_x_new - z_new)
+		dual_residual = step_size*np.linalg.norm(polytope_mat.T@(z_new - z_old))
+		if primal_residual <= primal_tolerance and dual_residual <= dual_tolerance:
+			print(primal_residual, primal_tolerance, dual_residual, dual_tolerance)
+			x_final = crudely_polytope_project(x_new, polytope_mat, polytope_lim)
+			print(num_iterations, end=": ")
+			if return_unbounded_solution:
+				return x_final, x_unbounded
 			else:
-				if step_size < 1e-100:
-					raise RuntimeError("the dual line search did not converge.")
-				step_size /= STEP_REDUCTION
-		t_new = (1 + sqrt(1 + 4*t_old**2))/2  # this inertia term is what makes it fast
-		w_new = y_new + (t_old - 1)/t_new*(y_new - y_old)
-		# save the value of any point that meets the constraint
-		if g(A@x_new):
-			candidates.append((f(x_new), x_new))
-			# and terminate once we get enough of them
-			if len(candidates) >= certainty:
-				_, best = min(candidates, key=lambda candidate: candidate[0])
-				print(num_iterations, end=": ")
-				return best
-		# make some final loop variable updates
-		t_old, w_old, y_old = t_new, w_new, y_new
-		step_size *= STEP_RELAXATION
+				return x_final
+
+		history.append([primal_residual, dual_residual, 1/2*np.sum(x_new*(hessian@x_new)) + np.sum(x_new*gradient), step_size])
+
+		# adjust the step size for the next iteration
+		# if primal_residual/primal_tolerance > 8*dual_residual/dual_tolerance:
+		# 	step_size *= 2
+		# elif dual_residual/dual_tolerance > 8*primal_residual/primal_tolerance:
+		# 	step_size /= 2
+
+		# carry over the loop variables
+		x_old, z_old, y_old = x_new, z_new, y_new
 		# make sure it doesn't run for too long
 		num_iterations += 1
-		if (num_iterations >= 50_000 and len(candidates) == 0) or num_iterations >= 80_000:
+		if num_iterations >= 10_000/iterations_per_iteration:
 			print(num_iterations, end=": ")
-			raise MaxIterationsException("The maximum number of iterations was reached in the fast dual-based proximal gradient routine")
+			import matplotlib.pyplot as plt
+			plt.figure()
+			plt.plot(history)
+			plt.axhline(primal_tolerance)
+			plt.axhline(dual_tolerance)
+			plt.yscale('log')
+			print(history)
+			plt.show()
+			raise MaxIterationsException("The maximum number of iterations was reached in the alternating directions multiplier method")
+
+
+def crudely_polytope_project(point, polytope_mat, polytope_lim):
+	""" find a point near the given point that is inside the specified polytope
+	    :param point: the point to be projected
+	    :param polytope_mat: the normal vectors of the polytope faces, by which the polytope is defined
+	    :param polytope_lim: the quantity that defines the size of the polytope on each face
+	    :return: a point such that all(polytope_mat@point <= polytope_lim)
+	"""
+	if point.ndim == 2:
+		if point.shape[1] != polytope_lim.shape[1]:
+			raise ValueError(f"if you want this fancy functionality, the shapes must match")
+		# if there are multiple dimensions, do each dimension one at a time
+		return np.stack([crudely_polytope_project(point[:, k], polytope_mat, polytope_lim[:, k])
+		                 for k in range(point.shape[1])]).T
+	polytope_magnitudes = (polytope_mat**2).sum(axis=1)
+	residuals = polytope_mat@point - polytope_lim
+	steps = polytope_mat*(residuals/polytope_magnitudes)[..., np.newaxis]
+	num_iterations = 0
+	while True:
+		if np.all(residuals <= 0):
+			return point
+		for i in range(polytope_mat.shape[0]):
+			if residuals[i] > 0:
+				point = point - np.array(steps[i, :])*1.2  # this 1.2 makes it so it reaches a solution in finite iterations
+				residuals = polytope_mat@point - polytope_lim
+				steps = polytope_mat*(residuals/polytope_magnitudes)[:, np.newaxis]
+		num_iterations += 1
+		if num_iterations > 20:
+			raise MaxIterationsException("this crude polytope projection really autn't take more that 2 iterations")
 
 
 if __name__ == "__main__":
@@ -390,13 +392,14 @@ if __name__ == "__main__":
 	hessian = DenseSparseArray.from_coordinates([2],
 	                                            np.array([[[0], [1]], [[0], [1]]]),
 	                                            np.array([[1.0, -0.9], [-0.9, 1.0]]))
+	I = DenseSparseArray.identity(hessian.dense_shape)
 
 	solutions = []
 	for caution in [0, .01, .1, 1, 10, 100, 10000]:
 		print(f"using caution of {caution}")
-		solution, _ = minimize_quadratic_in_polytope(x0, hessian, caution, gradient,
-		                                             polytope_matrix, polytope_limits,
-		                                             return_unbounded_solution=True)
+		solution = minimize_quadratic_in_polytope(x0, hessian + I*caution, gradient,
+		                                          polytope_matrix, polytope_limits,
+		                                          return_unbounded_solution=False)
 		print("done!\n\n")
 		solutions.append(solution)
 

@@ -339,6 +339,16 @@ struct SparseArray outer_multiply_sa(struct SparseArray a, struct SparseArray b)
 }
 
 /**
+ * compute the dot product two dense arrays
+ */
+double dot_product_nda(double* a, double* b, int size) {
+    double product = 0;
+    for (int i = 0; i < size; i ++)
+        product += a[i]*b[i];
+    return product;
+}
+
+/**
  * compute the dot product of a SparseArray with a dense array
  */
 double dot_product_sa(struct SparseArray a, double* b, int* b_shape) {
@@ -444,6 +454,60 @@ EXPORT struct SparseArrayArray matmul_saa(
                     free_sa(change);
                 }
                 c.elements[i_a*row_size + l] = element;
+            }
+        }
+    }
+
+    return c;
+}
+
+/**
+ * perform matrix multiplication between two SparseArrayArrays where the first one is transposed.
+ */
+EXPORT struct SparseArrayArray transpose_matmul_saa(
+        struct SparseArrayArray a, const int* sparse_shape, int sparse_size, struct SparseArrayArray b) {
+    // do some arithmetic with the number of dimensions
+    int dot_ndim = a.ndim; // these "dot" dimensions map to and dot with a's dense dimensions
+    if (dot_ndim > b.ndim) {
+        printf("Error! the first matrix must have no more sparse dims than the twoth has dense ones.\n");
+        struct SparseArrayArray null = {.ndim=-1};
+        return null;
+    }
+    int row_ndim = b.ndim - dot_ndim; // these "row" dimensions do not participate in the matmul
+    int row_size = 1;
+    for (int k = dot_ndim; k < b.ndim; k ++)
+        row_size *= b.shape[k];
+
+    // define the output based on its known size and shape
+    struct SparseArrayArray c = {.ndim=a.element_ndim + row_ndim,
+                                 .size=sparse_size*row_size,
+                                 .element_ndim=b.element_ndim};
+    c.shape = malloc(c.ndim*sizeof(int));
+    for (int k = 0; k < a.element_ndim; k ++)
+        c.shape[k] = sparse_shape[k];
+    for (int k = a.element_ndim; k < c.ndim; k ++)
+        c.shape[k] = b.shape[k - a.element_ndim + dot_ndim];
+    if (c.size > 0) {
+        c.elements = malloc(c.size*sizeof(struct SparseArray));
+        // instantiate it to zero arrays
+        for (int i_c = 0; i_c < c.size; i_c ++) {
+            struct SparseArray element = {.ndim=b.element_ndim, .nitems=0};
+            c.elements[i_c] = element;
+        }
+        // then add up and bin the elements of b using the coefficients from a
+        for (int i_a = 0; i_a < a.size; i_a ++) {
+            for (int j = 0; j < a.elements[i_a].nitems; j ++) { // TODO I dislike this; I should just reimplement actual transposes
+                int i_back = 0;
+                for (int k = 0; k < a.element_ndim; k ++)
+                    i_back = i_back*sparse_shape[k] + a.elements[i_a].indices[j*a.element_ndim + k];
+                for (int l = 0; l < row_size; l ++) {
+                    int i_c = i_back*row_size + l;
+                    struct SparseArray initial = c.elements[i_c];
+                    struct SparseArray change = multiply_sa(b.elements[i_a*row_size + l], a.elements[i_a].values[j]);
+                    c.elements[i_c] = add_sa(initial, change);
+                    free_sa(initial);
+                    free_sa(change);
+                }
             }
         }
     }
@@ -969,6 +1033,127 @@ EXPORT double max_saa(struct SparseArrayArray a) {
 }
 
 /**
+ * determine whether all of the eigenvalues of this array are positive
+ */
+EXPORT int is_positive_definite(struct SparseArrayArray a) {
+    for (int size = 0; size < a.size; size ++) {
+        double det = 1; // TODO: actually implement this
+        if (det <= 0)
+            return 0;
+    }
+    return 1;
+}
+
+/**
+ * sum the squares of the elements of a vector
+ */
+double sqr_nda(double* array, int size) {
+    double sum = 0;
+    for (int i = 0; i < size; i ++)
+        sum += array[i]*array[i];
+    return sum;
+}
+
+/**
+ * evaluate the magnitude of a vector
+ */
+double norm_nda(double* array, int size) {
+    return sqrt(sqr_nda(array, size));
+}
+
+/**
+ * find the max magnitude in this array
+ */
+int all_abs_lessequal(const double* array, int size, double threshold) {
+    for (int i = 0; i < size; i ++)
+        if (array[i] > threshold || -array[i] > threshold)
+            return 0;
+    return 1;
+}
+
+/**
+ * iteratively invert a matrix and multiply that by the given vector,
+ * using the conjugate gradients technique.  a must be square,
+ * and b must have the same size and shape as a.
+ */
+EXPORT int inverse_matmul_nda(
+        struct SparseArrayArray a, const double* b,
+        double magnitude_tolerance, const double* guess, double* out) {
+    // check if the solution is trivial, because that will break this algorithm
+    if (all_abs_lessequal(b, a.size, 0.)) {
+        for (int i = 0; i < a.size; i ++)
+            out[i] = b[i];
+        return 0;
+    }
+
+    // transfer guess into out and then stop reading guess
+    for (int i = 0; i < a.size; i ++)
+        out[i] = guess[i];
+
+    // check the stop condition just in case the gess is correct (sometimes it is)
+    double component_tolerance = magnitude_tolerance/sqrt(a.size);
+    double* residue_old = malloc(a.size*sizeof(double));
+    for (int i = 0; i < a.size; i ++)
+        residue_old[i] = b[i] - dot_product_sa(a.elements[i], out, a.shape);
+    if (all_abs_lessequal(residue_old, a.size, component_tolerance) ||
+        norm_nda(residue_old, a.size) <= magnitude_tolerance) {
+        free(residue_old);
+        return 0;
+    }
+    // initialize the loop to step in the direction of steepest descent
+    double* direction = malloc(a.size*sizeof(double));
+    for (int i = 0; i < a.size; i ++)
+        direction[i] = residue_old[i];
+    double* Ad = malloc(a.size*sizeof(double));
+    double* residue_new = malloc(a.size*sizeof(double));
+
+    // do the iterations
+    int num_iterations = 0;
+    while (1) {
+        // precompute this matrix product for later
+        for (int i = 0; i < a.size; i ++)
+            Ad[i] = dot_product_sa(a.elements[i], direction, a.shape);
+        // take the step
+        double alpha = sqr_nda(residue_old, a.size)/dot_product_nda(direction, Ad, a.size);
+        for (int i = 0; i < a.size; i ++) {
+            out[i] += alpha*direction[i];
+            residue_new[i] = residue_old[i] - alpha*Ad[i];
+        }
+        // check the stop condition
+        if (all_abs_lessequal(residue_new, a.size, component_tolerance) ||
+            norm_nda(residue_new, a.size) <= magnitude_tolerance) {
+            // make sure to double check the stop condition with the exact residue
+            for (int i = 0; i < a.size; i ++)
+                residue_new[i] = b[i] - dot_product_sa(a.elements[i], out, a.shape);
+            if (all_abs_lessequal(residue_new, a.size, component_tolerance) ||
+                norm_nda(residue_new, a.size) <= magnitude_tolerance) {
+                free(residue_old);
+                free(residue_new);
+                free(direction);
+                free(Ad);
+                return 0;
+            }
+        }
+        // update the step direction
+        double beta = sqr_nda(residue_new, a.size)/sqr_nda(residue_old, a.size);
+        for (int i = 0; i < a.size; i ++) {
+            direction[i] = residue_new[i] + beta*direction[i];
+            residue_old[i] = residue_new[i];
+        }
+        // check the backup stop condition
+        num_iterations ++;
+        if (num_iterations > 10*a.size) {
+            printf("conjugate gradients did not converge; we may be in a saddle region.\n");
+            free(residue_old);
+            free(residue_new);
+            free(direction);
+            free(Ad);
+            return 1;
+        }
+    }
+}
+
+/**
  * sum a SparseArrayArray along one of the dense axes.
  * @param a the first array
  * @param axis the axis of the array along wihch to perform the sum
@@ -1064,6 +1249,51 @@ EXPORT void sum_all_dense(
             result[l] += a.elements[i].values[j]; // and add it there
         }
     }
+}
+
+/**
+ * expand this by turning every element into a little identity matrix
+ */
+EXPORT struct SparseArrayArray repeat_diagonally(
+        struct SparseArrayArray a, const int* new_shape, int new_ndim) {
+//    printf("repeat_diagonally(a, [");
+//    for (int k = 0; k < new_ndim; k ++)
+//        printf("%d,", new_shape[k]);
+//    printf("], %d)\n", new_ndim);
+    int new_size = product(new_shape, new_ndim);
+//    printf("new_size = %f\n", new_size);
+    struct SparseArrayArray c = {.ndim=a.ndim + new_ndim, .size=a.size*new_size};
+    c.element_ndim = c.ndim;
+    c.shape = malloc(c.ndim);
+    for (int k = 0; k < a.ndim; k ++)
+        c.shape[k] = a.shape[k];
+    for (int k = a.ndim; k < c.ndim; k ++)
+        c.shape[k] = new_shape[k - a.ndim];
+    if (c.size > 0) {
+        c.elements = malloc(c.size*sizeof(struct SparseArray));
+        for (int i_a = 0; i_a < a.size; i_a ++) {
+            for (int l = 0; l < new_size; l ++) {
+                int i_c = i_a*new_size + l;
+                struct SparseArray element = {.ndim=c.ndim, .nitems=a.elements[i_a].nitems};
+                if (element.nitems > 0) {
+                    element.indices = malloc(element.nitems*element.ndim*sizeof(int));
+                    element.values = malloc(element.nitems*sizeof(double));
+                    for (int j = 0; j < element.nitems; j ++) {
+                        element.values[j] = a.elements[i_a].values[j];
+                        for (int k = 0; k < a.ndim; k ++)
+                            element.indices[j*c.ndim + k] = a.elements[i_a].indices[j*a.ndim + k];
+                        int compound_index = l;
+                        for (int k = c.ndim - 1; k >= a.ndim; k --) {
+                            element.indices[j*c.ndim + k] = compound_index%new_shape[k - a.ndim];
+                            compound_index /= new_shape[k - a.ndim];
+                        }
+                    }
+                }
+                c.elements[i_c] = element;
+            }
+        }
+    }
+    return c;
 }
 
 /**

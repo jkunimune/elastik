@@ -20,13 +20,13 @@ from scipy.interpolate import RegularGridInterpolator
 
 from cmap import CUSTOM_CMAP
 from elastik import gradient, smooth_interpolate
-from optimize import minimize
+from optimize import minimize, FINE
 from sparse import DenseSparseArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, inside_polygon, interp, \
 	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor
 
 logging.basicConfig(
-	level=19,
+	level=FINE,
 	format="%(asctime)s | %(levelname)s | %(message)s",
 	datefmt="%b %d %H:%M",
 	handlers=[
@@ -410,7 +410,7 @@ def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray
 	sectioned_results = np.full((len(hs),) + points.shape, nan)
 	for point_index, point in enumerate(points.reshape((-1, 2))):
 		point_index = np.unravel_index(point_index, points.shape[:-1])
-		logging.log(20, f"{point_index}/{points.shape[:-1]}")
+		logging.info(f"{point_index}/{points.shape[:-1]}")
 		for h in hs:
 			for i in range(1, nodes.shape[1]):
 				for j in range(1, nodes.shape[2]):
@@ -691,15 +691,15 @@ def create_map_projection(configuration_file: str):
 	    :param configuration_file: "oceans" | "continents" | "countries"
 	"""
 	configure = load_options(configuration_file)
-	logging.log(20, f"loaded options from {configuration_file}")
+	logging.info(f"loaded options from {configuration_file}")
 	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
-	logging.log(20, f"loaded a {np.sum(np.isfinite(mesh[:, :, :, 0]))}-node mesh")
+	logging.info(f"loaded a {np.sum(np.isfinite(mesh[:, :, :, 0]))}-node mesh")
 	scale_weights = load_pixel_values(configure["scale_weights"], configure["cuts"], mesh.shape[0])
-	logging.log(20, f"loaded the {configure['scale_weights']} map as the area weights")
+	logging.info(f"loaded the {configure['scale_weights']} map as the area weights")
 	shape_weights = load_pixel_values(configure["shape_weights"], configure["cuts"], mesh.shape[0])
-	logging.log(20, f"loaded the {configure['shape_weights']} map as the angle weights")
+	logging.info(f"loaded the {configure['shape_weights']} map as the angle weights")
 	width, height = (float(value) for value in configure["size"].split(","))
-	logging.log(20, f"setting the maximum map size to {width}×{height} km")
+	logging.info(f"setting the maximum map size to {width}×{height} km")
 
 	# assume the coordinates are more or less evenly spaced
 	dΦ = EARTH.a*(1 - EARTH.e2)*(1 - EARTH.e2*np.sin(ф_mesh)**2)**(3/2)*(ф_mesh[1] - ф_mesh[0])
@@ -785,9 +785,9 @@ def create_map_projection(configuration_file: str):
 		projected_grads.append(grads[-1]*freedom)
 
 	# then minimize! follow the scheduled progression.
-	logging.log(20, "begin fitting process.")
+	logging.info("begin fitting process.")
 	for i, (mesh_factor, bounds_coarseness, final) in enumerate(schedule):
-		logging.log(20, f"fitting pass {i}/{len(schedule)} (coarsened {mesh_factor}x, "
+		logging.info(f"fitting pass {i}/{len(schedule)} (coarsened {mesh_factor}x, "
 		      f"{'bounded' if bounds_coarseness > 0 else 'unbounded'}, "
 		      f"{'final' if final else 'lenient'} cost function)")
 
@@ -837,7 +837,8 @@ def create_map_projection(configuration_file: str):
 			                          gradient_tolerance=tolerance)
 			success = True
 		calculation = threading.Thread(target=calculate)
-		calculation.start()
+		# calculation.start()
+		calculate()
 		while True:
 			done = not calculation.is_alive()
 			show_mesh(current_state, current_positions, latest_step,
@@ -858,7 +859,7 @@ def create_map_projection(configuration_file: str):
 		# remember to re-mesh the mesh when you're done
 		node_positions = restore @ node_positions
 
-	logging.log(20, "end fitting process.")
+	logging.info("end fitting process.")
 	small_fig.canvas.manager.set_window_title("Done!")
 
 	# fit the result in a landscape rectangle
@@ -875,7 +876,7 @@ def create_map_projection(configuration_file: str):
 	          section_borders, configure["section_names"].split(","),
 	          decimate_path(border_matrix @ node_positions, resolution=5))
 
-	logging.log(20, f"elastik {configure['name']} projection saved!")
+	logging.info(f"elastik {configure['name']} projection saved!")
 
 
 if __name__ == "__main__":
