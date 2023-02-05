@@ -6,15 +6,15 @@ this script is an example of how to use the Elastic projections. enclosed in thi
 everything you need to load the mesh files and project data onto them.
 """
 from __future__ import annotations
-from typing import Sequence, Iterable
+
+from typing import Sequence, Iterable, Any
 
 import h5py
 import numpy as np
 import shapefile
 from matplotlib import pyplot as plt
 
-from sparse import DenseSparseArray
-
+from sparse import SparseNDArray
 
 Line = list[tuple[float, float]]
 
@@ -64,8 +64,8 @@ def inverse_project(points: np.ndarray, mesh: list[Section]) -> list[Line]:
 
 
 def smooth_interpolate(xs: Sequence[float | np.ndarray], x_grids: Sequence[np.ndarray],
-                       z_grid: np.ndarray | DenseSparseArray, dzdx_grids: Sequence[np.ndarray | DenseSparseArray],
-                       differentiate=None) -> float | np.ndarray | DenseSparseArray:
+                       z_grid: np.ndarray | SparseNDArray, dzdx_grids: Sequence[np.ndarray | SparseNDArray],
+                       differentiate=None) -> float | np.ndarray | SparseNDArray:
 	""" perform a bi-cubic interpolation of some quantity on a grid, using precomputed gradients
 	    :param xs: the location vector that specifies where on the grid we want to look
 	    :param x_grids: the x values at which the output is defined (each x_grid should be 1d)
@@ -81,6 +81,7 @@ def smooth_interpolate(xs: Sequence[float | np.ndarray], x_grids: Sequence[np.nd
 	if len(xs) != len(x_grids) or len(x_grids) != len(dzdx_grids):
 		raise ValueError("the number of dimensions is not consistent")
 	ndim = len(xs)
+	item_ndim = z_grid.ndim - ndim if type(z_grid) is np.ndarray else 1
 
 	# choose a cell in the grid
 	key = [np.interp(x, x_grid, np.arange(x_grid.size)) for x, x_grid in zip(xs, x_grids)]
@@ -102,7 +103,7 @@ def smooth_interpolate(xs: Sequence[float | np.ndarray], x_grids: Sequence[np.nd
 
 	# get the indexing all set up correctly
 	index = tuple(np.meshgrid(*([i, i + 1] for i in key), indexing="ij", sparse=True))
-	full = (slice(None),)*len(xs) + (np.newaxis,)*(z_grid.ndim - len(xs))
+	full = (slice(None),)*ndim + (np.newaxis,)*item_ndim
 
 	# then multiply and combine all the things
 	weits = product(value_weights)[full]

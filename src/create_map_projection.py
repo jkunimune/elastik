@@ -21,7 +21,7 @@ from scipy.interpolate import RegularGridInterpolator
 from cmap import CUSTOM_CMAP
 from elastik import gradient, smooth_interpolate
 from optimize import minimize, FINE
-from sparse import DenseSparseArray
+from sparse import SparseNDArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, inside_polygon, interp, \
 	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor
 
@@ -291,8 +291,8 @@ def mesh_skeleton(lookup_table: np.ndarray, factor: int, ф: np.ndarray
 	], axis=1)
 
 	# put the conversions together and return them as functions
-	reduction = DenseSparseArray.identity(n_full)[is_defined, :]
-	restoration = DenseSparseArray.from_coordinates(
+	reduction = SparseNDArray.identity(n_full)[is_defined, :]
+	restoration = SparseNDArray.from_coordinates(
 		[n_partial], np.expand_dims(reindex[defining_indices], axis=-1), defining_weits)
 	return reduction, restoration
 
@@ -325,7 +325,7 @@ def compute_principal_strains(positions: np.ndarray,
 
 
 def project(points: list[tuple[float, float]] | np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray,
-            nodes: np.ndarray, section_borders: list[np.ndarray] = None, section_index: int = None) -> DenseSparseArray | np.ndarray:
+            nodes: np.ndarray, section_borders: list[np.ndarray] = None, section_index: int = None) -> SparseNDArray | np.ndarray:
 	""" take some points, giving all sections of the map projection, and project them into the plane, representing them
 	    either with their resulting cartesian coordinates or as matrix that multiplies by the vector of node positions
 	    to produce an array of points on the border that can be used to compute the bounding box and enforce constraints
@@ -350,14 +350,20 @@ def project(points: list[tuple[float, float]] | np.ndarray, ф_mesh: np.ndarray,
 	else:
 		valid = nodes != -1
 		num_nodes = np.max(nodes) + 1
-		nodes = DenseSparseArray.identity(num_nodes, add_zero=True).to_array_array()[nodes]
+		nodes = SparseNDArray.concatenate([
+			SparseNDArray.identity(num_nodes),
+			SparseNDArray.zeros((1, num_nodes), 1)]
+		).to_array_array()[nodes]
 
 	# next, we must identify any nodes that exist in multiple layers
 	hs = np.arange(nodes.shape[0])
-	shared = np.tile(np.any(valid & np.all(np.reshape(nodes[hs, ...] == nodes[hs - 1, ...],
-	                                                  newshape=nodes.shape[:3] + (-1,)),
-	                                       axis=3), axis=0),
-	                 (nodes.shape[0], 1, 1))
+	shared = np.tile(
+		np.any(
+			valid & np.all(
+				np.reshape(nodes[hs, ...] == nodes[hs - 1, ...], nodes.shape[:3] + (-1,)),
+				axis=3
+			), axis=0
+		), (nodes.shape[0], 1, 1))
 
 	# and start calculating gradients
 	ф_gradients = np.empty(nodes.shape, dtype=nodes.dtype)
@@ -384,11 +390,11 @@ def project(points: list[tuple[float, float]] | np.ndarray, ф_mesh: np.ndarray,
 	if positions_known:
 		return np.array(result)
 	else:
-		return DenseSparseArray.concatenate(result)
+		return SparseNDArray.concatenate(result)
 
 
 def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray,
-                    nodes: np.ndarray, section_borders: list[np.ndarray] = None, section_index: int = None) -> DenseSparseArray | np.ndarray:
+                    nodes: np.ndarray, section_borders: list[np.ndarray] = None, section_index: int = None) -> SparseNDArray | np.ndarray:
 	""" take some points, specifying a section of the map projection, and project them from the plane back to the globe,
 	    representing the result as the resulting latitudes and longitudes
 	    :param ф_mesh: the latitudes at which the map position is defined
@@ -455,7 +461,7 @@ def inverse_project(points: np.ndarray, ф_mesh: np.ndarray, λ_mesh: np.ndarray
 
 def project_section_borders(ф_mesh: NDArray[float], λ_mesh: NDArray[float],
                             node_indices: NDArray[int], section_borders: list[NDArray[float]],
-                            resolution: float) -> DenseSparseArray:
+                            resolution: float) -> SparseNDArray:
 	""" take the section borders, concatenate them, project them, and trim off the shared edges """
 	borders = []
 	for h, border in enumerate(section_borders): # take the border of each section
@@ -464,7 +470,7 @@ def project_section_borders(ф_mesh: NDArray[float], λ_mesh: NDArray[float],
 		border = border[dilate(abs(border[:, 0]) != pi/2, 1)] # and then remove points that move along the pole
 		borders.append(project(refine_path(border, resolution, period=2*pi), # finally, refine it before projecting
 		                       ф_mesh, λ_mesh, node_indices, section_index=h))
-	border_matrix = simplify_path(DenseSparseArray.concatenate(borders), cyclic=True) # simplify the borders together to remove excess
+	border_matrix = simplify_path(SparseNDArray.concatenate(borders), cyclic=True) # simplify the borders together to remove excess
 	return border_matrix
 
 
@@ -518,7 +524,7 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
               values: list[float], grads: list[float], projected_grads: list[float], final: bool,
               ф_mesh: np.ndarray, λ_mesh: np.ndarray, dΦ: np.ndarray, dΛ: np.ndarray,
               mesh_index: np.ndarray, cell_definitions: np.ndarray, cell_weights: np.ndarray,
-              coastlines: list[np.array], border: np.ndarray | DenseSparseArray,
+              coastlines: list[np.array], border: np.ndarray | SparseNDArray,
               map_width: float, map_hite: float,
               map_axes: plt.Axes, hist_axes: plt.Axes,
               valu_axes: plt.Axes, diff_axes: plt.Axes) -> None:
@@ -804,7 +810,7 @@ def create_map_projection(configuration_file: str):
 			bounds_matrix, bounds_limits = None, None
 		else:
 			coarse_border_matrix = border_matrix[np.arange(0, border_matrix.shape[0], bounds_coarseness), :]
-			double_border_matrix = DenseSparseArray.concatenate([coarse_border_matrix, -coarse_border_matrix])
+			double_border_matrix = SparseNDArray.concatenate([coarse_border_matrix, -coarse_border_matrix])
 			bounds_matrix = double_border_matrix @ restore
 			bounds_limits = np.array([map_size/2])
 			# fit the initial conditions into the bounds each time you impose them
@@ -837,8 +843,8 @@ def create_map_projection(configuration_file: str):
 			                          gradient_tolerance=tolerance)
 			success = True
 		calculation = threading.Thread(target=calculate)
-		# calculation.start()
-		calculate()
+		calculation.start()
+		# calculate()
 		while True:
 			done = not calculation.is_alive()
 			show_mesh(current_state, current_positions, latest_step,

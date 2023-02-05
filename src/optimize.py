@@ -17,7 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from autodiff import Variable
-from sparse import DenseSparseArray
+from sparse import SparseNDArray
 
 STEP_REDUCTION = 5.
 STEP_RELAXATION = STEP_REDUCTION**1.618
@@ -40,10 +40,10 @@ class ConcaveObjectiveFunctionException(Exception):
 def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
              guess: NDArray[float],
              gradient_tolerance: float,
-             bounds_matrix: Optional[DenseSparseArray] = None,
+             bounds_matrix: Optional[SparseNDArray] = None,
              bounds_limits: Optional[NDArray[float]] = None,
              report: Optional[Callable[[NDArray[float], float, NDArray[float], NDArray[float], float], None]] = None,
-             backup_func: Optional[Callable[[NDArray[float] | Variable], float | Variable]] = None,
+             backup_func: Optional[Callable[[NDArray[float]], float]] = None,
              ) -> NDArray[float]:
 	""" find the vector that minimizes a function of a list of points using a twoth-order projected-
 	    gradient-descent-type-thing with a dynamically chosen step size. unlike a more generic
@@ -81,7 +81,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	if bounds_matrix is None:
 		if bounds_limits is not None:
 			raise ValueError("you mustn't pass bounds_limits without bounds_matrix")
-		bounds_matrix = DenseSparseArray.zeros((0,), guess.shape[:1])
+		bounds_matrix = SparseNDArray.zeros((0, guess.shape[0]), 1)
 		bounds_limits = np.full((1, *guess.shape[1:]), inf)
 	else:
 		if bounds_limits is None:
@@ -102,11 +102,11 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			raise RuntimeError(f"there are nan values at x = {x}")
 		return value
 	# define a utility function to use Variable to get the gradient of the value
-	def get_gradient(x: np.ndarray) -> tuple[NDArray[float], DenseSparseArray]:
-		variable = func(Variable(x, independent=True))
-		if np.any(np.isnan(variable.gradients)):
+	def get_gradient(x: NDArray[float]) -> tuple[NDArray[float], SparseNDArray]:
+		variable = func(Variable.create_independent(x))
+		if np.any(np.isnan(variable.gradient)):
 			raise RuntimeError(f"there are nan gradients at x = {x}")
-		return np.array(variable.gradients), variable.hessians.make_axes_dense(2)
+		return variable.gradient, variable.hessian
 
 	initial_value = get_value(guess)
 
@@ -122,7 +122,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	gradient, hessian = get_gradient(guess)
 	if gradient.shape != guess.shape:
 		raise ValueError(f"the gradient function returned the wrong shape ({gradient.shape}, should be {guess.shape})")
-	identity = DenseSparseArray.identity(hessian.dense_shape)
+	identity = SparseNDArray.identity(hessian.dense_shape)
 
 	# instantiate the loop state variables
 	value = initial_value
@@ -195,7 +195,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			raise RuntimeError(f"algorithm did not converge in {num_step_sizes} iterations")
 
 def polytope_project(point: NDArray[float],
-                     polytope_mat: DenseSparseArray, polytope_lim: NDArray[float]
+                     polytope_mat: SparseNDArray, polytope_lim: NDArray[float]
                      ) -> NDArray[float]:
 	""" project a given point onto a polytope defined by the inequality
 	        all(polytope_mat@point <= polytope_lim + tolerance)
@@ -213,15 +213,15 @@ def polytope_project(point: NDArray[float],
 		                 for k in range(point.shape[1])]).T
 	return minimize_quadratic_in_polytope(
 		point,
-		DenseSparseArray.identity(point.shape),
+		SparseNDArray.identity(point.shape),
 		np.zeros(point.shape),
 		polytope_mat, polytope_lim)
 
 
 def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
-                                   hessian: DenseSparseArray,
+                                   hessian: SparseNDArray,
                                    gradient: NDArray[float],
-                                   polytope_mat: DenseSparseArray, polytope_lim: NDArray[float],
+                                   polytope_mat: SparseNDArray, polytope_lim: NDArray[float],
                                    return_unbounded_solution: bool = False,
                                    tolerance: float = 1e-8,
                                    iterations_per_iteration: int = 1,
@@ -260,23 +260,28 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 		raise ConcaveObjectiveFunctionException("the given matrix is not positive definite")
 
 	# check to see if we're already done
-	x_unbounded = fixed_point - hessian.inverse_matmul(gradient)
+	flat_hessian = hessian.reshape((gradient.size, gradient.size), 1)
+	flat_gradient = gradient.ravel()
+	step = -flat_hessian.inverse_matmul(flat_gradient).reshape(gradient.shape)
+	x_unbounded = fixed_point + step
 	if hessian.is_positive_definite() and np.all(polytope_mat@x_unbounded <= polytope_lim):
 		if return_unbounded_solution:
 			return x_unbounded, x_unbounded
 		else:
 			return x_unbounded
 
+	# redefine the gradient at the origin (so that we may discard fixed_point)
+	gradient = np.reshape(flat_gradient - flat_hessian@fixed_point.ravel(), gradient.shape)
+
 	# choose some initial gesses
 	x_old = crudely_polytope_project(x_unbounded, polytope_mat, polytope_lim)
 	z_old = polytope_mat@x_old
 	y_old = np.zeros(z_old.shape)
 
-	# redefine the gradient at the origin (so that we may discard fixed_point)
-	gradient = gradient - hessian@fixed_point
-
-	# compute this matrix (it's simple in principle but kind of annoying in practice)
+	# compute this matrix
 	polytope_mat_square = polytope_mat.T@polytope_mat
+	# the suttlety here is that we must now gauge-change from the n-d definitions we’ve maintained
+	# up to this point to the 1-d definitions that work with ADMM
 	if z_old.ndim > 1:
 		polytope_mat_square = polytope_mat_square.repeat_diagonally(z_old.shape[1:])
 
@@ -290,19 +295,21 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 	history = []
 	while True:
 		# update x, z, and then y
-		for i in range(iterations_per_iteration):
-			total_hessian = hessian + polytope_mat_square*step_size  # TODO: only recompute this when step_size changes
-			total_gradient = gradient - polytope_mat.T@(step_size*z_old - y_old)
-			x_new = total_hessian.inverse_matmul(-total_gradient)#, guess=x_old)
-			polytope_mat_x_new = polytope_mat@x_new
-			z_new = np.minimum(polytope_lim, polytope_mat_x_new + y_old/step_size)
+		# for i in range(iterations_per_iteration):
+		total_hessian = hessian + polytope_mat_square*step_size  # TODO: only recompute this when step_size changes
+		total_gradient = gradient - polytope_mat.T@(step_size*z_old - y_old)
+		total_hessian = total_hessian.reshape((x_old.size, x_old.size), 1)
+		total_gradient = total_gradient.reshape((x_old.size,))
+		x_new = total_hessian.inverse_matmul(-total_gradient)
+		x_new = x_new.reshape(x_old.shape)
+		polytope_mat_x_new = polytope_mat@x_new
+		z_new = np.minimum(polytope_lim, polytope_mat_x_new + y_old/step_size)
 		y_new = y_old + step_size*(polytope_mat_x_new - z_new)
 
 		# check the stopping criteria
 		primal_residual = np.linalg.norm(polytope_mat_x_new - z_new)
 		dual_residual = step_size*np.linalg.norm(polytope_mat.T@(z_new - z_old))
 		if primal_residual <= primal_tolerance and dual_residual <= dual_tolerance:
-			print(primal_residual, primal_tolerance, dual_residual, dual_tolerance)
 			x_final = crudely_polytope_project(x_new, polytope_mat, polytope_lim)
 			print(num_iterations, end=": ")
 			if return_unbounded_solution:
@@ -310,7 +317,7 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 			else:
 				return x_final
 
-		history.append([primal_residual, dual_residual, 1/2*np.sum(x_new*(hessian@x_new)) + np.sum(x_new*gradient), step_size])
+		history.append([primal_residual, dual_residual, 1/2*np.sum(x_new.ravel()*(hessian.reshape((x_new.size, x_new.size), 1)@x_new.ravel())) + np.sum(x_new*gradient), step_size])
 
 		# adjust the step size for the next iteration
 		# if primal_residual/primal_tolerance > 8*dual_residual/dual_tolerance:
@@ -322,7 +329,7 @@ def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
 		x_old, z_old, y_old = x_new, z_new, y_new
 		# make sure it doesn't run for too long
 		num_iterations += 1
-		if num_iterations >= 10_000/iterations_per_iteration:
+		if num_iterations >= 10_000/iterations_per_iteration or np.max(x_new) > 1e25:
 			print(num_iterations, end=": ")
 			import matplotlib.pyplot as plt
 			plt.figure()
@@ -365,11 +372,11 @@ def crudely_polytope_project(point, polytope_mat, polytope_lim):
 			raise MaxIterationsException("this crude polytope projection really autn't take more that 2 iterations")
 
 
-if __name__ == "__main__":
+def test():
 	import matplotlib.pyplot as plt
 	import numpy as np
 
-	polytope_matrix = DenseSparseArray.from_coordinates(
+	polytope_matrix = SparseNDArray.from_coordinates(
 		[2],
 		np.array([[[0], [1]], [[0], [1]], [[0], [1]], [[0], [1]], [[0], [1]]]),
 		np.array([[.7, .3], [0., 1.1], [0., -.8], [-.6, 0.], [-.7, -.7]]))
@@ -379,8 +386,11 @@ if __name__ == "__main__":
 
 	point = np.array([2., 1.6])
 	projection = polytope_project(point, polytope_matrix, polytope_limits)
+	polytope_positions = np.array(polytope_matrix)[:, 0, None, None]*X[None, :, :] + \
+	                     np.array(polytope_matrix)[:, 1, None, None]*Y[None, :, :]
+	polytope_inness = np.max(polytope_positions, axis=0)
 
-	plt.contour(X, Y, np.max(polytope_matrix@np.stack([X, Y]), axis=0), levels=[polytope_limits], colors="k")
+	plt.contour(X, Y, polytope_inness, levels=[polytope_limits], colors="k")
 	plt.plot(point[0], point[1], "x")
 	plt.plot(projection[0], projection[1], "o")
 	print(projection)
@@ -389,10 +399,10 @@ if __name__ == "__main__":
 
 	x0 = np.array([1., -1.])
 	gradient = np.array([2.5, -3.0])
-	hessian = DenseSparseArray.from_coordinates([2],
-	                                            np.array([[[0], [1]], [[0], [1]]]),
-	                                            np.array([[1.0, -0.9], [-0.9, 1.0]]))
-	I = DenseSparseArray.identity(hessian.dense_shape)
+	hessian = SparseNDArray.from_coordinates([2],
+	                                         np.array([[[0], [1]], [[0], [1]]]),
+	                                         np.array([[1.0, -0.9], [-0.9, 1.0]]))
+	I = SparseNDArray.identity(hessian.dense_shape)
 
 	solutions = []
 	for caution in [0, .01, .1, 1, 10, 100, 10000]:
@@ -403,7 +413,7 @@ if __name__ == "__main__":
 		print("done!\n\n")
 		solutions.append(solution)
 
-	plt.contour(X, Y, np.max(polytope_matrix@np.stack([X, Y]), axis=0), levels=[polytope_limits], colors="k")
+	plt.contour(X, Y, polytope_inness, levels=[polytope_limits], colors="k")
 	dX, dY = X - x0[0], Y - x0[1]
 	plt.contourf(X, Y, dX*gradient[0] + dY*gradient[1] +
 	             1/2*(dX**2*np.array(hessian)[0, 0] + 2*dX*dY*np.array(hessian)[0, 1] + dY**2*np.array(hessian)[1, 1]))
@@ -412,3 +422,7 @@ if __name__ == "__main__":
 	plt.plot(x0[0], x0[1], "wo")
 	plt.plot([p[0] for p in solutions], [p[1] for p in solutions], "w-x")
 	plt.show()
+
+
+if __name__ == "__main__":
+	test()

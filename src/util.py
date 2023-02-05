@@ -5,12 +5,13 @@ util.py
 some handy utility functions that are used in multiple places
 """
 from math import hypot, pi, cos, sin, inf, copysign
-from typing import Sequence, Iterable
+from typing import Sequence, Iterable, TYPE_CHECKING, Union
 
 import numpy as np
 from numpy.typing import NDArray
 
-from sparse import DenseSparseArray
+if TYPE_CHECKING:
+	from sparse import SparseNDArray
 
 
 class Scalar:
@@ -45,7 +46,7 @@ class Ellipsoid:
 
 Numeric = float | NDArray[float]
 """ an object on which general arithmetic operators are defined """
-Tensor = NDArray[float] | DenseSparseArray | Scalar
+Tensor = Union[NDArray[float], "SparseNDArray", Scalar]
 """ an object that supports the matrix multiplication operator """
 EARTH = Ellipsoid(6_378.137, 1/298.257_223_563)
 """ the figure of the earth as given by WGS 84 """
@@ -186,7 +187,8 @@ def decimate_path(path: list[tuple[float, float]] | NDArray[float], resolution: 
 		return np.concatenate([decimated_head, decimated_tail])
 
 
-def simplify_path(path: list[Iterable[float]] | NDArray[float] | DenseSparseArray, cyclic=False) -> list[Iterable[float]] | NDArray[float] | DenseSparseArray:
+def simplify_path(path: Union[list[Iterable[float]], NDArray[float], "SparseNDArray"], cyclic=False
+                  ) -> Union[list[Iterable[float]], NDArray[float], "SparseNDArray"]:
 	""" simplify a path in-place such that strait segments have no redundant midpoints
 	    marked in them, and it does not retrace itself
 	"""
@@ -297,3 +299,19 @@ def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float]
 			inside[affected] = (λ1 > λ0) != (фX > ф)[affected]
 			nearest_segment[affected] = Δф[affected]
 	return inside
+
+
+def minimum_swaps(arr) -> int:
+	""" Minimum number of swaps needed to order a permutation array """
+	# from https://www.thepoorcoder.com/hackerrank-minimum-swaps-2-solution/
+	a = dict(enumerate(arr))
+	b = {v: k for k, v in a.items()}
+	count = 0
+	for i in a:
+		x = a[i]
+		if x != i:
+			y = b[i]
+			a[y] = x
+			b[x] = y
+			count += 1
+	return count
