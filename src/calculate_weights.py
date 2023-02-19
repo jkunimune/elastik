@@ -5,7 +5,7 @@ calculate_weights.py
 generate simple maps of importance as a function of location, to use when optimizing map
 projections
 """
-import math
+from math import nan, isnan, hypot, radians
 
 import numpy as np
 import shapefile
@@ -14,7 +14,6 @@ from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
 from util import bin_centers, to_cartesian, inside_region
-
 
 FUDGE_FACTOR = 4 # some extra padding to put on the contiguus joints of the sections
 # latitude of southernmost settlement
@@ -48,14 +47,14 @@ def load_coast_vertices(precision: float) -> list[tuple[float, float]]:
 	"""
 	excluded_ф, excluded_λ = np.transpose(EXCLUDED_ISLANDS)
 	points = []
-	λ_last, ф_last = np.nan, np.nan
+	λ_last, ф_last = nan, nan
 	for data in ["coastline", "minor_islands_coastline"]:
 		with shapefile.Reader(f"../data/ne_10m_{data}.zip") as shape_f:
 			for shape in shape_f.shapes():
 				for λ, ф in shape.points:
-					edge_length = math.hypot(
-						ф - ф_last, (λ - λ_last)*np.cos(math.radians((ф + ф_last)/2)))
-					if math.isnan(λ_last) or edge_length > precision:
+					edge_length = hypot(
+						ф - ф_last, (λ - λ_last)*np.cos(radians((ф + ф_last)/2)))
+					if isnan(λ_last) or edge_length > precision:
 						λ_last, ф_last = λ, ф
 						if not np.any((abs(ф - excluded_ф) < 2) & (abs(λ - excluded_λ) < 2)):
 							points.append((ф, λ)) # exclude the chagos, prince edward, and bouvet islands because they're awkwardly situated

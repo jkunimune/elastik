@@ -64,7 +64,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			pass
 
 	# redefine the objective function to have some checks bilt in
-	def get_value(x: np.ndarray) -> float:
+	def get_value(x: NDArray[float]) -> float:
 		value = func(x)
 		if isnan(value):
 			raise RuntimeError(f"there are nan values at x = {x}")

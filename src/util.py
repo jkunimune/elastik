@@ -62,7 +62,7 @@ def bin_index(x: float | NDArray[float], bin_edges: NDArray[float]) -> float | N
 	"""
 	return np.where(x < bin_edges[-1], np.digitize(x, bin_edges) - 1, bin_edges.size - 2)
 
-def index_grid(shape: Sequence[int]) -> Sequence[np.ndarray]:
+def index_grid(shape: Sequence[int]) -> Sequence[NDArray[int]]:
 	""" create a set of int matrices that together cover every index in an array of the given shape """
 	indices = [np.arange(length) for length in shape]
 	return np.meshgrid(*indices, indexing="ij")

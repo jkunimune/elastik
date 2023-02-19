@@ -13,6 +13,7 @@ import matplotlib.colors as colors
 import numpy as np
 import os
 import tifffile
+from numpy.typing import NDArray
 
 from util import bin_centers, bin_index, simplify_path
 
@@ -26,10 +27,8 @@ AMOUNT_TO_PLOT = 5e-2/RESOLUTION**2
 
 
 class Path:
-	def __init__(self, i: list[int], j: list[int], hitemap: np.ndarray):
-		""" a class that keeps track of a path thru a grid in a manner that can be easily
-			sorted.
-		"""
+	def __init__(self, i: list[int], j: list[int], hitemap: NDArray[float]):
+		""" a class that keeps track of a path thru a grid in a manner that can be easily sorted. """
 		self.i = i # the x indices that define this path
 		self.j = j # the y indices that define this path
 		self.z_sorted = sorted(hitemap[i, j]) # the sorted z values that rate this path
@@ -39,7 +38,7 @@ class Path:
 		self.end = (i[-1], j[-1])
 
 
-def round_index(x: float | np.ndarray, arr: np.ndarray) -> int | np.ndarray:
+def round_index(x: float | NDArray[float], arr: NDArray[float]) -> int | NDArray[float]:
 	""" find the index for arr that yields the value nearest x """
 	anser = np.round(np.interp(x, arr, np.arange(arr.size)))
 	try:
@@ -53,7 +52,7 @@ def adjacent(a: tuple[int, int], b: tuple[int, int]) -> bool:
 	return abs(a[0] - b[0]) <= 1 and abs(a[1] - b[1]) <= 1
 
 
-def index_of(pair: tuple, x: np.ndarray, y: np.ndarray) -> int:
+def index_of(pair: tuple, x: NDArray[float], y: NDArray[float]) -> int:
 	""" find the first index of x and y such that pair[0] == x[i] and paint[1] == y[i] """
 	assert len(pair) == 2
 	if np.any((pair[0] == x) & (pair[1] == y)):
@@ -62,7 +61,7 @@ def index_of(pair: tuple, x: np.ndarray, y: np.ndarray) -> int:
 		return -1
 
 
-def check_wrapping(points: np.ndarray) -> np.ndarray:
+def check_wrapping(points: NDArray[float]) -> NDArray[float]:
 	""" find any segments that look like they wrap periodically and make them more
 	    explicit, assuming that any such crossing will have one point at y=-180 """
 	points = list(points)
@@ -75,7 +74,7 @@ def check_wrapping(points: np.ndarray) -> np.ndarray:
 	return np.array(points)
 
 
-def load_elevation_data(ф_nodes: np.ndarray, λ_nodes: np.ndarray) -> np.array:
+def load_elevation_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> np.array:
 	""" look for tiff files in the data/elevation/ folder and tile them together
 	    to form a single global map, with its resolution set by ф_nodes and λ_nodes.
 	    each pixel will correspond to one node and have value equal to the average
@@ -118,9 +117,9 @@ def load_elevation_data(ф_nodes: np.ndarray, λ_nodes: np.ndarray) -> np.array:
 	return z_nodes
 
 
-def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | np.ndarray,
-                    x_nodes: np.ndarray, y_nodes: np.ndarray, z_nodes: np.ndarray
-                    ) -> np.ndarray:
+def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | NDArray[float],
+                    x_nodes: NDArray[float], y_nodes: NDArray[float], z_nodes: NDArray[float]
+                    ) -> NDArray[float]:
 	""" perform a dijkstra search to find the hiest path between start and end.  a path
 	    may comprise a series of locally adjacent x values from x_nodes and y values from
 	    y_nodes (diagonal steps are okay).  a path is defined as hier than another with
