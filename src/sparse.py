@@ -11,7 +11,7 @@ import os
 import sys
 from ctypes import c_int, Structure, cdll, CDLL, POINTER, c_double
 from functools import cache, cached_property
-from typing import Sequence, cast, Collection
+from typing import Sequence, cast, Collection, Optional
 
 import numpy as np
 from numpy.typing import NDArray
@@ -404,7 +404,7 @@ class SparseNDArray:
 			array[index] = SparseNDArray(self.csr[i:i + 1, :], self.sparse_shape, self.sparse_ndim)
 		return array
 
-	def sum(self, axis: Collection[int] | None) -> SparseNDArray | NDArray[float]:
+	def sum(self, axis: Optional[Collection[int]] = None) -> SparseNDArray | NDArray[float]:
 		if type(axis) is int:
 			axis = [axis]
 		if axis is None or np.array_equal(axis, np.arange(self.ndim)):
@@ -420,6 +420,8 @@ class SparseNDArray:
 			raise ValueError(f"I haven’t implemented summing a {self.dense_shape}×{self.sparse_shape} on axes {axis}")
 
 	def reshape(self, shape, sparse_ndim) -> SparseNDArray:
+		if np.product(shape, dtype=int) != self.size:
+			raise ValueError(f"the requested new shape {shape} is not compatible with the old shape {self.shape}")
 		dense_size = np.product(shape[:sparse_ndim], dtype=int)
 		sparse_size = np.product(shape[sparse_ndim:], dtype=int)
 		return SparseNDArray(csr_array(self.csr.reshape((dense_size, sparse_size))),

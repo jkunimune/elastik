@@ -10,7 +10,7 @@ progress as it goes.
 from __future__ import annotations
 
 import logging
-from math import inf, isfinite, sqrt, isnan
+from math import inf, isfinite, isnan, sqrt
 from typing import Callable, Optional
 
 import numpy as np
@@ -22,6 +22,7 @@ from sparse import SparseNDArray
 STEP_REDUCTION = 5.
 STEP_RELAXATION = STEP_REDUCTION**1.618
 LINE_SEARCH_STRICTNESS = (STEP_REDUCTION - 1)/(STEP_REDUCTION**2 - 1)
+BARRIER_REDUCTION = 2.
 
 FINE = 11
 INFO = logging.INFO
@@ -40,55 +41,36 @@ class ConcaveObjectiveFunctionException(Exception):
 def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
              guess: NDArray[float],
              gradient_tolerance: float,
-             bounds_matrix: Optional[SparseNDArray] = None,
-             bounds_limits: Optional[NDArray[float]] = None,
-             report: Optional[Callable[[NDArray[float], float, NDArray[float], NDArray[float], float], None]] = None,
+             report: Optional[Callable[[NDArray[float], float, NDArray[float], NDArray[float]], None]] = None,
              backup_func: Optional[Callable[[NDArray[float]], float]] = None,
              ) -> NDArray[float]:
-	""" find the vector that minimizes a function of a list of points using a twoth-order projected-
-	    gradient-descent-type-thing with a dynamically chosen step size. unlike a more generic
-	    minimization routine, this one assumes that each datum is a vector, not a scalar, so many
-	    things have one more dimension than you might otherwise expect.
-	    :param func: the objective function to minimize. it takes an array of size n×m as
-	                 argument and returns a single scalar value
+	""" find the vector that minimizes a function of a list of points using a twoth-order gradient-descent-type-thing
+	    with a dynamically chosen step size. unlike a more generic minimization routine, this one assumes that each
+	    datum is a vector, not a scalar, so many things have one more dimension than you might otherwise expect.
+	    :param func: the objective function to minimize. it takes an array of size m×n as argument and returns a single
+	                 scalar value
 	    :param guess: the initial input to the function, from which the gradients will descend.
-	    :param gradient_tolerance: the absolute tolerance. if the portion of the magnitude of the
-	                               gradient that is not against the bounds dips below this at any
-	                               given point , we are done.
-	    :param bounds_matrix: a list of inequality constraints on various linear combinations.
-	                          it should be some object that matrix-multiplies by the state array to
-	                          produce an l×m vector of tracer particle positions
-	    :param bounds_limits: the values of the inequality constraints. should be something that can
-	                          broadcast to l×m, representing the maximum coordinates of each tracer
-	                          particle.
-	    :param report: an optional function that will be called each time a line search is
-	                   completed, to provide real-time information on how the fitting routine is
-	                   going. it takes as arguments the current state, the current value of the
-	                   function, the current gradient magnitude, the previous step, and the fraction
-	                   of the step that is currently getting projected away by the bounds.
-	    :param backup_func: an optional additional objective function to use when func is
-	                        nonapplicable. specificly, when the primary objective function is only
-	                        defined in a certain domain but the initial guess may be outside of it,
-	                        the backup can be used to push the state vector into that domain. it
-	                        should return smaller and smaller values as the state approaches the
-	                        valid domain and -inf for states inside it. if a -inf in achieved with
-	                        the backup function, it will immediately switch to the primary function.
-	                        if -inf is never returned and the backup function converges, that
-	                        minimum will be returnd.
-	    :return: the optimal n×m array of points
+	    :param gradient_tolerance: the absolute tolerance. if the magnitude of the gradient dips below this at any given
+	                               point, we are done.
+	    :param report: an optional function that will be called each time a line search is completed, to provide real-
+	                   time information on how the fitting routine is going. it takes as arguments the current state,
+	                   the current value of the function, the current gradient magnitude, the previous step, and the
+	                   fraction of the step that is currently getting projected away by the bounds.
+	    :param backup_func: an optional additional objective function to use when func is infeasible. specificly, when
+	                        the primary objective function is only defined in a certain domain but the initial guess may
+	                        be outside of it, the backup can be used to push the state vector into that domain. it
+	                        should return smaller and smaller values as the state approaches the valid domain and -inf
+	                        for states inside it. if a -inf in achieved with the backup function, it will immediately
+	                        switch to the primary function. if -inf is never returned and the backup function converges,
+	                        that minimum will be returnd.
+	    :return: the optimal m×n array of points
 	"""
-	# start by checking the guess agenst the bounds
-	if bounds_matrix is None:
-		if bounds_limits is not None:
-			raise ValueError("you mustn't pass bounds_limits without bounds_matrix")
-		bounds_matrix = SparseNDArray.zeros((0, guess.shape[0]), 1)
-		bounds_limits = np.full((1, *guess.shape[1:]), inf)
-	else:
-		if bounds_limits is None:
-			raise ValueError("you mustn't pass bounds_matrix without bounds_limits")
-		guess = polytope_project(guess, bounds_matrix, bounds_limits)
+	# if no report function is provided, default it to a null callable
+	if report is None:
+		def report(*args):
+			pass
 
-	# if a backup objective function is provided, start with that
+	# decide whether to optimize the backup function or the primary function first
 	if backup_func is not None:
 		followup_func = func
 		func = backup_func
@@ -135,35 +117,24 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		num_step_sizes = 0
 		while True:
 			# choose a step by minimizing this quadratic approximation, projecting onto the legal subspace
-			try:
-				if step_limiter < abs(hessian).max()*10:
-					new_state, ideal_new_state = minimize_quadratic_in_polytope(
-						state, hessian + identity*step_limiter, gradient,
-						bounds_matrix, bounds_limits,
-						return_unbounded_solution=True)
-				else:  # if the step limiter is big enuff, use this simpler approximation
-					ideal_new_state = state - gradient/step_limiter
-					new_state = polytope_project(ideal_new_state, bounds_matrix, bounds_limits)
-			except ConcaveObjectiveFunctionException:
-				pass
-				logging.log(FINE, f"{step_limiter:7.2g} -> xx not valid")
+			if step_limiter < abs(hessian).max()*10:
+				step = -reshape_inverse_matmul(hessian + identity*step_limiter, gradient)
+			else:  # if the step limiter is big enuff, use this simpler approximation
+				step = -gradient/step_limiter
+			new_state = state + step
+			new_value = get_value(new_state)
+			# if this is infinitely good, jump to the followup function now
+			if new_value == -inf and followup_func is not None:
+				logging.log(FINE, f"Reached the valid domain in {num_line_searches} iterations.")
+				return minimize(followup_func, new_state, gradient_tolerance, report, None)
+			# if the line search condition is met, take it
+			if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(step*gradient):
+				logging.log(FINE, f"{step_limiter:.2g} -> !! good !! (stepd {np.linalg.norm(step):.3g})")
+				break
+			elif new_value < value:
+				logging.log(FINE, f"{step_limiter:7.2g} -> .. not better enuff")
 			else:
-				ideal_step = ideal_new_state - state
-				actual_step = new_state - state
-				new_value = get_value(new_state)
-				# if this is infinitely good, jump to the followup function now
-				if new_value == -inf and followup_func is not None:
-					logging.log(FINE, f"Reached the valid domain in {num_line_searches} iterations.")
-					return minimize(followup_func, new_state, gradient_tolerance,
-					                bounds_matrix, bounds_limits, report, None)
-				# if the line search condition is met, take it
-				if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(actual_step*gradient):
-					logging.log(FINE, f"{step_limiter:.2g} -> !! good !! (stepd {np.linalg.norm(actual_step):.3g})")
-					break
-				elif new_value < value:
-					logging.log(FINE, f"{step_limiter:7.2g} -> .. not better enuff")
-				else:
-					logging.log(FINE, f"{step_limiter:7.2g} -> .. not better")
+				logging.log(FINE, f"{step_limiter:7.2g} -> .. not better ({value:.12g} -> {new_value:.12g})")
 
 			# if the condition is not met, decrement the step size and try agen
 			step_limiter *= STEP_REDUCTION
@@ -172,27 +143,117 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			if num_step_sizes > 100:
 				raise RuntimeError("line search did not converge")
 
-		# do a few final calculations
-		gradient_magnitude = np.linalg.norm(gradient)
-		gradient_angle = np.linalg.norm(actual_step)/np.linalg.norm(ideal_step)
-		report(state, value, gradient, actual_step, gradient_angle)
-
-		# if the termination condition is met, finish
-		if gradient_magnitude*gradient_angle < gradient_tolerance:
-			logging.log(INFO, f"Completed in {num_line_searches} iterations.")
-			return state
-
 		# take the new state and error value
 		state = new_state
 		value = new_value
 		# recompute the gradient once per outer loop
 		gradient, hessian = get_gradient(state)
+
+		# if the termination condition is met, finish
+		gradient_magnitude = np.linalg.norm(gradient)
+		report(state, value, gradient, step)
+		# if the termination condition is met, finish
+		if gradient_magnitude < gradient_tolerance:
+			logging.log(INFO, f"Completed in {num_line_searches} iterations.")
+			return state
+
 		# set the step size back a bit
 		step_limiter /= STEP_RELAXATION
 		# keep track of the number of iterations
 		num_line_searches += 1
 		if num_line_searches >= 1e5:
 			raise RuntimeError(f"algorithm did not converge in {num_step_sizes} iterations")
+
+
+def minimize_with_bounds(objective_func: Callable[[NDArray[float] | Variable], float | Variable],
+                         guess: NDArray[float],
+                         gradient_tolerance: float,
+                         barrier_tolerance: float,
+                         bounds_matrix: Optional[SparseNDArray] = None,
+                         bounds_limits: Optional[NDArray[float]] = None,
+                         report: Optional[Callable[[NDArray[float], float, NDArray[float], NDArray[float]], None]] = None,
+                         backup_func: Optional[Callable[[NDArray[float]], float]] = None,
+                         ) -> NDArray[float]:
+	""" find the vector that minimizes a function of a list of points
+	        argmin_x(f(x))
+	    subject to a convex constraint expressed as
+	        all(bounds_matrix@x <= bounds_limits).
+	    using an interior-point method.  each step will be solved using a twoth-order gradient-descent-type-thing with
+	    a dynamically chosen step size.
+	    :param objective_func: the objective function to minimize. it takes an array of size m×n as argument and returns
+	                           a single scalar value
+	    :param guess: the initial input to the function, from which the gradients will descend.
+	    :param gradient_tolerance: the gradient descent absolute tolerance. when the magnitude of the gradient dips
+	                               below this during the inner iteration, we reduce the barrier parameter.
+	    :param barrier_tolerance: the interior point absolute tolerance. when we estimate that the barrier function is
+	                              displacing the result by less than this amount, we are done.
+	    :param bounds_matrix: a list of inequality constraints on various linear combinations. it should be some object
+	                          that matmuls by the state array to produce an l×n vector of tracer particle positions.
+	    :param bounds_limits: the values of the inequality constraints. should be something that can broadcast to l×n,
+	                          representing the maximum coordinates of each tracer particle.
+	    :param report: an optional function that will be called each time a line search is completed, to provide real-
+	                   time information on how the fitting routine is going. it takes as arguments the current state,
+	                   the current value of the function, the current gradient magnitude, the previous step, and the
+	                   fraction of the step that is currently getting projected away by the bounds.
+	    :param backup_func: an optional additional objective function to use when func is infeasible. specificly, when
+	                        the primary objective function is only defined in a certain domain but the initial guess may
+	                        be outside of it, the backup can be used to push the state vector into that domain. it
+	                        should return smaller and smaller values as the state approaches the valid domain and -inf
+	                        for states inside it. if a -inf in achieved with the backup function, it will immediately
+	                        switch to the primary function. if -inf is never returned and the backup function converges,
+	                        that minimum will be returnd.
+	    :return: the optimal m×n array of points
+	"""
+	# first of all, skip the bounding if at all possible
+	if np.all((bounds_limits > 0) & np.isinf(bounds_limits)):
+		return minimize(objective_func, guess, gradient_tolerance, report, backup_func)
+	# also, check that we’re not on the bound, because that will cause problems
+	elif np.any(bounds_matrix@guess >= bounds_limits):
+		raise ValueError("the initial guess must have some clearance from the feasible space.")
+
+	# decide whether to optimize the backup function or the primary function first
+	if backup_func is not None:
+		followup_func = objective_func
+		objective_func = backup_func
+	else:
+		followup_func = None
+
+	# set up the barrier function
+	def barrier_func(x):
+		if np.any(bounds_matrix@x >= bounds_limits):
+			return inf
+		else:
+			return -(np.log(-(bounds_matrix@x - bounds_limits))).sum()
+	# so that you can set the initial barrier parameter
+	guess_variable = Variable.create_independent(guess)
+	initial_value = objective_func(guess_variable)
+	initial_objective_force = abs(objective_func(guess_variable).gradient)
+	initial_barrier_force = abs(barrier_func(guess_variable).gradient)
+	near = initial_barrier_force > np.max(initial_barrier_force)/1.1
+	barrier_height = np.max(initial_objective_force[near]/initial_barrier_force[near])
+
+	def compound_func(x):
+		return objective_func(x) + barrier_height*barrier_func(x)
+	if backup_func is not None:
+		def compound_backup_func(x):
+			return backup_func(x) + barrier_height*barrier_func(x)
+	else:
+		compound_backup_func = None
+
+	state = guess
+	num_iterations = 0
+	while True:
+		new_state = minimize(compound_func, state, gradient_tolerance, report, compound_backup_func)
+		if np.max(abs(new_state - state)) < barrier_tolerance*(1 - 1/BARRIER_REDUCTION):
+			logging.log(INFO, f"Completed interior point method in {num_iterations} steps.")
+			return state
+		elif num_iterations >= 10_000:
+			raise RuntimeError("Interior point method did not converge.")
+		logging.log(FINE, "reached temporary solution; reducing barrier parameter.")
+		barrier_height /= BARRIER_REDUCTION
+		state = new_state
+		num_iterations += 1
+
 
 def polytope_project(point: NDArray[float],
                      polytope_mat: SparseNDArray, polytope_lim: NDArray[float]
@@ -211,138 +272,21 @@ def polytope_project(point: NDArray[float],
 		# if there are multiple dimensions, do each dimension one at a time; it's faster, I think
 		return np.stack([polytope_project(point[:, k], polytope_mat, polytope_lim[:, k])
 		                 for k in range(point.shape[1])]).T
-	return minimize_quadratic_in_polytope(
-		point,
-		SparseNDArray.identity(point.shape),
-		np.zeros(point.shape),
-		polytope_mat, polytope_lim)
+
+	def distance_from_point(x):
+		return ((x - point)**2).sum()
+	guess = crudely_polytope_project(point, polytope_mat, polytope_lim)
+	crude_distance = sqrt(distance_from_point(guess - point))
+	return minimize_with_bounds(distance_from_point, guess,
+	                            gradient_tolerance=1e-3*crude_distance,
+	                            barrier_tolerance=1e-3*crude_distance,
+	                            bounds_matrix=polytope_mat,
+	                            bounds_limits=polytope_lim)
 
 
-def minimize_quadratic_in_polytope(fixed_point: NDArray[float],
-                                   hessian: SparseNDArray,
-                                   gradient: NDArray[float],
-                                   polytope_mat: SparseNDArray, polytope_lim: NDArray[float],
-                                   return_unbounded_solution: bool = False,
-                                   tolerance: float = 1e-8,
-                                   iterations_per_iteration: int = 1,
-                                   ) -> NDArray[float] | tuple[NDArray[float], NDArray[float]]:
-	""" find the global extremum of the concave-up multivariate quadratic function:
-	        f(x) = (x - x0)⋅(hessian + additional_convexity*I)@(x - x0) + gradient⋅(x - x0)
-	    subject to the inequality constraint
-	        all(polytope_mat@point <= polytope_lim + tolerance)
-	    using the alternating-direction method of multipliers, as is thoroly described in
-	        S. Boyd, N. Parikh, E. Chu, B. Peleato, and J. Eckstein. "Distributed Optimization and
-	        Statistical Learning via the Alternating Direction Method of Multipliers".
-	        *Foundations and Trends in Machine Learning* Vol. 3 No. 1 (2010) 1–122.
-	        DOI: 10.1561/2200000016
-	    :param fixed_point: the point at which the quadratic function is defined; generally the
-	                        quadratic function is a Taylor expansion, and this will be the point
-	                        about which Taylor is expanding
-	    :param hessian: the primary twoth-derivative matrix of the quadratic function at the fixed
-	                    point. it must be symmetric and should be positive definite.
-	    :param gradient: the gradient of the quadratic function at the fixed point.
-	    :param polytope_mat: the normal vectors of the polytope faces, by which the polytope is defined
-	    :param polytope_lim: the quantity that defines the size of the polytope. a point is in the polytope iff
-	                         polytope_mat @ point[:, k] <= polytope_lim[k] for all k
-	    :param return_unbounded_solution: whether to also return the solution if there were no bounds
-	    :param tolerance: the relative tolerance at which to terminate iterations
-	    :param iterations_per_iteration: the number of times x and z are updated for each time y is
-	                                      updated.  I don't know what this is supposed to be.
-	    :return: the bounded solution, and also -- if return_unbounded_solution is true -- the unbounded solution
-	"""
-	if polytope_mat.ndim != 2:
-		raise ValueError(f"the matrix should be a (2d) matrix, not a {polytope_mat.ndim}d-array")
-
-	if iterations_per_iteration < 1:
-		raise ValueError("you must have at least one iteration per iteration")
-
-	if not hessian.is_positive_definite():
-		raise ConcaveObjectiveFunctionException("the given matrix is not positive definite")
-
-	# check to see if we're already done
-	flat_hessian = hessian.reshape((gradient.size, gradient.size), 1)
-	flat_gradient = gradient.ravel()
-	step = -flat_hessian.inverse_matmul(flat_gradient).reshape(gradient.shape)
-	x_unbounded = fixed_point + step
-	if hessian.is_positive_definite() and np.all(polytope_mat@x_unbounded <= polytope_lim):
-		if return_unbounded_solution:
-			return x_unbounded, x_unbounded
-		else:
-			return x_unbounded
-
-	# redefine the gradient at the origin (so that we may discard fixed_point)
-	gradient = np.reshape(flat_gradient - flat_hessian@fixed_point.ravel(), gradient.shape)
-
-	# choose some initial gesses
-	x_old = crudely_polytope_project(x_unbounded, polytope_mat, polytope_lim)
-	z_old = polytope_mat@x_old
-	y_old = np.zeros(z_old.shape)
-
-	# compute this matrix
-	polytope_mat_square = polytope_mat.T@polytope_mat
-	# the suttlety here is that we must now gauge-change from the n-d definitions we’ve maintained
-	# up to this point to the 1-d definitions that work with ADMM
-	if z_old.ndim > 1:
-		polytope_mat_square = polytope_mat_square.repeat_diagonally(z_old.shape[1:])
-
-	# establish the parameters and persisting variables
-	primal_tolerance = tolerance*np.linalg.norm(polytope_lim)
-	dual_tolerance = primal_tolerance*sqrt(x_old.size/z_old.size)
-	step_size = 1#np.linalg.norm(hessian.diagonal())/np.linalg.norm(polytope_mat.transpose_matmul_self().diagonal())
-	num_iterations = 0
-
-	# loop thru the alternating direction multiplier method
-	history = []
-	while True:
-		# update x, z, and then y
-		# for i in range(iterations_per_iteration):
-		total_hessian = hessian + polytope_mat_square*step_size  # TODO: only recompute this when step_size changes
-		total_gradient = gradient - polytope_mat.T@(step_size*z_old - y_old)
-		total_hessian = total_hessian.reshape((x_old.size, x_old.size), 1)
-		total_gradient = total_gradient.reshape((x_old.size,))
-		x_new = total_hessian.inverse_matmul(-total_gradient)
-		x_new = x_new.reshape(x_old.shape)
-		polytope_mat_x_new = polytope_mat@x_new
-		z_new = np.minimum(polytope_lim, polytope_mat_x_new + y_old/step_size)
-		y_new = y_old + step_size*(polytope_mat_x_new - z_new)
-
-		# check the stopping criteria
-		primal_residual = np.linalg.norm(polytope_mat_x_new - z_new)
-		dual_residual = step_size*np.linalg.norm(polytope_mat.T@(z_new - z_old))
-		if primal_residual <= primal_tolerance and dual_residual <= dual_tolerance:
-			x_final = crudely_polytope_project(x_new, polytope_mat, polytope_lim)
-			print(num_iterations, end=": ")
-			if return_unbounded_solution:
-				return x_final, x_unbounded
-			else:
-				return x_final
-
-		history.append([primal_residual, dual_residual, 1/2*np.sum(x_new.ravel()*(hessian.reshape((x_new.size, x_new.size), 1)@x_new.ravel())) + np.sum(x_new*gradient), step_size])
-
-		# adjust the step size for the next iteration
-		# if primal_residual/primal_tolerance > 8*dual_residual/dual_tolerance:
-		# 	step_size *= 2
-		# elif dual_residual/dual_tolerance > 8*primal_residual/primal_tolerance:
-		# 	step_size /= 2
-
-		# carry over the loop variables
-		x_old, z_old, y_old = x_new, z_new, y_new
-		# make sure it doesn't run for too long
-		num_iterations += 1
-		if num_iterations >= 10_000/iterations_per_iteration or np.max(x_new) > 1e25:
-			print(num_iterations, end=": ")
-			import matplotlib.pyplot as plt
-			plt.figure()
-			plt.plot(history)
-			plt.axhline(primal_tolerance)
-			plt.axhline(dual_tolerance)
-			plt.yscale('log')
-			print(history)
-			plt.show()
-			raise MaxIterationsException("The maximum number of iterations was reached in the alternating directions multiplier method")
-
-
-def crudely_polytope_project(point, polytope_mat, polytope_lim):
+def crudely_polytope_project(point: NDArray[float],
+                             polytope_mat: SparseNDArray, polytope_lim: NDArray[float]
+                             ) -> NDArray[float]:
 	""" find a point near the given point that is inside the specified polytope
 	    :param point: the point to be projected
 	    :param polytope_mat: the normal vectors of the polytope faces, by which the polytope is defined
@@ -355,7 +299,7 @@ def crudely_polytope_project(point, polytope_mat, polytope_lim):
 		# if there are multiple dimensions, do each dimension one at a time
 		return np.stack([crudely_polytope_project(point[:, k], polytope_mat, polytope_lim[:, k])
 		                 for k in range(point.shape[1])]).T
-	polytope_magnitudes = (polytope_mat**2).sum(axis=1)
+	polytope_magnitudes = (polytope_mat**2).sum(axis=[1])
 	residuals = polytope_mat@point - polytope_lim
 	steps = polytope_mat*(residuals/polytope_magnitudes)[..., np.newaxis]
 	num_iterations = 0
@@ -372,6 +316,11 @@ def crudely_polytope_project(point, polytope_mat, polytope_lim):
 			raise MaxIterationsException("this crude polytope projection really autn't take more that 2 iterations")
 
 
+def reshape_inverse_matmul(A: SparseNDArray, b: NDArray[float]) -> NDArray[float]:
+	""" a call to SparseNDArray.inverse_matmul() that reshapes things if they’re too dimensional """
+	return A.reshape((b.size, b.size), 1).inverse_matmul(b.ravel()).reshape(b.shape)
+
+
 def test():
 	import matplotlib.pyplot as plt
 	import numpy as np
@@ -384,7 +333,7 @@ def test():
 
 	X, Y = np.meshgrid(np.linspace(-2, 2, 101), np.linspace(-2, 2, 101), indexing="ij")
 
-	point = np.array([2., 1.6])
+	point = np.array([-2., -1.6])
 	projection = polytope_project(point, polytope_matrix, polytope_limits)
 	polytope_positions = np.array(polytope_matrix)[:, 0, None, None]*X[None, :, :] + \
 	                     np.array(polytope_matrix)[:, 1, None, None]*Y[None, :, :]
@@ -407,9 +356,15 @@ def test():
 	solutions = []
 	for caution in [0, .01, .1, 1, 10, 100, 10000]:
 		print(f"using caution of {caution}")
-		solution = minimize_quadratic_in_polytope(x0, hessian + I*caution, gradient,
-		                                          polytope_matrix, polytope_limits,
-		                                          return_unbounded_solution=False)
+		def objective(state):
+			Δx = state - x0
+			H = hessian + I*caution
+			return 1/2*(Δx*(H@Δx)).sum() + (Δx*gradient).sum()
+		solution = minimize_with_bounds(objective, x0,
+		                                bounds_matrix=polytope_matrix,
+		                                bounds_limits=polytope_limits,
+		                                gradient_tolerance=1e-6,
+		                                barrier_tolerance=1e-6)
 		print("done!\n\n")
 		solutions.append(solution)
 

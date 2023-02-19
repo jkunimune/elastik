@@ -125,15 +125,17 @@ class Variable:
 		return Variable(values, gradients, hessians)
 
 	def __add__(self, other: Variable | NDArray[float] | float) -> Variable:
-		if type(other) is not Variable and np.ndim(other) == 0:
+		if type(other) is not Variable:
+			if np.ndim(other) > self.ndim or np.any(np.greater(np.shape(other), self.shape[:np.ndim(other)])):
+				raise ValueError("I haven’t implemented up-broadcasting of Variables")
 			return Variable(self.values + other, self.gradients, self.hessians)
-		elif other.shape == self.shape:
+		else:
+			if other.shape != self.shape:
+				raise ValueError(f"the shapes don’t match: {self.shape} and {other.shape}")
 			other = Variable.convert(other, self.shape, self.domain_shape)
 			return Variable(self.values + other.values,
 			                self.gradients + other.gradients,
 			                self.hessians + other.hessians)
-		else:
-			raise ValueError("I haven’t implemented broadcasting here")
 
 	def __le__(self, other: Variable | NDArray[float] | float) -> NDArray[bool]:
 		other = Variable.convert(other, self.shape, self.domain_shape)

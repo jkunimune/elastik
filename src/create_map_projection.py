@@ -20,7 +20,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 from cmap import CUSTOM_CMAP
 from elastik import gradient, smooth_interpolate
-from optimize import minimize, FINE
+from optimize import FINE, minimize_with_bounds
 from sparse import SparseNDArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, inside_polygon, interp, \
 	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor
@@ -521,7 +521,7 @@ def load_mesh(filename: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[n
 
 
 def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np.ndarray,
-              values: list[float], grads: list[float], projected_grads: list[float], final: bool,
+              values: list[float], grads: list[float], final: bool,
               ф_mesh: np.ndarray, λ_mesh: np.ndarray, dΦ: np.ndarray, dΛ: np.ndarray,
               mesh_index: np.ndarray, cell_definitions: np.ndarray, cell_weights: np.ndarray,
               coastlines: list[np.array], border: np.ndarray | SparseNDArray,
@@ -586,7 +586,6 @@ def show_mesh(fit_positions: np.ndarray, all_positions: np.ndarray, velocity: np
 	# plot the convergence criteria over time
 	diff_axes.clear()
 	diff_axes.scatter(np.arange(len(grads)), grads, s=2, zorder=11)
-	diff_axes.scatter(np.arange(len(grads)), projected_grads, s=2, zorder=10)
 	ylim = max(2e-2, np.min(grads, initial=1e3)*5e2)
 	diff_axes.set_ylim(ylim/1e3, ylim)
 	diff_axes.set_yscale("log")
@@ -745,7 +744,7 @@ def create_map_projection(configuration_file: str):
 	current_state = node_positions
 	current_positions = node_positions
 	latest_step = np.zeros_like(node_positions)
-	values, grads, projected_grads = [], [], []
+	values, grads = [], []
 
 	# define the objective functions
 	def compute_energy_aggressive(positions: np.ndarray) -> float:
@@ -781,14 +780,13 @@ def create_map_projection(configuration_file: str):
 			shape_term = (a - b)**2
 			return (scale_term*cell_scale_weights + 2*shape_term*cell_shape_weights).sum()
 
-	def record_status(state: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray, freedom: float) -> None:
+	def record_status(state: np.ndarray, value: float, grad: np.ndarray, step: np.ndarray) -> None:
 		nonlocal current_state, current_positions, latest_step
 		current_state = state
 		current_positions = restore @ state
 		latest_step = step
 		values.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
-		projected_grads.append(grads[-1]*freedom)
 
 	# then minimize! follow the scheduled progression.
 	logging.info("begin fitting process.")
@@ -799,15 +797,17 @@ def create_map_projection(configuration_file: str):
 
 		# progress from coarser to finer mesh skeletons
 		if mesh_factor > 0:
-			tolerance = 2e-3/EARTH.R
+			gradient_tolerance = 1e-3/EARTH.R
+			barrier_tolerance = 1e-2*EARTH.R
 			reduce, restore = mesh_skeleton(node_indices, mesh_factor, ф_mesh)
 		else:
-			tolerance = 1e-4/EARTH.R
+			gradient_tolerance = 1e-4/EARTH.R
+			barrier_tolerance = 1e-3*EARTH.R
 			reduce, restore = Scalar(1), Scalar(1)
 
 		# progress from coarser to finer domain polytopes
 		if bounds_coarseness == 0:
-			bounds_matrix, bounds_limits = None, None
+			bounds_matrix, bounds_limits = None, inf
 		else:
 			coarse_border_matrix = border_matrix[np.arange(0, border_matrix.shape[0], bounds_coarseness), :]
 			double_border_matrix = SparseNDArray.concatenate([coarse_border_matrix, -coarse_border_matrix])
@@ -816,11 +816,12 @@ def create_map_projection(configuration_file: str):
 			# fit the initial conditions into the bounds each time you impose them
 			node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))
 			border = border_matrix@node_positions
-			for k in range(bounds_limits.size):
-				if np.ptp(border[:, k]) > 2*bounds_limits[0, k]:
-					node_positions[:, k] = interp(node_positions[:, k],
-					                              np.min(border[:, k]), np.max(border[:, k]),
-					                              -bounds_limits[0, k], bounds_limits[0, k])
+			for k in range(bounds_limits.shape[1]):
+				excess = np.ptp(border[:, k])/(2*bounds_limits[0, k])
+				set_size = 2*bounds_limits[0, k]*min(1 - .1/λ_mesh.size, 1/excess)
+				node_positions[:, k] = interp(node_positions[:, k],
+				                              np.min(border[:, k]), np.max(border[:, k]),
+				                              -set_size/2, set_size/2)
 
 		node_positions = reduce @ node_positions
 
@@ -830,32 +831,34 @@ def create_map_projection(configuration_file: str):
 		else:
 			primary_func, backup_func = compute_energy_strict, compute_energy_aggressive
 
-		# each time, run the projected gradient descent routine
+		# each time, run the interior-point with gradient-descent routine
 		success = False
 		def calculate():
 			nonlocal node_positions, success
-			node_positions = minimize(func=primary_func,
-			                          backup_func=backup_func,
-			                          guess=node_positions,
-			                          bounds_matrix=bounds_matrix,
-			                          bounds_limits=bounds_limits,
-			                          report=record_status,
-			                          gradient_tolerance=tolerance)
+			node_positions = minimize_with_bounds(
+				primary_func,
+				backup_func=backup_func,
+				guess=node_positions,
+				bounds_matrix=bounds_matrix,
+				bounds_limits=bounds_limits,
+				report=record_status,
+				gradient_tolerance=gradient_tolerance,
+				barrier_tolerance=barrier_tolerance)
 			success = True
 		calculation = threading.Thread(target=calculate)
 		calculation.start()
 		# calculate()
 		while True:
 			done = not calculation.is_alive()
-			show_mesh(current_state, current_positions, latest_step,
-			          values, grads, projected_grads, done,
+			show_mesh(current_state, current_positions,
+			          latest_step, values, grads, done,
 			          ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
 			          cell_definitions, cell_scale_weights,
 			          coastlines, border_matrix, width, height,
 			          map_axes, hist_axes, valu_axes, diff_axes)
 			main_fig.canvas.draw()
 			small_fig.canvas.draw()
-			plt.pause(5)
+			plt.pause(2)
 			if done: break
 		if not success:
 			small_fig.canvas.manager.set_window_title("Error!")
