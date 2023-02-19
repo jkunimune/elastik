@@ -8,7 +8,7 @@ create a new Elastic Projection.
 import logging
 import sys
 import threading
-from math import inf, pi, log2, nan, floor
+from math import inf, pi, log2, nan, floor, isfinite
 
 import h5py
 import numpy as np
@@ -817,11 +817,12 @@ def create_map_projection(configuration_file: str):
 			node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))
 			border = border_matrix@node_positions
 			for k in range(bounds_limits.shape[1]):
-				excess = np.ptp(border[:, k])/(2*bounds_limits[0, k])
-				set_size = 2*bounds_limits[0, k]*min(1 - .1/λ_mesh.size, 1/excess)
-				node_positions[:, k] = interp(node_positions[:, k],
-				                              np.min(border[:, k]), np.max(border[:, k]),
-				                              -set_size/2, set_size/2)
+				if isfinite(map_size[k]):
+					excess = np.ptp(border[:, k])/(2*bounds_limits[0, k])
+					set_size = 2*bounds_limits[0, k]*min(1 - .1/λ_mesh.size, 1/excess)
+					node_positions[:, k] = interp(node_positions[:, k],
+					                              np.min(border[:, k]), np.max(border[:, k]),
+					                              -set_size/2, set_size/2)
 
 		node_positions = reduce @ node_positions
 
@@ -835,8 +836,8 @@ def create_map_projection(configuration_file: str):
 		success = False
 		def calculate():
 			nonlocal node_positions, success
-			for objective_func in objective_funcs:
-				node_positions = minimize_with_bounds(
+			for objective_func in objective_funcs:  # for difficult objectives, optimize a short battery of functions
+				result = minimize_with_bounds(
 					objective_func=objective_func,
 					guess=node_positions,
 					bounds_matrix=bounds_matrix,
@@ -844,6 +845,9 @@ def create_map_projection(configuration_file: str):
 					report=record_status,
 					gradient_tolerance=gradient_tolerance,
 					barrier_tolerance=barrier_tolerance)
+				node_positions = result.state
+				if result.reason == "optimal":  # stopping when you find an optimum
+					break
 			success = True
 		calculation = threading.Thread(target=calculate)
 		calculation.start()
@@ -869,6 +873,7 @@ def create_map_projection(configuration_file: str):
 		node_positions = restore @ node_positions
 
 	logging.info("end fitting process.")
+	small_fig.canvas.manager.set_window_title("Saving...")
 
 	# fit the result in a landscape rectangle
 	node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))

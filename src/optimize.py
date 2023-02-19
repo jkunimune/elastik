@@ -42,7 +42,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
              guess: NDArray[float],
              gradient_tolerance: float,
              report: Optional[Callable[[NDArray[float], float, NDArray[float], NDArray[float]], None]] = None,
-             ) -> NDArray[float]:
+             ) -> MinimizationResult:
 	""" find the vector that minimizes a function of a list of points using a twoth-order gradient-descent-type-thing
 	    with a dynamically chosen step size. unlike a more generic minimization routine, this one assumes that each
 	    datum is a vector, not a scalar, so many things have one more dimension than you might otherwise expect.
@@ -80,7 +80,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 
 	# silently immediately terminate if we’re already at -inf
 	if initial_value == -inf:
-		return guess
+		return MinimizationResult("feasible", guess, initial_value)
 	# or complain if the input is not feasible
 	elif not isfinite(initial_value):
 		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_value}")
@@ -111,7 +111,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 			# if this is infinitely good, just return it without further question
 			if new_value == -inf:
 				logging.log(FINE, f"Reached the valid domain in {num_line_searches} iterations.")
-				return new_state
+				return MinimizationResult("feasible", new_state, new_value)
 			# if the line search condition is met, take it
 			if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(step*gradient):
 				logging.log(FINE, f"{step_limiter:.2g} -> !! good !! (stepd {np.linalg.norm(step):.3g})")
@@ -140,7 +140,7 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 		# if the termination condition is met, finish
 		if gradient_magnitude < gradient_tolerance:
 			logging.log(INFO, f"Completed in {num_line_searches} iterations.")
-			return state
+			return MinimizationResult("optimal", state, value)
 
 		# set the step size back a bit
 		step_limiter /= STEP_RELAXATION
@@ -157,7 +157,7 @@ def minimize_with_bounds(objective_func: Callable[[NDArray[float] | Variable], f
                          bounds_matrix: Optional[SparseNDArray] = None,
                          bounds_limits: Optional[NDArray[float]] = None,
                          report: Optional[Callable[[NDArray[float], float, NDArray[float], NDArray[float]], None]] = None,
-                         ) -> NDArray[float]:
+                         ) -> MinimizationResult:
 	""" find the vector that minimizes a function of a list of points
 	        argmin_x(f(x))
 	    subject to a convex constraint expressed as
@@ -199,7 +199,7 @@ def minimize_with_bounds(objective_func: Callable[[NDArray[float] | Variable], f
 	guess_variable = Variable.create_independent(guess)
 	initial_objective_value = objective_func(guess_variable)
 	if initial_objective_value == -inf:
-		return guess
+		return MinimizationResult("feasible", guess, initial_objective_value)
 	elif type(initial_objective_value) is not Variable or not isfinite(initial_objective_value.value):
 		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_objective_value}")
 	else:
@@ -221,15 +221,17 @@ def minimize_with_bounds(objective_func: Callable[[NDArray[float] | Variable], f
 	state = guess
 	num_iterations = 0
 	while True:
-		new_state = minimize(compound_func, state, gradient_tolerance, report)
-		if np.max(abs(new_state - state)) < barrier_tolerance*(1 - 1/BARRIER_REDUCTION):
+		result = minimize(compound_func, state, gradient_tolerance, report)
+		if result.reason == "feasible":
+			return result
+		elif np.max(abs(result.state - state)) < barrier_tolerance*(1 - 1/BARRIER_REDUCTION):
 			logging.log(INFO, f"Completed interior point method in {num_iterations} steps.")
-			return state
+			return result
 		elif num_iterations >= 10_000:
 			raise RuntimeError("Interior point method did not converge.")
 		logging.log(FINE, "reached temporary solution; reducing barrier parameter.")
 		barrier_height /= BARRIER_REDUCTION
-		state = new_state
+		state = result.state
 		num_iterations += 1
 
 
@@ -259,7 +261,7 @@ def polytope_project(point: NDArray[float],
 	                            gradient_tolerance=1e-3*crude_distance,
 	                            barrier_tolerance=1e-3*crude_distance,
 	                            bounds_matrix=polytope_mat,
-	                            bounds_limits=polytope_lim)
+	                            bounds_limits=polytope_lim).state
 
 
 def crudely_polytope_project(point: NDArray[float],
@@ -297,6 +299,18 @@ def crudely_polytope_project(point: NDArray[float],
 def reshape_inverse_matmul(A: SparseNDArray, b: NDArray[float]) -> NDArray[float]:
 	""" a call to SparseNDArray.inverse_matmul() that reshapes things if they’re too dimensional """
 	return A.reshape((b.size, b.size), 1).inverse_matmul(b.ravel()).reshape(b.shape)
+
+
+class MinimizationResult:
+	def __init__(self, reason: str, state: NDArray[float], objective: float):
+		""" :param reason: either "optimal" if it found a local optimum or "feasible" if the objective function went to
+		                   -inf. if it’s anything else, it’ll just raise a RuntimeError.
+		    :param state: the vector that produces the minimized value
+		    :param objective: the minimized value of the objective function
+		"""
+		self.reason = reason
+		self.state = state
+		self.objective = objective
 
 
 def test():
@@ -342,7 +356,7 @@ def test():
 		                                bounds_matrix=polytope_matrix,
 		                                bounds_limits=polytope_limits,
 		                                gradient_tolerance=1e-6,
-		                                barrier_tolerance=1e-6)
+		                                barrier_tolerance=1e-6).state
 		print("done!\n\n")
 		solutions.append(solution)
 
