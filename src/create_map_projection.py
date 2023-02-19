@@ -20,13 +20,13 @@ from scipy.interpolate import RegularGridInterpolator
 
 from cmap import CUSTOM_CMAP
 from elastik import gradient, smooth_interpolate
-from optimize import FINE, minimize_with_bounds
+from optimize import minimize_with_bounds
 from sparse import SparseNDArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, inside_polygon, interp, \
 	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor
 
 logging.basicConfig(
-	level=FINE,
+	level=logging.INFO,
 	format="%(asctime)s | %(levelname)s | %(message)s",
 	datefmt="%b %d %H:%M",
 	handlers=[
@@ -827,23 +827,23 @@ def create_map_projection(configuration_file: str):
 
 		# progress from the quickly-converging approximation to the true cost function
 		if not final:
-			primary_func, backup_func = compute_energy_lenient, None
+			objective_funcs = [compute_energy_lenient]
 		else:
-			primary_func, backup_func = compute_energy_strict, compute_energy_aggressive
+			objective_funcs = [compute_energy_aggressive, compute_energy_strict]
 
 		# each time, run the interior-point with gradient-descent routine
 		success = False
 		def calculate():
 			nonlocal node_positions, success
-			node_positions = minimize_with_bounds(
-				primary_func,
-				backup_func=backup_func,
-				guess=node_positions,
-				bounds_matrix=bounds_matrix,
-				bounds_limits=bounds_limits,
-				report=record_status,
-				gradient_tolerance=gradient_tolerance,
-				barrier_tolerance=barrier_tolerance)
+			for objective_func in objective_funcs:
+				node_positions = minimize_with_bounds(
+					objective_func=objective_func,
+					guess=node_positions,
+					bounds_matrix=bounds_matrix,
+					bounds_limits=bounds_limits,
+					report=record_status,
+					gradient_tolerance=gradient_tolerance,
+					barrier_tolerance=barrier_tolerance)
 			success = True
 		calculation = threading.Thread(target=calculate)
 		calculation.start()
@@ -869,7 +869,6 @@ def create_map_projection(configuration_file: str):
 		node_positions = restore @ node_positions
 
 	logging.info("end fitting process.")
-	small_fig.canvas.manager.set_window_title("Done!")
 
 	# fit the result in a landscape rectangle
 	node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))
@@ -886,6 +885,9 @@ def create_map_projection(configuration_file: str):
 	          decimate_path(border_matrix @ node_positions, resolution=5))
 
 	logging.info(f"elastik {configure['name']} projection saved!")
+
+	small_fig.canvas.manager.set_window_title("Done!")
+	plt.show()
 
 
 if __name__ == "__main__":

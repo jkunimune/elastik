@@ -42,13 +42,13 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
              guess: NDArray[float],
              gradient_tolerance: float,
              report: Optional[Callable[[NDArray[float], float, NDArray[float], NDArray[float]], None]] = None,
-             backup_func: Optional[Callable[[NDArray[float]], float]] = None,
              ) -> NDArray[float]:
 	""" find the vector that minimizes a function of a list of points using a twoth-order gradient-descent-type-thing
 	    with a dynamically chosen step size. unlike a more generic minimization routine, this one assumes that each
 	    datum is a vector, not a scalar, so many things have one more dimension than you might otherwise expect.
 	    :param func: the objective function to minimize. it takes an array of size m×n as argument and returns a single
-	                 scalar value
+	                 scalar value. if at any point it returns -inf, whatever state produced it will be immediately
+	                 returned. points that return +inf will, naturally, be avoided at all costs.
 	    :param guess: the initial input to the function, from which the gradients will descend.
 	    :param gradient_tolerance: the absolute tolerance. if the magnitude of the gradient dips below this at any given
 	                               point, we are done.
@@ -56,26 +56,12 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 	                   time information on how the fitting routine is going. it takes as arguments the current state,
 	                   the current value of the function, the current gradient magnitude, the previous step, and the
 	                   fraction of the step that is currently getting projected away by the bounds.
-	    :param backup_func: an optional additional objective function to use when func is infeasible. specificly, when
-	                        the primary objective function is only defined in a certain domain but the initial guess may
-	                        be outside of it, the backup can be used to push the state vector into that domain. it
-	                        should return smaller and smaller values as the state approaches the valid domain and -inf
-	                        for states inside it. if a -inf in achieved with the backup function, it will immediately
-	                        switch to the primary function. if -inf is never returned and the backup function converges,
-	                        that minimum will be returnd.
 	    :return: the optimal m×n array of points
 	"""
 	# if no report function is provided, default it to a null callable
 	if report is None:
-		def report(*args):
+		def report(*_):
 			pass
-
-	# decide whether to optimize the backup function or the primary function first
-	if backup_func is not None:
-		followup_func = func
-		func = backup_func
-	else:
-		followup_func = None
 
 	# redefine the objective function to have some checks bilt in
 	def get_value(x: np.ndarray) -> float:
@@ -92,11 +78,10 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 
 	initial_value = get_value(guess)
 
-	# check just in case we instantly fall thru to the followup function
-	if initial_value == -inf and followup_func is not None:
-		func = followup_func
-		followup_func = None
-		initial_value = get_value(guess)
+	# silently immediately terminate if we’re already at -inf
+	if initial_value == -inf:
+		return guess
+	# or complain if the input is not feasible
 	elif not isfinite(initial_value):
 		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_value}")
 
@@ -123,10 +108,10 @@ def minimize(func: Callable[[NDArray[float] | Variable], float | Variable],
 				step = -gradient/step_limiter
 			new_state = state + step
 			new_value = get_value(new_state)
-			# if this is infinitely good, jump to the followup function now
-			if new_value == -inf and followup_func is not None:
+			# if this is infinitely good, just return it without further question
+			if new_value == -inf:
 				logging.log(FINE, f"Reached the valid domain in {num_line_searches} iterations.")
-				return minimize(followup_func, new_state, gradient_tolerance, report, None)
+				return new_state
 			# if the line search condition is met, take it
 			if new_value < value + LINE_SEARCH_STRICTNESS*np.sum(step*gradient):
 				logging.log(FINE, f"{step_limiter:.2g} -> !! good !! (stepd {np.linalg.norm(step):.3g})")
@@ -172,7 +157,6 @@ def minimize_with_bounds(objective_func: Callable[[NDArray[float] | Variable], f
                          bounds_matrix: Optional[SparseNDArray] = None,
                          bounds_limits: Optional[NDArray[float]] = None,
                          report: Optional[Callable[[NDArray[float], float, NDArray[float], NDArray[float]], None]] = None,
-                         backup_func: Optional[Callable[[NDArray[float]], float]] = None,
                          ) -> NDArray[float]:
 	""" find the vector that minimizes a function of a list of points
 	        argmin_x(f(x))
@@ -181,7 +165,8 @@ def minimize_with_bounds(objective_func: Callable[[NDArray[float] | Variable], f
 	    using an interior-point method.  each step will be solved using a twoth-order gradient-descent-type-thing with
 	    a dynamically chosen step size.
 	    :param objective_func: the objective function to minimize. it takes an array of size m×n as argument and returns
-	                           a single scalar value
+	                           a single scalar value. if at any point it returns -inf, whatever state produced it will
+	                           be immediately returned. points that return +inf will be avoided at all costs, naturally.
 	    :param guess: the initial input to the function, from which the gradients will descend.
 	    :param gradient_tolerance: the gradient descent absolute tolerance. when the magnitude of the gradient dips
 	                               below this during the inner iteration, we reduce the barrier parameter.
@@ -195,28 +180,14 @@ def minimize_with_bounds(objective_func: Callable[[NDArray[float] | Variable], f
 	                   time information on how the fitting routine is going. it takes as arguments the current state,
 	                   the current value of the function, the current gradient magnitude, the previous step, and the
 	                   fraction of the step that is currently getting projected away by the bounds.
-	    :param backup_func: an optional additional objective function to use when func is infeasible. specificly, when
-	                        the primary objective function is only defined in a certain domain but the initial guess may
-	                        be outside of it, the backup can be used to push the state vector into that domain. it
-	                        should return smaller and smaller values as the state approaches the valid domain and -inf
-	                        for states inside it. if a -inf in achieved with the backup function, it will immediately
-	                        switch to the primary function. if -inf is never returned and the backup function converges,
-	                        that minimum will be returnd.
 	    :return: the optimal m×n array of points
 	"""
 	# first of all, skip the bounding if at all possible
 	if np.all((bounds_limits > 0) & np.isinf(bounds_limits)):
-		return minimize(objective_func, guess, gradient_tolerance, report, backup_func)
+		return minimize(objective_func, guess, gradient_tolerance, report)
 	# also, check that we’re not on the bound, because that will cause problems
 	elif np.any(bounds_matrix@guess >= bounds_limits):
 		raise ValueError("the initial guess must have some clearance from the feasible space.")
-
-	# decide whether to optimize the backup function or the primary function first
-	if backup_func is not None:
-		followup_func = objective_func
-		objective_func = backup_func
-	else:
-		followup_func = None
 
 	# set up the barrier function
 	def barrier_func(x):
@@ -226,24 +197,31 @@ def minimize_with_bounds(objective_func: Callable[[NDArray[float] | Variable], f
 			return -(np.log(-(bounds_matrix@x - bounds_limits))).sum()
 	# so that you can set the initial barrier parameter
 	guess_variable = Variable.create_independent(guess)
-	initial_value = objective_func(guess_variable)
-	initial_objective_force = abs(objective_func(guess_variable).gradient)
+	initial_objective_value = objective_func(guess_variable)
+	if initial_objective_value == -inf:
+		return guess
+	elif type(initial_objective_value) is not Variable or not isfinite(initial_objective_value.value):
+		raise RuntimeError(f"the objective function returned an invalid initial value: {initial_objective_value}")
+	else:
+		initial_objective_force = abs(initial_objective_value.gradient)
 	initial_barrier_force = abs(barrier_func(guess_variable).gradient)
 	near = initial_barrier_force > np.max(initial_barrier_force)/1.1
-	barrier_height = np.max(initial_objective_force[near]/initial_barrier_force[near])
+	barrier_height = 2*np.max(initial_objective_force[near]/initial_barrier_force[near])
 
+	# set up the new objective function (the old one plus the barrier function)
 	def compound_func(x):
-		return objective_func(x) + barrier_height*barrier_func(x)
-	if backup_func is not None:
-		def compound_backup_func(x):
-			return backup_func(x) + barrier_height*barrier_func(x)
-	else:
-		compound_backup_func = None
+		objective_value = objective_func(x)
+		barrier_value = barrier_func(x)
+		if barrier_value == inf:  # important note: if both values are opposite infs, the barrier’s +inf should win
+			return inf
+		else:
+			return objective_value + barrier_height*barrier_value
 
+	# finally, do the minimization, gradually decreasing the barrier height
 	state = guess
 	num_iterations = 0
 	while True:
-		new_state = minimize(compound_func, state, gradient_tolerance, report, compound_backup_func)
+		new_state = minimize(compound_func, state, gradient_tolerance, report)
 		if np.max(abs(new_state - state)) < barrier_tolerance*(1 - 1/BARRIER_REDUCTION):
 			logging.log(INFO, f"Completed interior point method in {num_iterations} steps.")
 			return state
