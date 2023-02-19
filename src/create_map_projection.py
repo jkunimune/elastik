@@ -245,7 +245,6 @@ def create_map_projection(configuration_file: str):
 	logging.info(f"elastik {configure['name']} projection saved!")
 
 	small_fig.canvas.manager.set_window_title("Done!")
-	plt.show()
 
 
 def enumerate_nodes(mesh: NDArray[float]) -> tuple[NDArray[int], NDArray[float]]:

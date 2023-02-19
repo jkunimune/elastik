@@ -194,7 +194,7 @@ def minimize_with_bounds(objective_func: Callable[[NDArray[float] | Variable], f
 		if np.any(bounds_matrix@x >= bounds_limits):
 			return inf
 		else:
-			return -(np.log(-(bounds_matrix@x - bounds_limits))).sum()
+			return -(np.log(-(bounds_matrix@x - bounds_limits)/np.max(bounds_limits))).sum()
 	# so that you can set the initial barrier parameter
 	guess_variable = Variable.create_independent(guess)
 	initial_objective_value = objective_func(guess_variable)

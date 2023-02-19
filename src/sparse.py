@@ -192,14 +192,14 @@ class SparseNDArray:
 				raise ValueError("arrays must have the same number of dimensions")
 			other_dense_shape = other.shape[:self.dense_ndim]
 			other_sparse_shape = other.shape[-self.sparse_ndim:]
-			if np.array_equal(other_dense_shape, 1):  # there are some strict limits on what I’m willing to broadcast, tho
+			if np.product(other_dense_shape) == 1:  # there are some strict limits on what I’m willing to broadcast, tho
 				broadcast_dense_shape = other_dense_shape
 			else:
 				broadcast_dense_shape = self.dense_shape
-			if np.array_equal(other_sparse_shape, 1):
+			if np.product(other_sparse_shape) == 1:
 				broadcast_sparse_shape = other_sparse_shape
 			else:
-				broadcast_sparse_shape = self.sparse_shape  # TODO: this won’t expand an NDArray to cover the sparse size, will it?
+				raise ValueError("broadcasting like this would consume too much memory as I’ve implemented it.")
 			if self.shape != other.shape:
 				other = np.broadcast_to(other, broadcast_dense_shape + broadcast_sparse_shape)
 			other = other.reshape(np.product(broadcast_dense_shape, dtype=int),
