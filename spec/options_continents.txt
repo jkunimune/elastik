@@ -1,4 +1,4 @@
-name: lin
+name: bara
 descript: ...
 cuts: oceans
 shape_weights: land

@@ -1,7 +1,7 @@
-name: hai
-descript: hai e rivo ro an-parca li cou di metre-grafi jek-metodo
+name: mar
+descript: mar e rivo ro parca-no li sou di metro-grafi-yeksi-metodo
 cuts: mountains
 shape_weights: sea
 scale_weights: sea
 size: inf,inf
-section_names: Pasifi,Barti,Atlanti
+section_names: Pasífiko,Bárat,Atlántiko
