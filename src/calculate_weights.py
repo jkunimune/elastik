@@ -20,7 +20,7 @@ FUDGE_FACTOR = 4 # some extra padding to put on the contiguus joints of the sect
 ANTARCTIC_CUTOFF = -56.
 # latitude of northernmost settlement
 ARCTIC_CUTOFF = 78.
-# coordinates of sahara and australian desert ellipses
+# coordinates of sahara, australian, and canadian desert ellipses
 DESERT_ELLIPSES = [(23, 8, 7, 20), (-24, 132, 7, 15), (90, -90, 35, 50)]
 # coordinates of small, remote, uninhabited islands
 EXCLUDED_ISLANDS = [(-6, 72), # chagos islands
@@ -62,12 +62,12 @@ def load_coast_vertices(precision: float) -> list[tuple[float, float]]:
 	return points
 
 
-def excluded(ф: NDArray[float], λ: NDArray[float], exclude_continents: bool) -> NDArray[bool]:
-	""" return a bool array indicating which points are in the (ant)arctic or a big desert """
+def uninhabited(ф: NDArray[float], λ: NDArray[float], desert_counts_as_uninhabited: bool) -> NDArray[bool]:
+	""" return a bool array indicating which points are uninhabited by humans """
 	uninhabited = np.full(np.broadcast(ф, λ).shape, False)
 	for ф_0, λ_0 in EXCLUDED_ISLANDS:
 		uninhabited |= ((abs(ф - ф_0) < 2) & (abs(λ - λ_0) < 2))
-	if exclude_continents:
+	if desert_counts_as_uninhabited:
 		for ф_0, λ_0, a, b in DESERT_ELLIPSES:
 			uninhabited |= (((ф - ф_0)/a)**2 + ((λ - λ_0)/b)**2 < 1)
 		uninhabited |= (ф >= ARCTIC_CUTOFF) | (ф <= ANTARCTIC_CUTOFF)
@@ -85,7 +85,7 @@ def calculate_coast_distance(ф: NDArray[float], λ: NDArray[float], coast: list
 	# first crop the coasts inside this section
 	points = np.array(coast)
 	points = points[inside_region(points[:, 0], points[:, 1], section), :]
-	points = points[~excluded(points[:, 0], points[:, 1], exclude_antarctica), :]
+	points = points[~uninhabited(points[:, 0], points[:, 1], exclude_antarctica), :]
 	minimum_distance = np.full((ф.size, λ.size), np.inf)
 
 	# then calculate the distances
@@ -140,8 +140,8 @@ def find_land_mask(ф_grid: NDArray[float], λ_grid: NDArray[float], exclude_ant
 			ф_X[~intersects] = np.inf
 			crossings[ф_X[np.newaxis, :] < ф_grid[:, np.newaxis]] += 1
 	ф_grid, λ_grid = np.meshgrid(ф_grid, λ_grid, indexing="ij", sparse=True)
-	crossings[excluded(ф_grid, λ_grid, exclude_antarctica)] = 0
-	return crossings%2 == 1
+	return np.where(uninhabited(ф_grid, λ_grid, exclude_antarctica),
+	                False, crossings%2 == 1)
 
 
 def calculate_weights(coast_width: float, precision: float):
