@@ -16,8 +16,11 @@ from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 from scipy import interpolate
 
-Line = list[tuple[float, float]]
 Style = dict[str, Any]
+XYPoint = np.dtype([("x", float), ("y", float)])
+XYLine = NDArray[XYPoint]
+ΦΛPoint = np.dtype([("latitude", float), ("longitude", float)])
+ΦΛLine = NDArray[ΦΛPoint]
 
 
 def create_map(name: str, projection: str, duplicate: bool, background_style: Style, border_style: Style, data: list[tuple[str, Style]]):
@@ -39,11 +42,12 @@ def create_map(name: str, projection: str, duplicate: bool, background_style: St
 	for data_name, style in data:
 		data, closed = load_geographic_data(data_name)
 		projected_data = project(data, sections)
-		for i, line in enumerate(projected_data):
-			if closed:
-				plt.fill(*np.transpose(line), **style)
-			else:
-				plt.plot(*np.transpose(line), **style)
+		if closed:
+			for i, line in enumerate(projected_data):
+				plt.fill(line["x"], line["y"], **style)  # TODO: use a PathPatch instead of .fill() so there can be holes
+		else:
+			for i, line in enumerate(projected_data):
+				plt.plot(line["x"], line["y"], **style)
 
 	ax.fill(border["x"], border["y"], facecolor="none", **border_style)
 
@@ -53,33 +57,64 @@ def create_map(name: str, projection: str, duplicate: bool, background_style: St
 	            bbox_inches="tight", pad_inches=0)
 
 
-def project(lines: list[Line], projection: list[Section]) -> list[Line]:
+def project(lines: list[ΦΛLine], projection: list[Section]) -> list[XYLine]:
 	""" apply an Elastik projection, defined by a list of sections, to the given series of
 	    latitudes and longitudes
 	"""
-	# first, set gradients at each of the nodes
-	projected: list[Line] = []
+	projected: list[XYLine] = []
 	for i, line in enumerate(lines):
 		print(f"projecting line {i: 3d}/{len(lines): 3d} ({len(line)} points)")
+		# for each line, project it into each section that can accommodate it
 		for section in projection:
-			ф, λ = np.transpose(line)
-			in_this_section = section.contains(ф, λ)
-			if np.any(ф[in_this_section]):
-				ф = ф[in_this_section]  # TODO: cut it where it isn't contained and draw along the boundary
-				λ = λ[in_this_section]
-				projected.append([(x, y) for x, y in zip(*section.get_planar_coordinates(ф, λ))])
+
+			# see which parts will project into the section and which are out of it
+			points = np.array(line, dtype=ΦΛPoint)
+			in_this_section = section.contains(points)
+			j = np.arange(in_this_section.size)
+			if np.any(in_this_section):
+				# look for the points where it enters or exits the section
+				exeunts = np.nonzero(in_this_section[j - 1] & ~in_this_section[j])[0]
+				if exeunts.size > 0:
+					# roll this so we can always assume exeunts[k] < entrances[k]
+					points = np.roll(points, -exeunts[0])
+					in_this_section = np.roll(in_this_section, -exeunts[0])
+					exeunts -= exeunts[0]
+					entrances = np.nonzero(~in_this_section[j - 1] & in_this_section[j])[0]
+					# then set some precisely interpolated points at the interfaces
+					trimd_points = np.empty(0, dtype=ΦΛPoint)
+					for k in range(entrances.size):
+						exeunt_index, entrance_index = exeunts[k], entrances[k]
+						exeunt_point = find_intersection(
+							points[[exeunt_index - 1, exeunt_index]],
+							section.border)
+						entrance_point = find_intersection(
+							points[[entrance_index - 1, entrance_index]],
+							section.border)
+						print(entrance_point["latitude"], entrance_point["longitude"])
+						if abs(entrance_point["longitude"]) > 180:
+							raise
+						next_exeunt_index = exeunts[k + 1] if k + 1 < exeunts.size else None
+						trimd_points = np.concatenate([
+							trimd_points,
+							[exeunt_point, entrance_point],
+							points[entrance_index:next_exeunt_index]])
+
+					points = trimd_points
+
+				# finally, project to the plane and save the result
+				projected.append(section.get_planar_coordinates(points))
 	print(f"projected {len(lines)} lines")
 	return projected
 
 
-def inverse_project(points: np.ndarray, mesh: list[Section]) -> list[Line]:
+def inverse_project(points: np.ndarray, mesh: list[Section]) -> list[ΦΛLine]:
 	""" apply the inverse of an Elastik projection, defined by a list of sections, to find
 	    the latitudes and longitudes that map to these locations on the map
 	"""
 	pass  # TODO
 
 
-def load_elastik_projection(name: str) -> tuple[list[Section], NDArray[tuple[float, float]]]:
+def load_elastik_projection(name: str) -> tuple[list[Section], ΦΛLine]:
 	""" load the hdf5 file that defines an elastik projection
 	    :param name: one of "desa", "hai", or "lin"
 	"""
@@ -95,14 +130,14 @@ def load_elastik_projection(name: str) -> tuple[list[Section], NDArray[tuple[flo
 	return sections, border
 
 
-def load_geographic_data(filename: str) -> tuple[list[Line], bool]:
+def load_geographic_data(filename: str) -> tuple[list[ΦΛLine], bool]:
 	""" load a bunch of polylines from a shapefile
 	    :param filename: valid values include "admin_0_countries", "coastline", "lakes",
 	                     "land", "ocean", "rivers_lake_centerlines"
 	    :return: the coordinates along the border of each part (degrees), and a bool indicating
 	             whether this is an open polyline as opposed to a closed polygon
 	"""
-	lines: list[Line] = []
+	lines: list[ΦΛLine] = []
 	closed = True
 	with shapefile.Reader(f"../data/ne_110m_{filename}.zip") as shape_f:
 		print(f"this {filename} file has {len(shape_f)} shapes")
@@ -111,50 +146,83 @@ def load_geographic_data(filename: str) -> tuple[list[Line], bool]:
 			for i in range(len(shape.parts)):
 				start = shape.parts[i]
 				end = shape.parts[i + 1] if i + 1 < len(shape.parts) else len(shape.points)
-				lines.append([])
-				for λ, ф in shape.points[start:end]:
-					lines[-1].append((max(-90, min(90, ф)), max(-180, min(180, λ))))
+				lines.append(np.empty(end - start, dtype=ΦΛPoint))
+				for j, (λ, ф) in enumerate(shape.points[start:end]):
+					lines[-1][j] = (max(-90, min(90, ф)), max(-180, min(180, λ)))
 	return lines, closed
+
+
+def find_intersection(short_path: ΦΛLine, long_path: ΦΛLine) -> ΦΛPoint:
+	""" find the first point along long_path that intersects with short_path """
+	for i in range(1, long_path.shape[0]):
+		a = long_path[i - 1]
+		b = long_path[i]
+		for j in range(1, short_path.shape[0]):
+			c = short_path[j - 1]
+			d = short_path[j]
+			Φ, Λ = "latitude", "longitude"
+			denominator = ((a[Φ] - b[Φ])*(c[Λ] - d[Λ]) - (a[Λ] - b[Λ])*(c[Φ] - d[Φ]))
+			if denominator == 0:
+				continue
+			intersection = np.empty((), dtype=ΦΛPoint)
+			for k in [Φ, Λ]:
+				intersection[k] = ((a[Φ]*b[Λ] - a[Λ]*b[Φ])*(c[k] - d[k]) -
+				                   (a[k] - b[k])*(c[Φ]*d[Λ] - c[Λ]*d[Φ]))/\
+				                  denominator
+			k = Φ if c[Φ] != d[Φ] else Λ
+			if min(c[k], d[k]) <= intersection[k] <= max(c[k], d[k]):
+				intersection["latitude"] = max(-90, min(90, intersection["latitude"]))  # these two lines are because it’s slightly numericly unstable
+				intersection["longitude"] = max(-180, min(180, intersection["longitude"]))
+				return intersection
+	raise ValueError(f"no intersection was found.")
 
 
 class Section:
 	def __init__(self, ф_nodes: NDArray[float], λ_nodes: NDArray[float],
-	             xy_nodes: NDArray[float], border: NDArray[float]):
+	             xy_nodes: NDArray[XYPoint], border: ΦΛLine):
 		""" one lobe of an Elastik projection, containing a grid of latitudes and
 		    longitudes as well as the corresponding x and y coordinates
 		    :param ф_nodes: the node latitudes (deg)
 		    :param λ_nodes: the node longitudes (deg)
 		    :param xy_nodes: the grid of x- and y-values at each ф and λ (km)
-		    :param border: the path that encloses the region this section defines (deg)
+		    :param border: the path that encloses the region this section defines (d"eg)
 		"""
-		self.ф_nodes = ф_nodes
-		self.λ_nodes = λ_nodes
 		self.x_projector = interpolate.RegularGridInterpolator(
 			(ф_nodes, λ_nodes), xy_nodes["x"])
 		self.y_projector = interpolate.RegularGridInterpolator(
 			(ф_nodes, λ_nodes), xy_nodes["y"])
-		self.xy_nodes = xy_nodes
 		self.border = border
 
 
-	def get_planar_coordinates(self, ф: NDArray[float] | float, λ: NDArray[float] | float
-	                           ) -> tuple[np.ndarray | float, np.ndarray | float]:
+	def get_planar_coordinates(self, points: NDArray[ΦΛPoint]
+	                           ) -> NDArray[XYPoint]:
 		""" take a point on the sphere and smoothly interpolate it to x and y """
-		return self.x_projector((ф, λ)), self.y_projector((ф, λ))
+		print((points["longitude"].min(), points["longitude"].max()))
+		result = np.empty(points.shape, dtype=XYPoint)
+		result["x"] = self.x_projector((points["latitude"], points["longitude"]))
+		result["y"] = self.y_projector((points["latitude"], points["longitude"]))
+		return result
 
 
-	def contains(self, ф: np.ndarray | float, λ: np.ndarray | float) -> np.ndarray | bool:
-		nearest_segment = np.full(np.shape(ф), np.inf)
+	def contains(self, points: NDArray[ΦΛPoint]) -> NDArray[bool]:
+		nearest_segment = np.full(points.shape, np.inf)
+		ф, λ = points["latitude"], points["longitude"]
 		inside = np.full(np.shape(ф), False)
 		for i in range(1, self.border.shape[0]):
 			ф0, λ0 = self.border[i - 1]
 			ф1, λ1 = self.border[i]
-			if λ1 != λ0 and abs(λ1 - λ0) <= 180:
+			if λ1 == λ0:
+				continue
+			elif abs(λ1 - λ0) <= 180:
 				straddles = (λ0 <= λ) != (λ1 <= λ)
-				фX = (λ - λ0)/(λ1 - λ0)*(ф1 - ф0) + ф0
-				distance = np.where(straddles, abs(фX - ф), np.inf)
-				inside = np.where(distance < nearest_segment, (λ1 > λ0) != (фX > ф), inside)
-				nearest_segment = np.minimum(nearest_segment, distance)
+			else:
+				assert abs(λ0) == 180 and λ1 == -λ0 and ф0 == ф1
+				straddles = abs(λ) == 180
+				λ0, λ1 = λ1, λ0
+			фX = (λ - λ0)/(λ1 - λ0)*(ф1 - ф0) + ф0
+			distance = np.where(straddles, abs(фX - ф), np.inf)
+			inside = np.where(distance < nearest_segment, (λ1 > λ0) != (фX > ф), inside)
+			nearest_segment = np.minimum(nearest_segment, distance)
 		return inside
 
 
