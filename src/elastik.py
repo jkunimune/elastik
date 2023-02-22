@@ -7,6 +7,7 @@ everything you need to load the mesh files and project data onto them.
 """
 from __future__ import annotations
 
+from math import nan
 from typing import Any
 
 import h5py
@@ -64,45 +65,14 @@ def project(lines: list[ΦΛLine], projection: list[Section]) -> list[XYLine]:
 	projected: list[XYLine] = []
 	for i, line in enumerate(lines):
 		print(f"projecting line {i: 3d}/{len(lines): 3d} ({len(line)} points)")
-		# for each line, project it into each section that can accommodate it
+		projected.append(np.empty(line.size, dtype=XYPoint))
+		projected[i][:] = (nan, nan)
+		# for each line, project it into whichever section that can accommodate it
 		for section in projection:
-
-			# see which parts will project into the section and which are out of it
-			points = np.array(line, dtype=ΦΛPoint)
-			in_this_section = section.contains(points)
-			j = np.arange(in_this_section.size)
-			if np.any(in_this_section):
-				# look for the points where it enters or exits the section
-				exeunts = np.nonzero(in_this_section[j - 1] & ~in_this_section[j])[0]
-				if exeunts.size > 0:
-					# roll this so we can always assume exeunts[k] < entrances[k]
-					points = np.roll(points, -exeunts[0])
-					in_this_section = np.roll(in_this_section, -exeunts[0])
-					exeunts -= exeunts[0]
-					entrances = np.nonzero(~in_this_section[j - 1] & in_this_section[j])[0]
-					# then set some precisely interpolated points at the interfaces
-					trimd_points = np.empty(0, dtype=ΦΛPoint)
-					for k in range(entrances.size):
-						exeunt_index, entrance_index = exeunts[k], entrances[k]
-						exeunt_point = find_intersection(
-							points[[exeunt_index - 1, exeunt_index]],
-							section.border)
-						entrance_point = find_intersection(
-							points[[entrance_index - 1, entrance_index]],
-							section.border)
-						print(entrance_point["latitude"], entrance_point["longitude"])
-						if abs(entrance_point["longitude"]) > 180:
-							raise
-						next_exeunt_index = exeunts[k + 1] if k + 1 < exeunts.size else None
-						trimd_points = np.concatenate([
-							trimd_points,
-							[exeunt_point, entrance_point],
-							points[entrance_index:next_exeunt_index]])
-
-					points = trimd_points
-
-				# finally, project to the plane and save the result
-				projected.append(section.get_planar_coordinates(points))
+			in_this_section = section.contains(line)
+			projected[i][in_this_section] = section.get_planar_coordinates(line[in_this_section])
+		# check that each point was projected by at least one section
+		assert not np.any(np.isnan(projected[i]["x"]))
 	print(f"projected {len(lines)} lines")
 	return projected
 
@@ -152,31 +122,6 @@ def load_geographic_data(filename: str) -> tuple[list[ΦΛLine], bool]:
 	return lines, closed
 
 
-def find_intersection(short_path: ΦΛLine, long_path: ΦΛLine) -> ΦΛPoint:
-	""" find the first point along long_path that intersects with short_path """
-	for i in range(1, long_path.shape[0]):
-		a = long_path[i - 1]
-		b = long_path[i]
-		for j in range(1, short_path.shape[0]):
-			c = short_path[j - 1]
-			d = short_path[j]
-			Φ, Λ = "latitude", "longitude"
-			denominator = ((a[Φ] - b[Φ])*(c[Λ] - d[Λ]) - (a[Λ] - b[Λ])*(c[Φ] - d[Φ]))
-			if denominator == 0:
-				continue
-			intersection = np.empty((), dtype=ΦΛPoint)
-			for k in [Φ, Λ]:
-				intersection[k] = ((a[Φ]*b[Λ] - a[Λ]*b[Φ])*(c[k] - d[k]) -
-				                   (a[k] - b[k])*(c[Φ]*d[Λ] - c[Λ]*d[Φ]))/\
-				                  denominator
-			k = Φ if c[Φ] != d[Φ] else Λ
-			if min(c[k], d[k]) <= intersection[k] <= max(c[k], d[k]):
-				intersection["latitude"] = max(-90, min(90, intersection["latitude"]))  # these two lines are because it’s slightly numericly unstable
-				intersection["longitude"] = max(-180, min(180, intersection["longitude"]))
-				return intersection
-	raise ValueError(f"no intersection was found.")
-
-
 class Section:
 	def __init__(self, ф_nodes: NDArray[float], λ_nodes: NDArray[float],
 	             xy_nodes: NDArray[XYPoint], border: ΦΛLine):
@@ -197,7 +142,6 @@ class Section:
 	def get_planar_coordinates(self, points: NDArray[ΦΛPoint]
 	                           ) -> NDArray[XYPoint]:
 		""" take a point on the sphere and smoothly interpolate it to x and y """
-		print((points["longitude"].min(), points["longitude"].max()))
 		result = np.empty(points.shape, dtype=XYPoint)
 		result["x"] = self.x_projector((points["latitude"], points["longitude"]))
 		result["y"] = self.y_projector((points["latitude"], points["longitude"]))
