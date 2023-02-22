@@ -14,6 +14,8 @@ import h5py
 import numpy as np
 import shapefile
 from matplotlib import pyplot as plt
+from matplotlib.patches import PathPatch
+from matplotlib.path import Path
 from numpy.typing import NDArray
 from scipy import interpolate
 
@@ -44,11 +46,20 @@ def create_map(name: str, projection: str, duplicate: bool, background_style: St
 		data, closed = load_geographic_data(data_name)
 		projected_data = project(data, sections)
 		if closed:
+			points: list[tuple[float, float]] = []
+			codes: list[int] = []
 			for i, line in enumerate(projected_data):
-				plt.fill(line["x"], line["y"], **style)  # TODO: use a PathPatch instead of .fill() so there can be holes
+				for j, point in enumerate(line):
+					points.append((point["x"], point["y"]))
+					codes.append(Path.MOVETO if j == 0 else Path.LINETO)
+				points.append((nan, nan))
+				codes.append(Path.CLOSEPOLY)
+			path = Path(points, codes)
+			patch = PathPatch(path, **style)
+			ax.add_patch(patch)
 		else:
 			for i, line in enumerate(projected_data):
-				plt.plot(line["x"], line["y"], **style)
+				ax.plot(line["x"], line["y"], **style)
 
 	ax.fill(border["x"], border["y"], facecolor="none", **border_style)
 
