@@ -102,6 +102,25 @@ def dilate(x: NDArray[bool], distance: int) -> NDArray[bool]:
 		x[1:] |= x[:-1]
 	return x
 
+
+def intersects(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float], d: tuple[float, float]) -> bool:
+	""" determine whether a--b intersects with c--d """
+	denominator = ((a[0] - b[0])*(c[1] - d[1]) - (a[1] - b[1])*(c[0] - d[0]))
+	if denominator == 0:
+		return False
+	for k in range(2):
+		if a[k] == b[k]:
+			intersection = a[k]
+		elif c[k] == d[k]:
+			intersection = c[k]
+		else:
+			intersection = ((a[0]*b[1] - a[1]*b[0])*(c[k] - d[k]) -
+			                (a[k] - b[k])*(c[0]*d[1] - c[1]*d[0]))/denominator
+		if not (min(a[k], b[k]) <= intersection <= max(a[k], b[k]) and
+		        min(c[k], d[k]) <= intersection <= max(c[k], d[k])):
+			return False
+	return True
+
 def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float]]:
 	""" find the smallest rectangle that contains the given polygon, and parameterize it with the
 	    rotation and translation needed to make it landscape and centered on the origin.

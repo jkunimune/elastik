@@ -8,7 +8,7 @@ all angles are in degrees. indexing is z[i,j] = z(ф[i], λ[j])
 """
 import bisect
 import os
-from math import floor, ceil, nan
+from math import floor, ceil, nan, inf
 from typing import Iterable, Sequence
 
 import matplotlib.colors as colors
@@ -18,7 +18,7 @@ import shapefile
 import tifffile
 from numpy.typing import NDArray
 
-from util import bin_centers, bin_index, simplify_path
+from util import bin_centers, bin_index, simplify_path, intersects
 
 # how many pixels per degree
 RESOLUTION = 5  # TODO: I think it needs to be at least 10
@@ -106,8 +106,8 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | NDArr
 	# convert the start and end coordinates to indices
 	i_start = round(index_of_1d(start[0], x_nodes))
 	j_start = round(index_of_1d(start[1], y_nodes))
-	i_ends = np.around(index_of_1d(end[:, 0], x_nodes))
-	j_ends = np.around(index_of_1d(end[:, 1], y_nodes))
+	i_ends = np.around(index_of_1d(end[:, 0], x_nodes)).astype(int)
+	j_ends = np.around(index_of_1d(end[:, 1], y_nodes)).astype(int)
 	visited = np.full(z_nodes.shape, False)
 
 	# convert the barriers to an adjacency matrix
@@ -185,11 +185,11 @@ def load_elevation_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> N
 	    :param λ_nodes: the longitudes that our path is allowd to use for vertices
 	"""
 	# first establish the bin edges that will determine which pixel goes to which node
-	ф_bins = np.concatenate([[-np.inf], bin_centers(ф_nodes), [np.inf]])
-	λ_bins = np.concatenate([[-np.inf], bin_centers(λ_nodes), [(λ_nodes[0] + λ_nodes[-1])/2 + 180, np.inf]])
+	ф_bins = np.concatenate([[-inf], bin_centers(ф_nodes), [inf]])
+	λ_bins = np.concatenate([[-inf], bin_centers(λ_nodes), [(λ_nodes[0] + λ_nodes[-1])/2 + 180, inf]])
 
 	# then begin bilding the map
-	z_nodes = np.full((ф_nodes.size, λ_nodes.size), np.nan)
+	z_nodes = np.full((ф_nodes.size, λ_nodes.size), nan)
 
 	# look at each data file (they may not achieve full coverage)
 	for filename in os.listdir("../data/elevation"):
@@ -214,7 +214,8 @@ def load_elevation_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> N
 				else:
 					z_nodes[i, j] = REDUCTION([z_nodes[i, j], REDUCTION(z_pixel)])
 
-	z_nodes[(~np.isfinite(z_nodes)) | (z_nodes < 0)] = 0
+	z_nodes[z_nodes < 0] = 0
+	z_nodes[np.isnan(z_nodes)] = -inf
 	return z_nodes
 
 
@@ -268,7 +269,9 @@ def define_adjacency_matrix(ф_nodes: NDArray[float], λ_nodes: NDArray[float],
 				for j in range(j_min, j_max + 1):
 					for di in [-1, 0, 1]:
 						for dj in [-1, 0, 1]:
-							adjacency[i, j, di, dj] = False  # TODO: actual logic
+							if intersects(a, b, (i, j), (i + di, j + dj)):
+								adjacency[i, j, di, dj] = False
+								adjacency[i + di, j + dj, -di, -dj] = False
 	return adjacency
 
 
@@ -288,11 +291,7 @@ def check_wrapping(points: NDArray[float]) -> NDArray[float]:
 
 def index_of_1d(x: float | NDArray[float], arr: NDArray[float]) -> float | NDArray[float]:
 	""" find the fractional index for arr that would yields the value x """
-	anser = np.round(np.interp(x, arr, np.arange(arr.size)))
-	try:
-		return int(anser)
-	except TypeError:
-		return anser.astype(int)
+	return np.interp(x, arr, np.arange(arr.size))
 
 
 def index_of_2d(pair: tuple, x: NDArray[float], y: NDArray[float]) -> int:
