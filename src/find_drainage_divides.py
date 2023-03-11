@@ -6,9 +6,11 @@ locate continental divides and save them in a way that can be used as optimal cu
 the oceanic elastic map
 all angles are in degrees. indexing is z[i,j] = z(ф[i], λ[j])
 """
+from __future__ import annotations
+
 import bisect
 import os
-from math import floor, ceil, nan, inf
+from math import floor, ceil, nan, inf, copysign
 from typing import Iterable, Sequence
 
 import matplotlib.colors as colors
@@ -21,7 +23,7 @@ from numpy.typing import NDArray
 from util import bin_centers, bin_index, simplify_path, intersects
 
 # how many pixels per degree
-RESOLUTION = 5  # TODO: I think it needs to be at least 10
+RESOLUTION = 10
 # how to determine the value of a pixel that contains multiple data points
 REDUCTION = np.mean
 # what fraction of the found paths should be plotted
@@ -71,10 +73,13 @@ def calculate_drainage_divides(endpoints: list[tuple[float, float]]):
 	# save and plot them
 	np.savetxt("../spec/cuts_mountains.txt", np.concatenate(paths), fmt="%.1f")  # type: ignore
 	plt.figure()
-	plt.contourf(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 21), vmax=3000, cmap="cividis")
-	plt.contour(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 21), colors="k", linewidths=0.2)
+	plt.contourf(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 31), vmax=3000, cmap="cividis")
+	plt.contour(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 31), colors="k", linewidths=0.2)
+	for river in rivers:
+		ф, λ = zip(*river)
+		plt.plot(λ, ф, "w", linewidth=0.6)
 	for path in paths:
-		plt.plot(path[:, 1], path[:, 0])
+		plt.plot(path[:, 1], path[:, 0], "C3")
 	plt.scatter([λ for ф, λ in endpoints], [ф for ф, λ in endpoints], c=f"C{len(paths)}")
 	plt.xlabel("Longitude (°)")
 	plt.ylabel("Latitude (°)")
@@ -114,7 +119,7 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | NDArr
 	adjacency = define_adjacency_matrix(x_nodes, y_nodes, barriers)
 
 	# keep a list of the current paths in progress
-	candidates: list[Path] = [Path([i_start], [j_start], z_nodes)]
+	candidates: list[Path] = [Path([i_start], [j_start], [z_nodes[i_start, j_start]])]
 	paths_to_plot: list[Path] = []
 	while True:
 		# take the most promising one
@@ -132,40 +137,38 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | NDArr
 			# save it as a valid path
 			visited[i, j] = True
 			# and iterate thru all potential follow-ups
-			for di in [-1, 0, 1]:
-				for dj in [-1, 0, 1]:
-					if adjacency[i, j, di, dj]:  # check if the step is valid
-						i_next = i + di
-						j_next = (j + dj + y_nodes.size)%y_nodes.size
-						if not visited[i_next, j_next]: # not cross any existing paths
-							if path.len < 2 or not adjacent((i_next, j_next), (path.i[-2], path.j[-2])): # and it must not form an unnecessary detour
-								new_path = Path(path.i + [i_next],
-								                path.j + [j_next], z_nodes)
+			for i_next in [i, i - 1, i + 1]:
+				for j_next in [j, j - 1, j + 1]:
+					j_next = (j_next + y_nodes.size)%y_nodes.size
+					if adjacent((i, j), (i_next, j_next), adjacency):  # check if the step is valid
+						if not visited[i_next, j_next]:  # and doesn’t cross any existing paths
+							if path.len < 2 or not adjacent((i_next, j_next), (path.i[-2], path.j[-2]), adjacency): # and it must not form an unnecessary detour
+								new_path = path + (i_next, j_next, z_nodes[i_next, j_next])
 								bisect.insort(candidates, new_path)
 		if len(paths_to_plot) == 6:
 			plt.clf()
 			for path in paths_to_plot:
-				plt.plot(path.j, path.i, "--", color="#000", zorder=-1)
+				plt.plot(path.j, path.i, "--", linewidth=0.8, color="#000", zorder=10)
 			plt.scatter([path.end[1] for path in paths_to_plot],
 			            [path.end[0] for path in paths_to_plot],
-			            linewidth=1, color="#000", zorder=-1)
+			            color="#000", zorder=10)
 			plt.gca().set_facecolor("#006")
 			plt.imshow(
 				np.where(z_nodes > 0, z_nodes, nan),
 				extent=(-0.5, y_nodes.size - 0.5, -0.5, x_nodes.size - 0.5),
 				norm=colors.LogNorm(
-					vmin=np.max(z_nodes)**-0.5,
+					vmin=np.max(z_nodes)**-(1/3),
 					vmax=np.max(z_nodes)),
 				origin="lower", zorder=-3)
 			for barrier in barriers:
 				ф, λ = zip(*barrier)
 				plt.plot(λ, ф, "#006",
-				         linewidth=1.5, zorder=-2)
+				         linewidth=1.2, zorder=-2)
 			i_nodes = np.arange(0, x_nodes.size)
 			j_nodes = np.arange(0, y_nodes.size)
 			plt.contour(j_nodes, i_nodes, np.where(visited, 0, 1),
 			            levels=[0.5], colors="w",
-			            linewidths=.7, zorder=-1)
+			            linewidths=.5, zorder=-1)
 			plt.axis([np.min(j_nodes[np.any(visited, axis=0)]),
 			          np.max(j_nodes[np.any(visited, axis=0)]),
 			          np.min(i_nodes[np.any(visited, axis=1)]),
@@ -303,35 +306,48 @@ def index_of_2d(pair: tuple, x: NDArray[float], y: NDArray[float]) -> int:
 		return -1
 
 
-def adjacent(a: tuple[int, int], b: tuple[int, int]) -> bool:
-	""" are these two index pairs adjacent (diagonals count)? """
-	return abs(a[0] - b[0]) <= 1 and abs(a[1] - b[1]) <= 1
+def adjacent(a: tuple[int, int], b: tuple[int, int], adjacency: NDArray[bool]) -> bool:
+	""" are these two index pairs adjacent (diagonals count, and check for wraparound)? """
+	i, j = a
+	di = b[0] - a[0]
+	dj = b[1] - a[1]
+	if abs(dj) == adjacency.shape[1] - 1:
+		dj = int(copysign(1, -dj))
+	return abs(di) <= 1 and abs(dj) <= 1 and adjacency[i, j, di, dj]
 
 
 class Path:
-	def __init__(self, i: list[int], j: list[int], hitemap: NDArray[float]):
+	def __init__(self, i: list[int], j: list[int], z_sorted: list[float], num_kinks: int = 0):
 		""" a class that keeps track of a path thru a grid in a manner that can be easily sorted. """
 		self.i = i # the x indices that define this path
 		self.j = j # the y indices that define this path
-		self.z_sorted = sorted(hitemap[i, j]) # the sorted z values that rate this path
+		self.z_sorted = z_sorted # the sorted z values that rate this path
 		self.len = len(i)
 		assert self.len >= 1
 		self.start = (i[0], j[0])
 		self.end = (i[-1], j[-1])
-		self.straightness = 0
-		for k in range(self.len - 1, 0, -1):
-			if self.i[k] - self.i[k - 1] == self.j[k] - self.j[k - 1]:
-				self.straightness += 1
-			else:
-				break
+		self.num_kinks = num_kinks
 
-	def __lt__(self, other):
+	def __add__(self, other: tuple[int, int, float]):
+		i, j, z = other
+		new_i = self.i + [i]
+		new_j = self.j + [j]
+		new_z_sorted = list(self.z_sorted)
+		bisect.insort(new_z_sorted, z)
+		new_num_kinks = self.num_kinks
+		if self.len >= 2:
+			if (i - self.i[-1] != self.i[-1] - self.i[-2]) or \
+			   (j - self.j[-1] != self.j[-1] - self.j[-2]):
+				new_num_kinks += 1
+		return Path(new_i, new_j, new_z_sorted, new_num_kinks)
+
+	def __lt__(self, other: Path):
 		if self.z_sorted < other.z_sorted:
 			return True
 		elif self.z_sorted > other.z_sorted:
 			return False
 		else:
-			return self.straightness < other.straightness
+			return self.num_kinks > other.num_kinks
 
 
 if __name__ == "__main__":
