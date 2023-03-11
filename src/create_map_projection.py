@@ -5,10 +5,12 @@ create_map_projection.py
 take a basic mesh and optimize it according to a particular cost function in order to
 create a new Elastic Projection.
 """
+from __future__ import annotations
+
 import logging
 import sys
 import threading
-from math import inf, pi, log2, nan, floor, isfinite
+from math import inf, pi, log2, nan, floor, isfinite, tan, atan, isnan
 from typing import Iterable, Sequence
 
 import h5py
@@ -17,13 +19,14 @@ import shapefile
 import tifffile
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
+from scipy import optimize
 from scipy.interpolate import RegularGridInterpolator
 
 from cmap import CUSTOM_CMAP
 from optimize import minimize_with_bounds
 from sparse import SparseNDArray
-from util import dilate, EARTH, index_grid, Scalar, inside_region, inside_polygon, interp, \
-	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor
+from util import dilate, EARTH, index_grid, Scalar, inside_region, interp, \
+	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor, wrap_angle
 
 logging.basicConfig(
 	level=logging.INFO,
@@ -65,13 +68,14 @@ def create_map_projection(configuration_file: str):
 
 	# reformat the nodes into a list without gaps or duplicates
 	node_indices, node_positions = enumerate_nodes(mesh)
+	mesh_indices = Mesh(section_borders, ф_mesh, λ_mesh, node_indices)
 
 	# and then do the same thing for cell corners
 	cell_definitions, [cell_shape_weights, cell_scale_weights] = enumerate_cells(
 		node_indices, [shape_weights, scale_weights], dΦ, dΛ)
 
 	# set up the fitting constraints that will force the map to fit inside a box
-	border_matrix = project_section_borders(ф_mesh, λ_mesh, node_indices, section_borders, .05)
+	border_matrix = project_section_borders(mesh_indices, 5e-2)
 	map_size = np.array([width, height])
 
 	# load the coastline data from Natural Earth
@@ -152,7 +156,7 @@ def create_map_projection(configuration_file: str):
 		if mesh_factor > 0:
 			gradient_tolerance = 1e-3/EARTH.R
 			barrier_tolerance = 1e-2*EARTH.R
-			reduce, restore = mesh_skeleton(node_indices, mesh_factor, ф_mesh)
+			reduce, restore = mesh_skeleton(mesh_indices, mesh_factor)
 		else:
 			gradient_tolerance = 1e-4/EARTH.R
 			barrier_tolerance = 1e-3*EARTH.R
@@ -209,7 +213,7 @@ def create_map_projection(configuration_file: str):
 			done = not calculation.is_alive()
 			show_projection(current_state, current_positions,
 			                latest_step, values, grads, done,
-			                ф_mesh, λ_mesh, dΦ, dΛ, node_indices,
+			                mesh_indices, dΦ, dΛ,
 			                cell_definitions, cell_scale_weights,
 			                coastlines, border_matrix, width, height,
 			                map_axes, hist_axes, valu_axes, diff_axes)
@@ -232,14 +236,16 @@ def create_map_projection(configuration_file: str):
 	node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))
 
 	# apply the optimized vector back to the mesh
-	mesh = node_positions[node_indices, :]
-	mesh[node_indices == -1, :] = nan
+	node_positions_with_nan = np.concatenate([node_positions, [[nan, nan]]])
+	mesh = Mesh(section_borders, ф_mesh, λ_mesh,
+	            node_positions_with_nan[node_indices, :])
 
 	# and save it!
-	border_matrix = project_section_borders(ф_mesh, λ_mesh, node_indices, section_borders, 5e-3)
+	print("projecting section borders...")
+	border_matrix = project_section_borders(mesh_indices, 5e-3)
+	print("saving results...")
 	save_projection(configure["name"], configure["descript"],
-	                ф_mesh, λ_mesh, mesh,
-	                section_borders, configure["section_names"].split(","),
+	                mesh, configure["section_names"].split(","),
 	                decimate_path(border_matrix @ node_positions, resolution=5))
 
 	logging.info(f"elastik {configure['name']} projection saved!")
@@ -343,64 +349,62 @@ def enumerate_cells(node_indices: NDArray[int], values: list[NDArray[float] | li
 	return cell_definitions, cell_weights
 
 
-def mesh_skeleton(lookup_table: NDArray[int], factor: int, ф: NDArray[float]
-                  ) -> tuple[Tensor, Tensor]:
+def mesh_skeleton(lookup_table: Mesh, factor: int) -> tuple[Tensor, Tensor]:
 	""" create a pair of inverse functions that transform points between the full space of possible meshes and a reduced
 	    space with fewer degrees of freedom. the idea here is to identify 80% or so of the nodes that can form a
 	    skeleton, and from which the remaining nodes can be interpolated. to that end, each parallel will have some
 	    number of regularly spaced key nodes, and all nodes adjacent to an edge will be keys, as well, and all nodes
 	    that aren't key nodes will be ignored when reducing the position vector and interpolated from neibors when
 	    restoring it.
-	    :param lookup_table: the index of each node's position in the state vector
+	    :param lookup_table: a Mesh object containing the index of each node's position in the state vector
 	    :param factor: approximately how much the resolution should decrease
-	    :param ф: the latitudes of the nodes
 	    :return: a matrix that linearly reduces a set of node positions to just the bare skeleton, and a matrix that
 	             linearly reconstructs the missing node positions from a reduced set.  don't worry about their exact
 	             types; they'll both support matrix multiplication with '@'.
 	"""
-	n_full = np.max(lookup_table) + 1
+	n_full = np.max(lookup_table.nodes) + 1
 	# start by filling out these connection graffs, which are nontrivial because of the layers
 	east_neibor = np.full(n_full, -1)
 	west_neibor = np.full(n_full, -1)
 	north_neibor = np.full(n_full, -1)
 	south_neibor = np.full(n_full, -1)
-	for h in range(lookup_table.shape[0]):
-		for i in range(lookup_table.shape[1]):
-			for j in range(lookup_table.shape[2]):
-				if lookup_table[h, i, j] != -1:
-					if j - 1 >= 0 and lookup_table[h, i, j - 1] != -1:
-						west_neibor[lookup_table[h, i, j]] = lookup_table[h, i, j - 1]
-					if j + 1 < lookup_table.shape[2] and lookup_table[h, i, j + 1] != -1:
-						east_neibor[lookup_table[h, i, j]] = lookup_table[h, i, j + 1]
-					if i - 1 >= 0 and lookup_table[h, i - 1, j] != -1:
-						south_neibor[lookup_table[h, i, j]] = lookup_table[h, i - 1, j]
-					if i + 1 < lookup_table.shape[1] and lookup_table[h, i + 1, j] != -1:
-						north_neibor[lookup_table[h, i, j]] = lookup_table[h, i + 1, j]
+	for h in range(lookup_table.nodes.shape[0]):
+		for i in range(lookup_table.nodes.shape[1]):
+			for j in range(lookup_table.nodes.shape[2]):
+				if lookup_table.nodes[h, i, j] != -1:
+					if j - 1 >= 0 and lookup_table.nodes[h, i, j - 1] != -1:
+						west_neibor[lookup_table.nodes[h, i, j]] = lookup_table.nodes[h, i, j - 1]
+					if j + 1 < lookup_table.nodes.shape[2] and lookup_table.nodes[h, i, j + 1] != -1:
+						east_neibor[lookup_table.nodes[h, i, j]] = lookup_table.nodes[h, i, j + 1]
+					if i - 1 >= 0 and lookup_table.nodes[h, i - 1, j] != -1:
+						south_neibor[lookup_table.nodes[h, i, j]] = lookup_table.nodes[h, i - 1, j]
+					if i + 1 < lookup_table.nodes.shape[1] and lookup_table.nodes[h, i + 1, j] != -1:
+						north_neibor[lookup_table.nodes[h, i, j]] = lookup_table.nodes[h, i + 1, j]
 
 	# then decide which nodes should be independently defined in the skeleton
 	has_defined_neibors = np.full(n_full + 1, False) # (this array has an extra False at the end so that -1 works nicely)
 	is_defined = np.full(n_full, False)
 	# start by marking some evenly spaced interior points
 	if factor >= 1.5:
-		num_ф = max(3, floor((lookup_table.shape[1] - 1)/factor))
+		num_ф = max(3, floor((lookup_table.nodes.shape[1] - 1)/factor))
 		important_ф = np.linspace(-90, 90, num_ф, endpoint=False)
-		important_i = np.round((important_ф + 90)*(lookup_table.shape[1] - 1)/180)
+		important_i = np.round((important_ф + 90)*(lookup_table.nodes.shape[1] - 1)/180)
 	else:
-		important_i = np.arange(lookup_table.shape[1])
-	for h in range(lookup_table.shape[0]):
-		for i in range(lookup_table.shape[1]):
-			num_λ = max(1, round((lookup_table.shape[2] - 1)*np.cos(ф[i])/factor))
-			if num_λ <= lookup_table.shape[2]/1.5:
+		important_i = np.arange(lookup_table.nodes.shape[1])
+	for h in range(lookup_table.nodes.shape[0]):
+		for i in range(lookup_table.nodes.shape[1]):
+			num_λ = max(1, round((lookup_table.nodes.shape[2] - 1)*np.cos(lookup_table.ф[i])/factor))
+			if num_λ <= lookup_table.nodes.shape[2]/1.5:
 				important_λ = np.linspace(0, 360, num_λ, endpoint=False)
-				important_j = np.round(important_λ*(lookup_table.shape[2] - 1)/360)
+				important_j = np.round(important_λ*(lookup_table.nodes.shape[2] - 1)/360)
 			else:
-				important_j = np.arange(lookup_table.shape[2])
-			for j in range(lookup_table.shape[2]):
-				if lookup_table[h, i, j] != -1:
+				important_j = np.arange(lookup_table.nodes.shape[2])
+			for j in range(lookup_table.nodes.shape[2]):
+				if lookup_table.nodes[h, i, j] != -1:
 					important_row = i in important_i
 					important_col = j in important_j
-					has_defined_neibors[lookup_table[h, i, j]] |= important_row
-					is_defined[lookup_table[h, i, j]] |= important_col
+					has_defined_neibors[lookup_table.nodes[h, i, j]] |= important_row
+					is_defined[lookup_table.nodes[h, i, j]] |= important_col
 	# then make sure we define enuff points at each edge to keep it all fully defined
 	has_defined_neibors[:-1] |= (north_neibor == -1) | (south_neibor == -1)
 	is_defined |= (~has_defined_neibors[east_neibor]) | (~has_defined_neibors[west_neibor])
@@ -497,31 +501,33 @@ def compute_principal_strains(positions: NDArray[float],
 
 def show_projection(fit_positions: NDArray[float], all_positions: NDArray[float], velocity: NDArray[float],
                     values: list[float], grads: list[float], final: bool,
-                    ф_mesh: NDArray[float], λ_mesh: NDArray[float], dΦ: NDArray[float], dΛ: NDArray[float],
-                    mesh_index: NDArray[int], cell_definitions: NDArray[int], cell_weights: NDArray[float],
+                    mesh_indices: Mesh, dΦ: NDArray[float], dΛ: NDArray[float],
+                    cell_definitions: NDArray[int], cell_weights: NDArray[float],
                     coastlines: list[np.array], border: NDArray[float] | SparseNDArray,
                     map_width: float, map_hite: float,
                     map_axes: plt.Axes, hist_axes: plt.Axes,
                     valu_axes: plt.Axes, diff_axes: plt.Axes) -> None:
-	""" display the current state of the optimization process, including a preliminary map, a distortion histogram,
-	    and a convergence as a function of time plot """
+	""" display the current state of the optimization process, including a preliminary map, a
+	    distortion histogram, and a convergence as a function of time plot
+	"""
 	map_axes.clear()
-	mesh = np.where(mesh_index[:, :, :, np.newaxis] != -1,
-	                all_positions[mesh_index, :], nan)
-	for h in range(mesh.shape[0]):
-		# plot the underlying mesh for each section
-		map_axes.plot(mesh[h, :, :, 0], mesh[h, :, :, 1], "#bbb", linewidth=.3, zorder=1)
-		map_axes.plot(mesh[h, :, :, 0].T, mesh[h, :, :, 1].T, "#bbb", linewidth=.3, zorder=1)
+	mesh = Mesh(mesh_indices.section_borders, mesh_indices.ф, mesh_indices.λ,
+	            np.where(mesh_indices.nodes[:, :, :, np.newaxis] != -1,
+	                     all_positions[mesh_indices.nodes, :], nan))
+	for h in range(mesh.num_sections):
+		# plot the underlying mesh_indices for each section
+		map_axes.plot(mesh.nodes[h, :, :, 0], mesh.nodes[h, :, :, 1], "#bbb", linewidth=.3, zorder=1)
+		map_axes.plot(mesh.nodes[h, :, :, 0].T, mesh.nodes[h, :, :, 1].T, "#bbb", linewidth=.3, zorder=1)
 		# crudely project and plot the coastlines onto each section
-		project = RegularGridInterpolator([ф_mesh, λ_mesh], mesh[h, :, :, :],
+		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[h, :, :, :],
 		                                  bounds_error=False, fill_value=nan)
 		for line in coastlines:
 			projected_line = project(line)
 			map_axes.plot(projected_line[:, 0], projected_line[:, 1], "#000", linewidth=.8, zorder=2)
-		# plot the outline of the mesh
+		# plot the outline of the mesh_indices
 		border_points = border @ all_positions
-		loop = np.arange(-1, border_points.shape[0])
-		map_axes.plot(border_points[loop, 0], border_points[loop, 1], "#000", linewidth=1.3, zorder=2)
+		map_axes.fill(border_points[:, 0], border_points[:, 1],
+		              facecolor="none", edgecolor="#000", linewidth=1.3, zorder=2)
 
 	map_axes.plot(np.multiply([-1, 1, 1, -1, -1], map_width/2),
 	              np.multiply([-1, -1, 1, 1, -1], map_hite/2), "#000", linewidth=.3, zorder=2)
@@ -569,21 +575,16 @@ def show_projection(fit_positions: NDArray[float], all_positions: NDArray[float]
 	diff_axes.grid(which="major", axis="y")
 
 
-def save_projection(name: str, descript: str, ф: NDArray[float], λ: NDArray[float], mesh: NDArray[float],
-                    section_borders: list[NDArray[float]], section_names: list[str],
+def save_projection(name: str, descript: str, mesh: Mesh, section_names: list[str],
                     projected_border: NDArray[float]) -> None:
 	""" save all of the important map projection information as a HDF5 and text file.
 	    :param name: the name of this elastick map projection
 	    :param descript: a short description of the map projection, to be included in the HDF5 file as an attribute.
-	    :param ф: the m latitude values at which the projection is defined
-	    :param λ: the l longitude values at which the projection is defined
-	    :param mesh: an n×m×l×2 array of the x and y coordinates at each point
-	    :param section_borders: a list of the borders of the n sections. each one is an o×2 array of x and y
-	                            coordinates, starting and ending at the same point.
+	    :param mesh: the mesh of the projection being saved
 	    :param section_names: a list of the names of the n sections. these will be added to the HDF5 file as attributes.
 	    :param projected_border: the px2 array of cartesian points representing the border of the whole map
 	"""
-	assert len(section_borders) == len(section_names)
+	assert len(section_names) == mesh.num_sections
 
 	# start by calculating some things
 	((left, bottom), (right, top)) = get_bounding_box(projected_border)
@@ -592,7 +593,7 @@ def save_projection(name: str, descript: str, ф: NDArray[float], λ: NDArray[fl
 	with h5py.File(f"../projection/elastik-{name}.h5", "w") as file:
 		file.attrs["name"] = name
 		file.attrs["description"] = descript
-		file.attrs["num_sections"] = len(section_borders)
+		file.attrs["num_sections"] = mesh.num_sections
 		file.create_dataset("projected_border", shape=(projected_border.shape[0],), dtype=h5_xy_tuple)
 		file["projected_border"]["x"] = projected_border[:, 0]
 		file["projected_border"]["y"] = projected_border[:, 1]
@@ -600,33 +601,33 @@ def save_projection(name: str, descript: str, ф: NDArray[float], λ: NDArray[fl
 		file["bounding_box"]["x"] = [left, right]
 		file["bounding_box"]["y"] = [bottom, top]
 		file["bounding_box"].attrs["units"] = "km"
-		file["sections"] = [f"section{i}" for i in range(len(section_borders))]
+		file["sections"] = [f"section{i}" for i in range(mesh.num_sections)]
 
-		for h in range(len(section_borders)):
-			i_relevant = dilate(np.any(~np.isnan(mesh[h, :, :, 0]), axis=1), 1)
+		for h in range(mesh.num_sections):
+			i_relevant = dilate(np.any(~np.isnan(mesh.nodes[h, :, :, 0]), axis=1), 1)
 			num_ф = np.count_nonzero(i_relevant)
-			j_relevant = dilate(np.any(~np.isnan(mesh[h, 1:-1, :, 0]), axis=0), 1)
+			j_relevant = dilate(np.any(~np.isnan(mesh.nodes[h, 1:-1, :, 0]), axis=0), 1)
 			num_λ = np.count_nonzero(j_relevant)
 
 			group = file.create_group(f"section{h}")
 			group.attrs["name"] = section_names[h]
-			group["latitude"] = np.degrees(ф[i_relevant]) # TODO: internationalize
+			group["latitude"] = np.degrees(mesh.ф[i_relevant]) # TODO: internationalize
 			group["latitude"].attrs["units"] = "°"
 			group["latitude"].make_scale()
-			group["longitude"] = np.degrees(λ[j_relevant])
+			group["longitude"] = np.degrees(mesh.λ[j_relevant])
 			group["longitude"].make_scale()
 			group["longitude"].attrs["units"] = "°"
 			group.create_dataset("projection", shape=(num_ф, num_λ), dtype=h5_xy_tuple)
-			group["projection"]["x"] = mesh[h, i_relevant][:, j_relevant, 0]
-			group["projection"]["y"] = mesh[h, i_relevant][:, j_relevant, 1]
+			group["projection"]["x"] = mesh.nodes[h, i_relevant][:, j_relevant, 0]
+			group["projection"]["y"] = mesh.nodes[h, i_relevant][:, j_relevant, 1]
 			group["projection"].attrs["units"] = "km"
 			group["projection"].dims[0].attach_scale(group["latitude"])
 			group["projection"].dims[1].attach_scale(group["longitude"])
-			group.create_dataset("border", shape=(section_borders[h].shape[0],), dtype=h5_фλ_tuple)
-			group["border"]["latitude"] = np.degrees(section_borders[h][:, 0])
-			group["border"]["longitude"] = np.degrees(section_borders[h][:, 1])
+			group.create_dataset("border", shape=(mesh.section_borders[h].shape[0],), dtype=h5_фλ_tuple)
+			group["border"]["latitude"] = np.degrees(mesh.section_borders[h][:, 0])
+			group["border"]["longitude"] = np.degrees(mesh.section_borders[h][:, 1])
 			group["border"].attrs["units"] = "°"
-			((left_h, bottom_h), (right_h, top_h)) = get_bounding_box(mesh[h, :, :, :])
+			((left_h, bottom_h), (right_h, top_h)) = get_bounding_box(mesh.nodes[h, :, :, :])
 			group.create_dataset("bounding_box", shape=(2,), dtype=h5_xy_tuple)
 			group["bounding_box"]["x"] = [max(left, left_h), min(right, right_h)]
 			group["bounding_box"]["y"] = [max(bottom, bottom_h), min(top, top_h)]
@@ -638,19 +639,19 @@ def save_projection(name: str, descript: str, ф: NDArray[float], λ: NDArray[fl
 	y_raster = np.linspace(bottom, top, raster_resolution)
 	projected_raster = np.degrees(inverse_project(
 		np.transpose(np.meshgrid(x_raster, y_raster, indexing="xy"), (1, 2, 0)),
-		ф, λ, mesh, section_borders=section_borders)) # TODO: this needs to be a *lot* faster
+		mesh))
 
 	with open(f"../projection/elastik-{name}.csv", "w") as f:
-		f.write(f"elastik {name} projection ({mesh.shape[0]} sections):\n") # the number of sections
-		for h in range(mesh.shape[0]):
-			f.write(f"border ({section_borders[h].shape[0]} vertices):\n") # the number of section border vertices
-			for i in range(section_borders[h].shape[0]):
-				f.write(f"{section_borders[h][i, 0]:.6f},{section_borders[h][i, 1]:.6f}\n") # the section border vertices (°)
-			f.write(f"projection ({mesh.shape[1]}x{mesh.shape[2]} points):\n") # the shape of the section mesh
-			for i in range(mesh.shape[1]):
-				for j in range(mesh.shape[2]):
-					f.write(f"{mesh[h, i, j, 0]:.3f},{mesh[h, i, j, 1]:.3f}") # the section mesh points (km)
-					if j != mesh.shape[2] - 1:
+		f.write(f"elastik {name} projection ({mesh.num_sections} sections):\n") # the number of sections
+		for h in range(mesh.num_sections):
+			f.write(f"border ({mesh.section_borders[h].shape[0]} vertices):\n") # the number of section border vertices
+			for i in range(mesh.section_borders[h].shape[0]):
+				f.write(f"{mesh.section_borders[h][i, 0]:.6f},{mesh.section_borders[h][i, 1]:.6f}\n") # the section border vertices (°)
+			f.write(f"projection ({mesh.nodes.shape[1]}x{mesh.nodes.shape[2]} points):\n") # the shape of the section mesh_indices
+			for i in range(mesh.nodes.shape[1]):
+				for j in range(mesh.nodes.shape[2]):
+					f.write(f"{mesh.nodes[h, i, j, 0]:.3f},{mesh.nodes[h, i, j, 1]:.3f}") # the section mesh_indices points (km)
+					if j != mesh.nodes.shape[2] - 1:
 						f.write(", ")
 				f.write("\n")
 		f.write(f"projected border ({projected_border.shape[0]} vertices):\n") # the number of map edge vertices
@@ -712,56 +713,51 @@ def load_mesh(filename: str) -> tuple[NDArray[float], NDArray[float], NDArray[fl
 	return ф, λ, mesh, sections
 
 
-def project(points: list[tuple[float, float]] | NDArray[float],
-            ф_mesh: NDArray[float], λ_mesh: NDArray[float], nodes: NDArray[float] | NDArray[int],
-            section_borders: list[NDArray[float]] = None, section_index: int = None
-            ) -> SparseNDArray | NDArray[float]:
+def project(points: list[tuple[float, float]] | NDArray[float], mesh: Mesh,
+            section_index: int = None) -> SparseNDArray | NDArray[float]:
 	""" take some points, giving all sections of the map projection, and project them into the plane, representing them
 	    either with their resulting cartesian coordinates or as matrix that multiplies by the vector of node positions
-	    to produce an array of points on the border that can be used to compute the bounding box and enforce constraints
-	    :param points: the spherical coordinates of the points to project
-	    :param ф_mesh: the latitudes at which the map position is defined
-	    :param λ_mesh: the longitudes at which the map position is defined
-	    :param section_borders: the list of the borders for all the sections
+	    to produce an array of points.  you can either specify a section_index, in which case all points will be
+	    projected to a single section (and points outide of that section’s bounds will be projected as NaN), or not
+	    specify it, in which case all points will be projected to the one section for which they’re inside its borders.
+	    :param points: an m×...×n×2 array of the spherical coordinates of the points to project (radians)
+	    :param mesh: the mesh onto which to project the points
 	    :param section_index: the index of the section to use for all points
-	    :param nodes: either a) a 4d array of x and y coordinates for each section, from which the coordinates of the
-	                            projected points will be determined, or
-	                         b) a 3d array of node indices for each section, indicating that the result should be a
-	                            matrix that you can multiply by the node positions later.
 	"""
-	if section_borders is None and section_index is None:
+	if mesh.section_borders is None and section_index is None:
 		raise ValueError("at least one of section_borders and section_index must not be none.")
 
-	positions_known = nodes.ndim == 4
+	positions_known = mesh.nodes.ndim == 4
 
 	# first, we set up an identity matrix of sorts, if the positions aren't currently known
 	if positions_known:
-		valid = np.isfinite(nodes[:, :, :, 0])
+		valid = np.isfinite(mesh.nodes[:, :, :, 0])
 	else:
-		valid = nodes != -1
-		num_nodes = np.max(nodes) + 1
-		nodes = SparseNDArray.concatenate([
+		valid = mesh.nodes != -1
+		num_nodes = np.max(mesh.nodes) + 1
+		new_nodes = SparseNDArray.concatenate([
 			SparseNDArray.identity(num_nodes),
 			SparseNDArray.zeros((1, num_nodes), 1)]
-		).to_array_array()[nodes]
+		).to_array_array()[mesh.nodes]
+		mesh = Mesh(mesh.section_borders, mesh.ф, mesh.λ, new_nodes)
 
 	# next, we must identify any nodes that exist in multiple layers
-	hs = np.arange(nodes.shape[0])
+	hs = np.arange(mesh.num_sections)
 	shared = np.tile(
 		np.any(
 			valid & np.all(
-				np.reshape(nodes[hs, ...] == nodes[hs - 1, ...], nodes.shape[:3] + (-1,)),
+				np.reshape(mesh.nodes[hs, ...] == mesh.nodes[hs - 1, ...], mesh.nodes.shape[:3] + (-1,)),
 				axis=3
 			), axis=0
-		), (nodes.shape[0], 1, 1))
+		), (mesh.num_sections, 1, 1))
 
 	# and start calculating gradients
-	ф_gradients = np.empty(nodes.shape, dtype=nodes.dtype)
-	λ_gradients = np.empty(nodes.shape, dtype=nodes.dtype)
+	ф_gradients = np.empty(mesh.nodes.shape, dtype=mesh.nodes.dtype)
+	λ_gradients = np.empty(mesh.nodes.shape, dtype=mesh.nodes.dtype)
 	for where in [valid, shared]:
-		gradients, gradients_mask = gradient(nodes, ф_mesh, where=where, axis=1)
+		gradients, gradients_mask = gradient(mesh.nodes, mesh.ф, where=where, axis=1)
 		ф_gradients[~gradients_mask, ...] = gradients[~gradients_mask, ...]
-		gradients, gradients_mask = gradient(nodes, λ_mesh, where=where, axis=2)
+		gradients, gradients_mask = gradient(mesh.nodes, mesh.λ, where=where, axis=2)
 		λ_gradients[~gradients_mask, ...] = gradients[~gradients_mask, ...]
 
 	# finally, interpolate
@@ -769,11 +765,11 @@ def project(points: list[tuple[float, float]] | NDArray[float],
 	for point in points:
 		h = section_index
 		if h is None:
-			for trial_h, border in zip(hs, section_borders): # on the correct section
+			for trial_h, border in zip(hs, mesh.section_borders): # on the correct section
 				if inside_region(*point, border, period=2*pi):
 					h = trial_h
 					break
-		result.append(smooth_interpolate(point, (ф_mesh, λ_mesh), nodes[h, ...],
+		result.append(smooth_interpolate(point, (mesh.ф, mesh.λ), mesh.nodes[h, ...],
 		                                 (ф_gradients[h, ...], λ_gradients[h, ...])))
 
 	# convert to the correct type
@@ -783,70 +779,53 @@ def project(points: list[tuple[float, float]] | NDArray[float],
 		return SparseNDArray.concatenate(result)
 
 
-def inverse_project(points: NDArray[float],
-                    ф_mesh: NDArray[float], λ_mesh: NDArray[float], nodes: NDArray[float],
-                    section_borders: list[NDArray[float]] = None, section_index: int = None
-                    ) -> SparseNDArray | NDArray[float]:
+def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArray[float]:
 	""" take some points, specifying a section of the map projection, and project them from the plane back to the globe,
 	    representing the result as the resulting latitudes and longitudes
-	    :param ф_mesh: the latitudes at which the map position is defined
-	    :param λ_mesh: the longitudes at which the map position is defined
-	    :param section_borders: the boundary of each section in spherical coordinates
-	    :param section_index: the index of the section to which we should project everything
-	    :param nodes: the positions of the nodes
-	    :param points: the spherical coordinates of the points to project
+	    :param points: the m×...×n×2 array of planar coordinates of the points to project (km)
+	    :param mesh: the mesh on which to find the given points
+	    :return: the m×...×n×2 array of spherical coordinates corresponding to the input points (radians)
 	"""
-	if section_borders is None and section_index is None:
-		raise ValueError("at least one of section_borders and section_index must not be none.")
-
-	if section_index is not None:
-		hs = [section_index]
-	else:
-		hs = range(nodes.shape[0])
+	hs = range(mesh.num_sections)
 
 	# do each point one at a time, since this doesn't need to be super fast
-	sectioned_results = np.full((len(hs),) + points.shape, nan)
+	sectioned_results = np.full((len(hs), *points.shape), nan)
+	closenesses = np.empty((len(hs), *points.shape))
 	for point_index, point in enumerate(points.reshape((-1, 2))):
 		point_index = np.unravel_index(point_index, points.shape[:-1])
 		logging.info(f"{point_index}/{points.shape[:-1]}")
+		guesses = np.reshape(np.stack(np.meshgrid(
+			np.linspace(-pi/2, pi/2, 49)[1:-1], np.linspace(-pi, pi, 97)), axis=-1), (-1, 2))
 		for h in hs:
-			for i in range(1, nodes.shape[1]):
-				for j in range(1, nodes.shape[2]):
-					# look for a cell that contains it
-					if np.all(np.isfinite(nodes[i-1:i+1, j-1:j+1])):
-						sw = nodes[h, i - 1, j - 1]
-						se = nodes[h, i - 1, j]
-						nw = nodes[h, i, j - 1]
-						ne = nodes[h, i, j]
-						if inside_polygon(*point, np.array([ne, nw, sw, se]), convex=True):
-							# do inverse 2d linear interpolation (it's harder than one mite expect!)
-							coords = [nan, nan]
-							things = [(0, ф_mesh, i, [[sw, se], [nw, ne]]), (1, λ_mesh, j, [[sw, nw], [se, ne]])]
-							for f, axis, index, corners in things:
-								for g in [0, 1]:
-									x, y = point[g], point[1 - g]
-									y0 = interp(x,
-									            corners[0][0][    g], corners[0][1][    g],
-									            corners[0][0][1 - g], corners[0][1][1 - g])
-									y1 = interp(x,
-									            corners[1][0][    g], corners[1][1][    g],
-									            corners[1][0][1 - g], corners[1][1][1 - g])
-									if (y0 < y) != (y1 < y):
-										coords[f] = interp(y, y0, y1, axis[index - 1], axis[index])
-										break
-							sectioned_results[(h, *point_index, slice(None))] = coords
-							break
+			results = project(guesses, mesh, h)
+			residuals = np.sum((results - np.array([point]))**2, axis=-1)
+			ф, λ = guesses[np.nanargmin(residuals), :]
+			points_seen = []
+			def distance_fun(state):
+				z, λ = state
+				[(x, y)] = project([(atan(z), wrap_angle(λ))], mesh, h)
+				if isnan(x):
+					return inf
+				points_seen.append((x, y))
+				return np.sum(np.power([x - point[0], y - point[1]], 2))
+			result = optimize.minimize(method="nelder-mead",
+			                           fun=distance_fun, x0=np.array([tan(ф), λ]),
+			                           options=dict(xatol=2))
+			z, λ = result.x
+			sectioned_results[(h, *point_index, 0)] = atan(z)
+			sectioned_results[(h, *point_index, 1)] = wrap_angle(λ)
+			closenesses[(h, *point_index)] = result.fun
 
-	# deal with multiple possible projections for each point, if there were multiple sections given
-	if section_borders is not None:
-		result = np.full(points.shape, nan)
-		for h in hs:
-			inside_h = inside_region(sectioned_results[h, ..., 0],
-			                         sectioned_results[h, ..., 1],
-			                         section_borders[h], period=2*pi)
-			result[inside_h, :] = sectioned_results[h, inside_h, :]
-	else:
-		result = sectioned_results[0, ...]
+	# crudely deal with multiple possible projections for each point
+	best_h = np.argmin(closenesses, axis=0)
+	# first prioritize getting close to a perfect inverse projection
+	result = sectioned_results[best_h, ...]
+	# but mainly prioritize being inside the section borders
+	for h in hs:
+		inside_this_section = inside_region(sectioned_results[h, ..., 0],
+		                         sectioned_results[h, ..., 1],
+		                         mesh.section_borders[h], period=2*pi)
+		result[inside_this_section, :] = sectioned_results[h, inside_this_section, :]
 
 	return result
 
@@ -953,17 +932,16 @@ def gradient(Y: NDArray[float], x: NDArray[float], where: NDArray[bool], axis: i
 	        impossible.transpose(old_axis_order)) # I could use a maskedarray here, but it feels weerd to import the whole module just for this
 
 
-def project_section_borders(ф_mesh: NDArray[float], λ_mesh: NDArray[float],
-                            node_indices: NDArray[int], section_borders: list[NDArray[float]],
+def project_section_borders(index_mesh: Mesh,
                             resolution: float) -> SparseNDArray:
 	""" take the section borders, concatenate them, project them, and trim off the shared edges """
 	borders = []
-	for h, border in enumerate(section_borders): # take the border of each section
+	for h, border in enumerate(index_mesh.section_borders): # take the border of each section
 		first_pole = np.nonzero(abs(border[:, 0]) == pi/2)[0][0]
 		border = np.concatenate([border[first_pole:], border[1:first_pole + 1]]) # rotate the path so it starts and ends at a pole
 		border = border[dilate(abs(border[:, 0]) != pi/2, 1)] # and then remove points that move along the pole
-		borders.append(project(refine_path(border, resolution, period=2*pi), # finally, refine it before projecting
-		                       ф_mesh, λ_mesh, node_indices, section_index=h))
+		borders.append(project(refine_path(border, resolution, period=2*pi),  # finally, refine it before projecting
+		                       index_mesh, section_index=h))
 	border_matrix = simplify_path(SparseNDArray.concatenate(borders), cyclic=True) # simplify the borders together to remove excess
 	return border_matrix
 
@@ -1004,9 +982,29 @@ def product(values: Iterable[NDArray[float] | float | int]) -> NDArray[float] | 
 	return result
 
 
+class Mesh:
+	def __init__(self, section_borders: list[NDArray[float]],
+	             ф: NDArray[float], λ: NDArray[float], nodes: NDArray[float] | NDArray[int]):
+		""" a record containing the arrays that define an Elastik map projection
+		    :param ф: the m latitudes at which the nodes are defined (radians)
+		    :param λ: the n longitudes at which the nodes are defined (radians)
+		    :param nodes: either a) an l×m×n×2 array of x and y coordinates for each section, from which the
+		                            coordinates of the projected points will be determined (km), or
+	                             b) a l×m×n array of node indices for each section, indicating that the result
+	                                should be a matrix that you can multiply by the node positions later.
+		    :param section_borders: the l paths defining each section given as o×2 arrays (radians)
+		"""
+		assert nodes.shape[:3] == (len(section_borders), ф.size, λ.size)
+		self.section_borders = section_borders
+		self.ф = ф
+		self.λ = λ
+		self.nodes = nodes
+		self.num_sections = len(section_borders)
+
+
 if __name__ == "__main__":
 	# create_map_projection("oceans")
-	# create_map_projection("continents")
-	create_map_projection("countries")
+	create_map_projection("continents")
+	# create_map_projection("countries")
 
 	plt.show()

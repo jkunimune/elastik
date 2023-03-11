@@ -126,7 +126,7 @@ def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float
 	    rotation and translation needed to make it landscape and centered on the origin.
 	"""
 	if polygon.ndim != 2 or polygon.shape[0] < 3 or polygon.shape[1] != 2:
-		raise ValueError("the polygon must be a sequence of at least 3 point sin 2-space")
+		raise ValueError("the polygon must be a sequence of at least 3 points in 2-space")
 	# start by finding the convex hull
 	hull = convex_hull(polygon)
 	best_transform = None
@@ -275,11 +275,11 @@ def inside_polygon(x: NDArray[float], y: NDArray[float], polygon: NDArray[float]
 	return inside
 
 
-def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float], period=360) -> NDArray[bool]:
+def inside_region(ф: Numeric, λ: Numeric, region: NDArray[float], period=360) -> NDArray[bool]:
 	""" take a set of points on a globe and run a polygon containment test
-	    :param ф: the latitudes in degrees, either for each point in question or for each
+	    :param ф: the latitude(s) in degrees, either for each point in question or for each
 	              row if the relevant points are in a grid
-	    :param λ: the longitudes in degrees, either for each point in question or for each
+	    :param λ: the longitude(s) in degrees, either for each point in question or for each
 	              collum if the relevant points are in a grid
 	    :param region: a polygon expressed as an n×2 array; each vertex is a row in degrees.
 	                   if the polygon is not closed (i.e. the zeroth vertex equals the last
@@ -288,6 +288,7 @@ def inside_region(ф: NDArray[float], λ: NDArray[float], region: NDArray[float]
 	    :return: a boolean array with the same shape as points (except the 2 at the end)
 	             denoting whether each point is inside the region
 	"""
+	ф, λ = np.array(ф), np.array(λ)
 	if ф.ndim == 1 and λ.ndim == 1 and ф.size != λ.size:
 		ф, λ = ф[:, np.newaxis], λ[np.newaxis, :]
 		out_shape = (ф.size, λ.size)
