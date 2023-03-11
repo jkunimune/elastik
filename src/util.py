@@ -5,7 +5,7 @@ util.py
 some handy utility functions that are used in multiple places
 """
 from math import hypot, pi, cos, sin, inf, copysign
-from typing import Sequence, TYPE_CHECKING, Union
+from typing import Sequence, TYPE_CHECKING, Union, Iterable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -56,7 +56,7 @@ def bin_centers(bin_edges: NDArray[float]) -> NDArray[float]:
 	""" calculate the center of each bin """
 	return (bin_edges[1:] + bin_edges[:-1])/2
 
-def bin_index(x: float | NDArray[float], bin_edges: NDArray[float]) -> float | NDArray[int]:
+def bin_index(x: float | NDArray[float], bin_edges: NDArray[float]) -> int | NDArray[int]:
 	""" I dislike the way numpy defines this function
 	    :param: coerce whether to force everything into the bins (useful when there's round-off)
 	"""
@@ -101,6 +101,14 @@ def dilate(x: NDArray[bool], distance: int) -> NDArray[bool]:
 		x[:-1] |= x[1:]
 		x[1:] |= x[:-1]
 	return x
+
+
+def search_out_from(i0: int, j0: int, shape: tuple[int, int]) -> Iterable[tuple[int, int]]:
+	option_grid = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]))
+	option_list = np.reshape(np.stack(option_grid, axis=-1), (-1, 2))
+	option_distance = abs(option_list[:, 0] - i0) + abs(option_list[:, 1] - j0)
+	option_order = np.argsort(option_distance)
+	return option_list[option_order, :]
 
 
 def intersects(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float], d: tuple[float, float]) -> bool:

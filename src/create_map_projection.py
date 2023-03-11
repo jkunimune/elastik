@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
-from math import inf, pi, log2, nan, floor, isfinite, tan, atan, isnan
+from math import inf, pi, log2, nan, floor, isfinite
 from typing import Iterable, Sequence
 
 import h5py
@@ -19,14 +19,14 @@ import shapefile
 import tifffile
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
-from scipy import optimize
 from scipy.interpolate import RegularGridInterpolator
 
 from cmap import CUSTOM_CMAP
 from optimize import minimize_with_bounds
 from sparse import SparseNDArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, interp, \
-	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor, wrap_angle
+	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor, bin_index, \
+	inside_polygon, search_out_from
 
 logging.basicConfig(
 	level=logging.INFO,
@@ -790,35 +790,52 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 
 	# do each point one at a time, since this doesn't need to be super fast
 	sectioned_results = np.full((len(hs), *points.shape), nan)
-	closenesses = np.empty((len(hs), *points.shape))
+	closenesses = np.empty((len(hs), *points.shape), dtype=float)
 	for point_index, point in enumerate(points.reshape((-1, 2))):
 		point_index = np.unravel_index(point_index, points.shape[:-1])
 		logging.info(f"{point_index}/{points.shape[:-1]}")
 		guesses = np.reshape(np.stack(np.meshgrid(
-			np.linspace(-pi/2, pi/2, 49)[1:-1], np.linspace(-pi, pi, 97)), axis=-1), (-1, 2))
+			np.linspace(-pi/2, pi/2, 25)[1:-1], np.linspace(-pi, pi, 49)), axis=-1), (-1, 2))
 		for h in hs:
-			results = project(guesses, mesh, h)
-			residuals = np.sum((results - np.array([point]))**2, axis=-1)
+			# start by vectorizedly scanning some prechosen guesses
+			reprojected_guesses = project(guesses, mesh, h)
+			residuals = np.sum((reprojected_guesses - np.array([point]))**2, axis=-1)
 			ф, λ = guesses[np.nanargmin(residuals), :]
-			points_seen = []
-			def distance_fun(state):
-				z, λ = state
-				[(x, y)] = project([(atan(z), wrap_angle(λ))], mesh, h)
-				if isnan(x):
-					return inf
-				points_seen.append((x, y))
-				return np.sum(np.power([x - point[0], y - point[1]], 2))
-			result = optimize.minimize(method="nelder-mead",
-			                           fun=distance_fun, x0=np.array([tan(ф), λ]),
-			                           options=dict(xatol=2))
-			z, λ = result.x
-			sectioned_results[(h, *point_index, 0)] = atan(z)
-			sectioned_results[(h, *point_index, 1)] = wrap_angle(λ)
-			closenesses[(h, *point_index)] = result.fun
+			# this scan minimization will serve as the backup result if we find noting better
+			sectioned_results[(h, *point_index, slice(None))] = [ф, λ]
+			closenesses[(h, *point_index)] = np.nanmin(residuals)
+			# but more importantly, this will serve as the initial guess for the more detailed search
+			i_guess = bin_index(ф, mesh.ф)
+			j_guess = bin_index(λ, mesh.λ)
+			for i, j in search_out_from(i_guess, j_guess, mesh.nodes.shape[1:3]):
+				# look for a cell that contains the point
+				if np.all(np.isfinite(mesh.nodes[i-1:i+1, j-1:j+1])):
+					sw = mesh.nodes[h, i - 1, j - 1]
+					se = mesh.nodes[h, i - 1, j]
+					nw = mesh.nodes[h, i, j - 1]
+					ne = mesh.nodes[h, i, j]
+					if inside_polygon(*point, np.array([ne, nw, sw, se]), convex=True):
+						# do inverse 2d linear interpolation (it's harder than one mite expect!)
+						coords = [nan, nan]
+						things = [(0, mesh.ф, i, [[sw, se], [nw, ne]]), (1, mesh.λ, j, [[sw, nw], [se, ne]])]
+						for f, axis, index, corners in things:
+							for g in [0, 1]:
+								x, y = point[g], point[1 - g]
+								y0 = interp(x,
+								            corners[0][0][    g], corners[0][1][    g],
+								            corners[0][0][1 - g], corners[0][1][1 - g])
+								y1 = interp(x,
+								            corners[1][0][    g], corners[1][1][    g],
+								            corners[1][0][1 - g], corners[1][1][1 - g])
+								if (y0 < y) != (y1 < y):
+									coords[f] = interp(y, y0, y1, axis[index - 1], axis[index])
+									break
+						sectioned_results[(h, *point_index, slice(None))] = coords
+						break
 
 	# crudely deal with multiple possible projections for each point
+	# first prioritize having an inverse projection near the correct anser
 	best_h = np.argmin(closenesses, axis=0)
-	# first prioritize getting close to a perfect inverse projection
 	result = sectioned_results[best_h, ...]
 	# but mainly prioritize being inside the section borders
 	for h in hs:
