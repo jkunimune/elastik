@@ -69,6 +69,9 @@ def calculate_drainage_divides(endpoints: list[tuple[float, float]]):
 	# then flip everything so that they all go away from the tripoint
 	for i in range(len(paths)):
 		paths[i] = paths[i][::-1, :]
+	# finally, simplify all paths
+	for i in range(len(paths)):
+		paths[i] = simplify_path(paths[i])
 
 	# save and plot them
 	np.savetxt("../spec/cuts_mountains.txt", np.concatenate(paths), fmt="%.1f")  # type: ignore
@@ -76,8 +79,9 @@ def calculate_drainage_divides(endpoints: list[tuple[float, float]]):
 	plt.contourf(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 31), vmax=3000, cmap="cividis")
 	plt.contour(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 31), colors="k", linewidths=0.2)
 	for river in rivers:
-		ф, λ = zip(*river)
-		plt.plot(λ, ф, "w", linewidth=0.6)
+		i, j = np.transpose(river)
+		plt.plot(λ_map[0] + (λ_map[1] - λ_map[0])*j,
+		         ф_map[0] + (ф_map[1] - ф_map[0])*i, "w", linewidth=0.6)
 	for path in paths:
 		plt.plot(path[:, 1], path[:, 0], "C3")
 	plt.scatter([λ for ф, λ in endpoints], [ф for ф, λ in endpoints], c=f"C{len(paths)}")
@@ -127,7 +131,6 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | NDArr
 		# if it reached a goal, we're all done here
 		if index_of_2d(path.end, i_ends, j_ends) != -1:
 			plt.close("all")
-			simplify_path(np.array([[i, j] for i, j in zip(path.i, path.j)]))
 			return np.stack([x_nodes[path.i], y_nodes[path.j]], axis=-1)
 		# otherwise, check that no one has beat it here
 		i, j = path.end
@@ -152,7 +155,7 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | NDArr
 			plt.scatter([path.end[1] for path in paths_to_plot],
 			            [path.end[0] for path in paths_to_plot],
 			            color="#000", zorder=10)
-			plt.gca().set_facecolor("#006")
+			plt.gca().set_facecolor("#206")
 			plt.imshow(
 				np.where(z_nodes > 0, z_nodes, nan),
 				extent=(-0.5, y_nodes.size - 0.5, -0.5, x_nodes.size - 0.5),
@@ -162,7 +165,7 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | NDArr
 				origin="lower", zorder=-3)
 			for barrier in barriers:
 				ф, λ = zip(*barrier)
-				plt.plot(λ, ф, "#006",
+				plt.plot(λ, ф, "#206",
 				         linewidth=1.2, zorder=-2)
 			i_nodes = np.arange(0, x_nodes.size)
 			j_nodes = np.arange(0, y_nodes.size)

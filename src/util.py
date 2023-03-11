@@ -216,8 +216,8 @@ def decimate_path(path: list[tuple[float, float]] | NDArray[float], resolution: 
 
 def simplify_path(path: Union[NDArray[float], "SparseNDArray"], cyclic=False
                   ) -> Union[NDArray[float], "SparseNDArray"]:
-	""" simplify a path in-place such that strait segments have no redundant midpoints
-	    marked in them, and it does not retrace itself
+	""" simplify a path such that strait segments have no redundant midpoints marked in them, and
+	    it does not retrace itself
 	"""
 	index = np.arange(len(path)) # instead of modifying the path directly, save some memory by just handling this index vector
 
