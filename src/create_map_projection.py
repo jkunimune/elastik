@@ -241,9 +241,9 @@ def create_map_projection(configuration_file: str):
 	            node_positions_with_nan[node_indices, :])
 
 	# and save it!
-	print("projecting section borders...")
+	logging.info("projecting section borders...")
 	border_matrix = project_section_borders(mesh_indices, 5e-3)
-	print("saving results...")
+	logging.info("saving results...")
 	save_projection(configure["name"], configure["descript"],
 	                mesh, configure["section_names"].split(","),
 	                decimate_path(border_matrix @ node_positions, resolution=5))
@@ -588,6 +588,12 @@ def save_projection(name: str, descript: str, mesh: Mesh, section_names: list[st
 
 	# start by calculating some things
 	((left, bottom), (right, top)) = get_bounding_box(projected_border)
+	raster_resolution = 20
+	x_raster = np.linspace(left, right, raster_resolution)
+	y_raster = np.linspace(bottom, top, raster_resolution)
+	inverse_raster = np.degrees(inverse_project(
+		np.transpose(np.meshgrid(x_raster, y_raster, indexing="xy"), (1, 2, 0)),
+		mesh))
 
 	# do the self-explanatory HDF5 file
 	with h5py.File(f"../projection/elastik-{name}.h5", "w") as file:
@@ -597,6 +603,9 @@ def save_projection(name: str, descript: str, mesh: Mesh, section_names: list[st
 		file.create_dataset("projected_border", shape=(projected_border.shape[0],), dtype=h5_xy_tuple)
 		file["projected_border"]["x"] = projected_border[:, 0]
 		file["projected_border"]["y"] = projected_border[:, 1]
+		file.create_dataset("inverse_projected_raster", shape=inverse_raster.shape[:2], dtype=h5_фλ_tuple)
+		file["inverse_projected_raster"]["latitude"] = inverse_raster[:, :, 0]
+		file["inverse_projected_raster"]["longitude"] = inverse_raster[:, :, 1]
 		file.create_dataset("bounding_box", shape=(2,), dtype=h5_xy_tuple)
 		file["bounding_box"]["x"] = [left, right]
 		file["bounding_box"]["y"] = [bottom, top]
@@ -634,13 +643,6 @@ def save_projection(name: str, descript: str, mesh: Mesh, section_names: list[st
 			group["bounding_box"].attrs["units"] = "km"
 
 	# then save a simpler but larger and less explanatory txt file
-	raster_resolution = 20
-	x_raster = np.linspace(left, right, raster_resolution)
-	y_raster = np.linspace(bottom, top, raster_resolution)
-	projected_raster = np.degrees(inverse_project(
-		np.transpose(np.meshgrid(x_raster, y_raster, indexing="xy"), (1, 2, 0)),
-		mesh))
-
 	with open(f"../projection/elastik-{name}.csv", "w") as f:
 		f.write(f"elastik {name} projection ({mesh.num_sections} sections):\n") # the number of sections
 		for h in range(mesh.num_sections):
@@ -657,12 +659,12 @@ def save_projection(name: str, descript: str, mesh: Mesh, section_names: list[st
 		f.write(f"projected border ({projected_border.shape[0]} vertices):\n") # the number of map edge vertices
 		for i in range(projected_border.shape[0]):
 			f.write(f"{projected_border[i, 0]:.3f},{projected_border[i, 1]:.3f}\n") # the map edge vertices (km)
-		f.write(f"projected raster ({projected_raster.shape[0]}x{projected_raster.shape[1]}):\n") # the shape of the sample raster
+		f.write(f"projected raster ({inverse_raster.shape[0]}x{inverse_raster.shape[1]}):\n") # the shape of the sample raster
 		f.write(f"{left}-{right}, {bottom}-{top}\n") # the bounding box of the sample raster
-		for i in range(projected_raster.shape[0]):
-			for j in range(projected_raster.shape[1]):
-				f.write(f"{projected_raster[i, j, 0]:.6f},{projected_raster[i, j, 1]:.6f}") # the sample raster (°)
-				if j != projected_raster.shape[1] - 1:
+		for i in range(inverse_raster.shape[0]):
+			for j in range(inverse_raster.shape[1]):
+				f.write(f"{inverse_raster[i, j, 0]:.6f},{inverse_raster[i, j, 1]:.6f}") # the sample raster (°)
+				if j != inverse_raster.shape[1] - 1:
 					f.write(", ")
 			f.write("\n")
 
@@ -789,11 +791,12 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 	hs = range(mesh.num_sections)
 
 	# do each point one at a time, since this doesn't need to be super fast
-	sectioned_results = np.full((len(hs), *points.shape), nan)
-	closenesses = np.empty((len(hs), *points.shape), dtype=float)
+	result = np.full(points.shape, nan)
 	for point_index, point in enumerate(points.reshape((-1, 2))):
 		point_index = np.unravel_index(point_index, points.shape[:-1])
 		logging.info(f"{point_index}/{points.shape[:-1]}")
+		possible_results = np.empty((mesh.num_sections, 2), dtype=float)
+		closenesses = np.empty(mesh.num_sections, dtype=float)
 		guesses = np.reshape(np.stack(np.meshgrid(
 			np.linspace(-pi/2, pi/2, 25)[1:-1], np.linspace(-pi, pi, 49)), axis=-1), (-1, 2))
 		for h in hs:
@@ -802,8 +805,8 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 			residuals = np.sum((reprojected_guesses - np.array([point]))**2, axis=-1)
 			ф, λ = guesses[np.nanargmin(residuals), :]
 			# this scan minimization will serve as the backup result if we find noting better
-			sectioned_results[(h, *point_index, slice(None))] = [ф, λ]
-			closenesses[(h, *point_index)] = np.nanmin(residuals)
+			possible_results[h, :] = [ф, λ]
+			closenesses[h] = np.nanmin(residuals)
 			# but more importantly, this will serve as the initial guess for the more detailed search
 			i_guess = bin_index(ф, mesh.ф)
 			j_guess = bin_index(λ, mesh.λ)
@@ -830,19 +833,19 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 								if (y0 < y) != (y1 < y):
 									coords[f] = interp(y, y0, y1, axis[index - 1], axis[index])
 									break
-						sectioned_results[(h, *point_index, slice(None))] = coords
+						possible_results[h, :] = coords
+						closenesses[h] = 0
 						break
 
-	# crudely deal with multiple possible projections for each point
-	# first prioritize having an inverse projection near the correct anser
-	best_h = np.argmin(closenesses, axis=0)
-	result = sectioned_results[best_h, ...]
-	# but mainly prioritize being inside the section borders
-	for h in hs:
-		inside_this_section = inside_region(sectioned_results[h, ..., 0],
-		                         sectioned_results[h, ..., 1],
-		                         mesh.section_borders[h], period=2*pi)
-		result[inside_this_section, :] = sectioned_results[h, inside_this_section, :]
+		# crudely deal with multiple possible projections for each point
+		# first prioritize having an inverse projection near the correct anser
+		best_h = np.argmin(closenesses)
+		result[point_index] = possible_results[best_h]
+		# but mainly prioritize being inside the section borders
+		for h in hs:
+			if inside_region(possible_results[h, 0], possible_results[h, 1],
+			                 mesh.section_borders[h], period=2*pi):
+				result[point_index] = possible_results[h]
 
 	return result
 
