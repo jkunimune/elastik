@@ -385,7 +385,7 @@ def build_mesh(name: str, resolution: int):
 
 
 if __name__ == "__main__":
-	build_mesh("basic", 20)
+	build_mesh("basic", 25)
 	# build_mesh("oceans", 20)
 	# build_mesh("mountains", 20)
 	plt.show()

@@ -15,9 +15,9 @@ from create_map_projection import create_map_projection
 
 if __name__ == "__main__":
 	print(time.strftime("%Y-%m-%d %H:%M:%S"))
-	calculate_weights(4.5, 0.5)
+	calculate_weights(10, 0.5)
 	for mesh in ["basic", "oceans", "mountains"]:
-		build_mesh(mesh, 20)
+		build_mesh(mesh, 25)
 	for projection in ["continents", "oceans", "countries"]:
 		create_map_projection(projection)
 	print(time.strftime("%Y-%m-%d %H:%M:%S"))

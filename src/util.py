@@ -315,7 +315,7 @@ def inside_region(ф: Numeric, λ: Numeric, region: NDArray[float], period=360) 
 	# then we can bild up a precise bool mapping
 	inside = np.full(out_shape, inside_out)
 	nearest_segment = np.full(out_shape, np.inf)
-	for i in range(1, region.shape[0]):
+	for i in reversed(range(1, region.shape[0])):  # the reversed happens to make it better in one particular edge case
 		ф0, λ0 = region[i - 1, :]
 		ф1, λ1 = region[i, :]
 		# this is a nonzero model based on virtual vertical rays drawn from each queried point

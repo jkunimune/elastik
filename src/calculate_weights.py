@@ -28,7 +28,7 @@ EXCLUDED_ISLANDS = [(-6, 72), # chagos islands
                     (-40, -9), # gough island
                     (-46, 38), # prince edward island
                     (-53, 73), # heard island
-                    (-49, 69), # kerguelen islands
+                    # (-49, 69), # kerguelen islands
                     (-46, 52), # crozet islands
                     (15, 169), # bokak atoll
                     (10, -109), # clipperton island
@@ -177,7 +177,7 @@ def calculate_weights(coast_width: float, precision: float):
 
 				# combine everything
 				mask = global_mask & in_section
-				importance = np.where(mask, 1, np.maximum(0, 1 - coast_distance/coast_width))
+				importance = np.where(mask, 1, np.maximum(0, 1 - coast_distance/coast_width)**2)
 
 				# save and plot
 				tifffile.imwrite(filename, importance)
@@ -189,5 +189,5 @@ def calculate_weights(coast_width: float, precision: float):
 
 
 if __name__ == "__main__":
-	calculate_weights(coast_width=4.5, precision=.5)
+	calculate_weights(coast_width=10, precision=0.5)
 	plt.show()

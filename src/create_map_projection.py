@@ -113,8 +113,8 @@ def create_map_projection(configuration_file: str):
 		elif np.any(a < -100) or np.any(b < -100):
 			return inf
 		else:
-			a_term = np.exp(-6*a)
-			b_term = np.exp(-6*b)
+			a_term = np.exp(-10*a)
+			b_term = np.exp(-10*b)
 			return (a_term + b_term).sum()
 
 	def compute_energy_lenient(positions: NDArray[float]) -> float:
@@ -592,8 +592,7 @@ def save_projection(name: str, descript: str, mesh: Mesh, section_names: list[st
 	x_raster = np.linspace(left, right, raster_resolution)
 	y_raster = np.linspace(bottom, top, raster_resolution)
 	inverse_raster = np.degrees(inverse_project(
-		np.transpose(np.meshgrid(x_raster, y_raster, indexing="xy"), (1, 2, 0)),
-		mesh))
+		np.transpose(np.meshgrid(x_raster, y_raster, indexing="xy"), (1, 2, 0)), mesh))
 
 	# do the self-explanatory HDF5 file
 	with h5py.File(f"../projection/elastik-{name}.h5", "w") as file:

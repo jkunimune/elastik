@@ -1,7 +1,7 @@
-name: desa
-descript: ...
+name: countries
+descript: a map projection that shows landmasses with accurate shapes, but inflated sizes relative to the oceans
 cuts: basic
 shape_weights: land
 scale_weights: land_sinATA
 size: 24_000,17_000
-section_names: veste,sarik
+section_names: west,east

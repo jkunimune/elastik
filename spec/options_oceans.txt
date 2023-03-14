@@ -1,7 +1,7 @@
 name: mar
-descript: mar e rivo ro parca-no li sou di metro-grafi-yeksi-metodo
+descript: a map projection that shows oceans and rivers unbroken with accurate shapes and sizes
 cuts: mountains
 shape_weights: sea
 scale_weights: sea
 size: inf,inf
-section_names: Pasífiko,Bárat,Atlántiko
+section_names: Pacific,Indian,Atlantic
