@@ -8,7 +8,7 @@ everything you need to load the mesh files and project data onto them.
 from __future__ import annotations
 
 from math import nan
-from typing import Any
+from typing import Any, Optional
 
 import h5py
 import numpy as np
@@ -26,11 +26,13 @@ XYLine = NDArray[XYPoint]
 ΦΛLine = NDArray[ΦΛPoint]
 
 
-def create_map(name: str, projection: str, duplicate: bool, background_style: Style, border_style: Style, data: list[tuple[str, Style]]):
+SNIPPING_LENGTH = 1000
+
+
+def create_map(name: str, projection: str, background_style: Style, border_style: Style, data: list[tuple[str, Style]]):
 	""" build a new map using an elastik projection and some datasets.
 	    :param name: the name with which to save the figure
 	    :param projection: the name of the elastik projection to use
-	    :param duplicate: whether to plot as much data as you can (rather than showing each feature exactly once)
 	    :param background_style: the Style for the otherwise unfilled regions of the map area
 	    :param border_style: the Style for the line drawn around the complete map area
 	    :param data: a list of elements to include in the map
@@ -45,6 +47,7 @@ def create_map(name: str, projection: str, duplicate: bool, background_style: St
 	for data_name, style in data:
 		data, closed = load_geographic_data(data_name)
 		projected_data = project(data, sections)
+		projected_data = cut_lines_that_cross_interruptions(projected_data, closed)
 		if closed:
 			points: list[tuple[float, float]] = []
 			codes: list[int] = []
@@ -54,7 +57,7 @@ def create_map(name: str, projection: str, duplicate: bool, background_style: St
 					codes.append(Path.MOVETO if j == 0 else Path.LINETO)
 				points.append((nan, nan))
 				codes.append(Path.CLOSEPOLY)
-			path = Path(points, codes)
+			path = Path(points, codes)  # type: ignore
 			patch = PathPatch(path, **style)
 			ax.add_patch(patch)
 		else:
@@ -65,13 +68,14 @@ def create_map(name: str, projection: str, duplicate: bool, background_style: St
 
 	ax.axis("equal")
 	ax.axis("off")
+	fig.tight_layout()
 	fig.savefig(f"../examples/{name}.svg",
 	            bbox_inches="tight", pad_inches=0)
 
 
 def project(lines: list[ΦΛLine], projection: list[Section]) -> list[XYLine]:
 	""" apply an Elastik projection, defined by a list of sections, to the given series of
-	    latitudes and longitudes
+	    latitudes and longitudes.
 	"""
 	projected: list[XYLine] = []
 	for i, line in enumerate(lines):
@@ -84,15 +88,84 @@ def project(lines: list[ΦΛLine], projection: list[Section]) -> list[XYLine]:
 			projected[i][in_this_section] = section.get_planar_coordinates(line[in_this_section])
 		# check that each point was projected by at least one section
 		assert not np.any(np.isnan(projected[i]["x"]))
-	print(f"projected {len(lines)} lines")
 	return projected
 
 
-def inverse_project(points: np.ndarray, mesh: list[Section]) -> list[ΦΛLine]:
+def inverse_project(points: NDArray[XYPoint], projection: list[Section]) -> list[ΦΛLine]:
 	""" apply the inverse of an Elastik projection, defined by a list of sections, to find
 	    the latitudes and longitudes that map to these locations on the map
 	"""
 	pass  # TODO
+
+
+def cut_lines_that_cross_interruptions(lines: list[XYLine], closed: bool) -> list[XYLine]:
+	""" if you naively project lines on a map projection that are not pre-cut at the interruptions,
+	    you’ll get a lot of extraneous lines criss-crossing the map.  this function deals with that
+	    problem by cutting any lines that seem suspiciusly long.
+	    :param lines: the data to investigate and adjust
+	    :param closed: whether to worry about forming closed paths from the continuus regions of each line
+	"""
+	new_lines: list[XYLine] = []
+	new_lines_to_be_merged: list[XYLine] = []
+	for line in lines:
+		# start by finding line segments longer than 100 km
+		j = np.arange(0 if closed else 1, line.size)
+		lengths = np.hypot(line["x"][j] - line["x"][j - 1],
+		                   line["y"][j] - line["y"][j - 1])
+		cuts = j[np.nonzero(lengths > SNIPPING_LENGTH)[0]]
+		# don’t try to do anything if there are not cuts
+		if cuts.size == 0:
+			new_lines.append(line)
+		else:
+			if closed:
+				# cycle the points based on the discontinuities you found so it starts and ends with one
+				line = np.roll(line, -cuts[0])
+				cuts = np.concatenate([cuts - cuts[0], [line.size]])
+			else:
+				cuts = np.concatenate([[0], cuts, [line.size]])
+			sections = []
+			# break the input up into separate continuus segments
+			for k in range(1, cuts.size):
+				sections.append(line[cuts[k - 1]:cuts[k]])
+			# remove any length 1 sections
+			for k in range(len(sections) - 1, -1, -1):
+				if len(sections[k]) <= 1:
+					sections.pop(k)
+			# don’t mark them as final yet if we need to close the paths
+			if closed:
+				new_lines_to_be_merged += sections
+			else:
+				new_lines += sections
+
+	# if it’s closed, you have to reorder the lines so they go together
+	new_lines_to_be_merged = sorted(new_lines_to_be_merged, key=len)
+	if len(new_lines_to_be_merged) > 0:
+		merged_line: Optional[XYLine] = None
+		while True:
+			if merged_line is not None:
+				# take the endpoint of you current line
+				endpoint = merged_line[-1]
+				potential_next_startpoints = np.array(
+					[line[0] for line in new_lines_to_be_merged] + [merged_line[0]])
+				# and find the pending startpoint closest to it
+				next_index = np.argmin(np.hypot(potential_next_startpoints["x"] - endpoint["x"],
+				                                potential_next_startpoints["y"] - endpoint["y"]))
+				# if that nearest startpoint is its own, close it and finish it
+				if next_index == len(new_lines_to_be_merged):
+					new_lines.append(merged_line)
+					merged_line = None
+				# if the nearest startpoint is a different segment, merge them
+				else:
+					next_line = new_lines_to_be_merged.pop(next_index)
+					merged_line = np.concatenate([merged_line, next_line])
+			else:
+				if len(new_lines_to_be_merged) > 0:
+					# arbitrarily take the next pending line whenever we need to restart
+					merged_line = new_lines_to_be_merged.pop()
+				else:
+					# stop when we run out of lines to be merged
+					break
+	return new_lines
 
 
 def load_elastik_projection(name: str) -> tuple[list[Section], ΦΛLine]:
@@ -121,7 +194,6 @@ def load_geographic_data(filename: str) -> tuple[list[ΦΛLine], bool]:
 	lines: list[ΦΛLine] = []
 	closed = True
 	with shapefile.Reader(f"../data/ne_110m_{filename}.zip") as shape_f:
-		print(f"this {filename} file has {len(shape_f)} shapes")
 		for shape in shape_f.shapes():
 			closed = shape.shapeTypeName == "POLYGON"
 			for i in range(len(shape.parts)):
@@ -184,13 +256,12 @@ class Section:
 if __name__ == "__main__":
 	create_map(name="seal-ranges",
 	           projection="mar",
-	           duplicate=False,
 	           background_style=dict(
 		           facecolor="#fff",
 	           ),
 	           border_style=dict(
 		           edgecolor="#000",
-		           linewidth=1,
+		           linewidth=1.0,
 	           ),
 	           data=[
 		           ("ocean", dict(
@@ -199,11 +270,11 @@ if __name__ == "__main__":
 		           )),
 		           ("coastline", dict(
 			           color="#007",
-			           linewidth=1,
+			           linewidth=0.7,
 		           )),
 		           ("rivers_lake_centerlines", dict(
 			           color="#007",
-			           linewidth=.5,
+			           linewidth=0.7,
 		           ))
 	           ])
 	plt.show()
