@@ -22,8 +22,10 @@ from scipy import interpolate
 Style = dict[str, Any]
 XYPoint = np.dtype([("x", float), ("y", float)])
 XYLine = NDArray[XYPoint]
+XYFeature = tuple[float, XYLine]
 ΦΛPoint = np.dtype([("latitude", float), ("longitude", float)])
 ΦΛLine = NDArray[ΦΛPoint]
+ΦΛFeature = tuple[float, ΦΛLine]
 
 
 SNIPPING_LENGTH = 1000
@@ -45,24 +47,26 @@ def create_map(name: str, projection: str, background_style: Style, border_style
 	ax.fill(border["x"], border["y"], edgecolor="none", **background_style)
 
 	for data_name, style in data:
-		data, closed = load_geographic_data(data_name)
-		projected_data = project(data, sections)
+		unprojected_data, closed = load_geographic_data(data_name)
+		projected_data = project(unprojected_data, sections)
 		projected_data = cut_lines_that_cross_interruptions(projected_data, closed)
 		if closed:
 			points: list[tuple[float, float]] = []
 			codes: list[int] = []
-			for i, line in enumerate(projected_data):
+			for i, (width, line) in enumerate(projected_data):
 				for j, point in enumerate(line):
 					points.append((point["x"], point["y"]))
 					codes.append(Path.MOVETO if j == 0 else Path.LINETO)
 				points.append((nan, nan))
 				codes.append(Path.CLOSEPOLY)
-			path = Path(points, codes)  # type: ignore
-			patch = PathPatch(path, **style)
-			ax.add_patch(patch)
+			if len(points) > 0:
+				path = Path(points, codes)  # type: ignore
+				patch = PathPatch(path, **style)
+				ax.add_patch(patch)
 		else:
-			for i, line in enumerate(projected_data):
-				ax.plot(line["x"], line["y"], **style)
+			for i, (width, line) in enumerate(projected_data):
+				rank_specific_style = {**style, **dict(linewidth=width)}
+				ax.plot(line["x"], line["y"], **rank_specific_style)
 
 	ax.fill(border["x"], border["y"], facecolor="none", **border_style)
 
@@ -73,41 +77,35 @@ def create_map(name: str, projection: str, background_style: Style, border_style
 	            bbox_inches="tight", pad_inches=0)
 
 
-def project(lines: list[ΦΛLine], projection: list[Section]) -> list[XYLine]:
+def project(lines: list[ΦΛFeature], projection: list[Section]) -> list[XYFeature]:
 	""" apply an Elastik projection, defined by a list of sections, to the given series of
 	    latitudes and longitudes.
 	"""
-	projected: list[XYLine] = []
-	for i, line in enumerate(lines):
+	projected: list[XYFeature] = []
+	for i, (width, line) in enumerate(lines):
 		print(f"projecting line {i: 3d}/{len(lines): 3d} ({len(line)} points)")
-		projected.append(np.empty(line.size, dtype=XYPoint))
-		projected[i][:] = (nan, nan)
+		projected_line = np.empty(line.size, dtype=XYPoint)
+		projected_line[:] = (nan, nan)
 		# for each line, project it into whichever section that can accommodate it
 		for section in projection:
 			in_this_section = section.contains(line)
-			projected[i][in_this_section] = section.get_planar_coordinates(line[in_this_section])
+			projected_line[in_this_section] = section.get_planar_coordinates(line[in_this_section])
 		# check that each point was projected by at least one section
-		assert not np.any(np.isnan(projected[i]["x"]))
+		assert not np.any(np.isnan(projected_line["x"])), line["x"][np.nonzero(np.isnan(projected_line["x"]))]
+		projected.append((width, projected_line))
 	return projected
 
 
-def inverse_project(points: NDArray[XYPoint], projection: list[Section]) -> list[ΦΛLine]:
-	""" apply the inverse of an Elastik projection, defined by a list of sections, to find
-	    the latitudes and longitudes that map to these locations on the map
-	"""
-	pass  # TODO
-
-
-def cut_lines_that_cross_interruptions(lines: list[XYLine], closed: bool) -> list[XYLine]:
+def cut_lines_that_cross_interruptions(lines: list[XYFeature], closed: bool) -> list[XYFeature]:
 	""" if you naively project lines on a map projection that are not pre-cut at the interruptions,
 	    you’ll get a lot of extraneous lines criss-crossing the map.  this function deals with that
 	    problem by cutting any lines that seem suspiciusly long.
 	    :param lines: the data to investigate and adjust
 	    :param closed: whether to worry about forming closed paths from the continuus regions of each line
 	"""
-	new_lines: list[XYLine] = []
-	new_lines_to_be_merged: list[XYLine] = []
-	for line in lines:
+	new_lines: list[XYFeature] = []
+	new_lines_to_be_merged: list[XYFeature] = []
+	for width, line in lines:
 		# start by finding line segments longer than 100 km
 		j = np.arange(0 if closed else 1, line.size)
 		lengths = np.hypot(line["x"][j] - line["x"][j - 1],
@@ -115,7 +113,7 @@ def cut_lines_that_cross_interruptions(lines: list[XYLine], closed: bool) -> lis
 		cuts = j[np.nonzero(lengths > SNIPPING_LENGTH)[0]]
 		# don’t try to do anything if there are not cuts
 		if cuts.size == 0:
-			new_lines.append(line)
+			new_lines.append((width, line))
 		else:
 			if closed:
 				# cycle the points based on the discontinuities you found so it starts and ends with one
@@ -126,7 +124,7 @@ def cut_lines_that_cross_interruptions(lines: list[XYLine], closed: bool) -> lis
 			sections = []
 			# break the input up into separate continuus segments
 			for k in range(1, cuts.size):
-				sections.append(line[cuts[k - 1]:cuts[k]])
+				sections.append((width, line[cuts[k - 1]:cuts[k]]))
 			# remove any length 1 sections
 			for k in range(len(sections) - 1, -1, -1):
 				if len(sections[k]) <= 1:
@@ -138,30 +136,31 @@ def cut_lines_that_cross_interruptions(lines: list[XYLine], closed: bool) -> lis
 				new_lines += sections
 
 	# if it’s closed, you have to reorder the lines so they go together
-	new_lines_to_be_merged = sorted(new_lines_to_be_merged, key=len)
+	new_lines_to_be_merged = sorted(new_lines_to_be_merged, key=lambda feature: len(feature[1]))
 	if len(new_lines_to_be_merged) > 0:
+		width: Optional[float] = None
 		merged_line: Optional[XYLine] = None
 		while True:
 			if merged_line is not None:
 				# take the endpoint of you current line
 				endpoint = merged_line[-1]
 				potential_next_startpoints = np.array(
-					[line[0] for line in new_lines_to_be_merged] + [merged_line[0]])
+					[line[0] for width, line in new_lines_to_be_merged] + [merged_line[0]])
 				# and find the pending startpoint closest to it
 				next_index = np.argmin(np.hypot(potential_next_startpoints["x"] - endpoint["x"],
 				                                potential_next_startpoints["y"] - endpoint["y"]))
 				# if that nearest startpoint is its own, close it and finish it
 				if next_index == len(new_lines_to_be_merged):
-					new_lines.append(merged_line)
+					new_lines.append((width, merged_line))
 					merged_line = None
 				# if the nearest startpoint is a different segment, merge them
 				else:
-					next_line = new_lines_to_be_merged.pop(next_index)
+					_, next_line = new_lines_to_be_merged.pop(next_index)
 					merged_line = np.concatenate([merged_line, next_line])
 			else:
 				if len(new_lines_to_be_merged) > 0:
 					# arbitrarily take the next pending line whenever we need to restart
-					merged_line = new_lines_to_be_merged.pop()
+					width, merged_line = new_lines_to_be_merged.pop()
 				else:
 					# stop when we run out of lines to be merged
 					break
@@ -170,7 +169,7 @@ def cut_lines_that_cross_interruptions(lines: list[XYLine], closed: bool) -> lis
 
 def load_elastik_projection(name: str) -> tuple[list[Section], ΦΛLine]:
 	""" load the hdf5 file that defines an elastik projection
-	    :param name: one of "desa", "hai", or "lin"
+	    :param name: one of "countries", "oceans", or "continents"
 	"""
 	with h5py.File(f"../projection/elastik-{name}.h5", "r") as file:
 		sections = []
@@ -184,24 +183,29 @@ def load_elastik_projection(name: str) -> tuple[list[Section], ΦΛLine]:
 	return sections, border
 
 
-def load_geographic_data(filename: str) -> tuple[list[ΦΛLine], bool]:
+def load_geographic_data(filename: str) -> tuple[list[ΦΛFeature], bool]:
 	""" load a bunch of polylines from a shapefile
-	    :param filename: valid values include "admin_0_countries", "coastline", "lakes",
-	                     "land", "ocean", "rivers_lake_centerlines"
-	    :return: the coordinates along the border of each part (degrees), and a bool indicating
-	             whether this is an open polyline as opposed to a closed polygon
+	    :param filename: the name of the shapefile zip file
+	    :return: a list of lines, each one having the scale rank and the coordinates along the border of each part
+	             (degrees), and a bool indicating whether this is an open polyline as opposed to a closed polygon
 	"""
-	lines: list[ΦΛLine] = []
+	encoding = "latin-1" if "wwf_" in filename else "utf-8"
+	lines: list[ΦΛFeature] = []
 	closed = True
-	with shapefile.Reader(f"../data/ne_110m_{filename}.zip") as shape_f:
-		for shape in shape_f.shapes():
+	with shapefile.Reader(f"../data/{filename}.zip", encoding=encoding) as f:
+		for record, shape in zip(f.records(), f.shapes()):
 			closed = shape.shapeTypeName == "POLYGON"
+			try:
+				width = record["strokeweig"]
+			except IndexError:
+				width = 1
 			for i in range(len(shape.parts)):
 				start = shape.parts[i]
 				end = shape.parts[i + 1] if i + 1 < len(shape.parts) else len(shape.points)
-				lines.append(np.empty(end - start, dtype=ΦΛPoint))
+				line = np.empty(end - start, dtype=ΦΛPoint)
 				for j, (λ, ф) in enumerate(shape.points[start:end]):
-					lines[-1][j] = (max(-90, min(90, ф)), max(-180, min(180, λ)))
+					line[j] = (max(-90, min(90, ф)), max(-180, min(180, λ)))
+				lines.append((width, line))
 	return lines, closed
 
 
@@ -254,8 +258,80 @@ class Section:
 
 
 if __name__ == "__main__":
-	create_map(name="seal-ranges",
+	create_map(name="water",
 	           projection="mar",
+	           background_style=dict(
+		           facecolor="#fff",
+	           ),
+	           border_style=dict(
+		           edgecolor="none",
+	           ),
+	           data=[
+		           ("ne_110m_ocean", dict(
+			           facecolor="#79f6f7",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_K_200", dict(
+			           facecolor="#55d4e6",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_J_1000", dict(
+			           facecolor="#2ab2d8",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_I_2000", dict(
+			           facecolor="#0892c9",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_G_4000", dict(
+			           facecolor="#0772b8",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_E_6000", dict(
+			           facecolor="#1c51a4",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_C_8000", dict(
+			           facecolor="#253085",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_A_10000", dict(
+			           facecolor="#220667",
+			           edgecolor="none",
+		           )),
+		           ("ne_110m_coastline", dict(
+			           color="#007",
+			           linewidth=0.30,
+		           )),
+		           ("ne_50m_rivers_lake_centerlines_scale_rank", dict(
+			           color="#007",
+			           linewidth=0,
+		           )),
+		           ("ne_50m_lakes", dict(
+			           facecolor="#77f",
+			           edgecolor="#007",
+			           linewidth=0.15,
+		           )),
+	           ])
+	plt.show()
+	create_map(name="biomes",
+	           projection="land",
+	           background_style=dict(
+		           facecolor="#acf",
+	           ),
+	           border_style=dict(
+		           edgecolor="none",
+	           ),
+	           data=[
+		           ("biomes", dict(
+			           facecolor="#ff8",
+			           edgecolor="#000",
+			           linewidth=0.7,
+		           )),
+	           ])
+	plt.show()
+	create_map(name="political",
+	           projection="countries",
 	           background_style=dict(
 		           facecolor="#fff",
 	           ),
@@ -264,17 +340,16 @@ if __name__ == "__main__":
 		           linewidth=1.0,
 	           ),
 	           data=[
-		           ("ocean", dict(
-			           facecolor="#77f",
-			           edgecolor="none",
-		           )),
-		           ("coastline", dict(
-			           color="#007",
+		           ("ne_110m_admin_0_countries", dict(
+			           facecolor="none",
+			           edgecolor="#000",
 			           linewidth=0.7,
 		           )),
-		           ("rivers_lake_centerlines", dict(
-			           color="#007",
+		           ("ne_110m_admin_1_states_provinces", dict(
+			           facecolor="none",
+			           edgecolor="#777",
+			           linestyle="dashed",
 			           linewidth=0.7,
-		           ))
+		           )),
 	           ])
 	plt.show()
