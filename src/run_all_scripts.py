@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from build_mesh import build_mesh
 from calculate_weights import calculate_weights
 from create_map_projection import create_map_projection
-
+from elastik import create_example_elastik_maps
 
 if __name__ == "__main__":
 	print(time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -20,5 +20,7 @@ if __name__ == "__main__":
 		build_mesh(mesh, 25)
 	for projection in ["continents", "oceans", "countries"]:
 		create_map_projection(projection)
+	create_example_elastik_maps()
+
 	print(time.strftime("%Y-%m-%d %H:%M:%S"))
 	plt.show()
