@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import bisect
 import os
-from math import floor, ceil, nan, inf, copysign
+from math import floor, ceil, nan, inf, copysign, sqrt
 from typing import Iterable, Sequence
 
 import matplotlib.colors as colors
@@ -20,12 +20,12 @@ import shapefile
 import tifffile
 from numpy.typing import NDArray
 
-from util import bin_centers, bin_index, simplify_path, intersects
+from util import bin_centers, bin_index, intersects, decimate_path
 
 # how many pixels per degree
 RESOLUTION = 10
-# how to determine the value of a pixel that contains multiple data points
-REDUCTION = np.mean
+# how to determine the height value of a pixel that contains multiple data points
+REDUCTION = np.median
 # what fraction of the found paths should be plotted
 AMOUNT_TO_PLOT = 5e-2/RESOLUTION**2
 
@@ -69,19 +69,26 @@ def calculate_drainage_divides(endpoints: list[tuple[float, float]]):
 	# then flip everything so that they all go away from the tripoint
 	for i in range(len(paths)):
 		paths[i] = paths[i][::-1, :]
+
+	# next, remove any vertices on water
+	for i in range(len(paths)):
+		for j in range(len(paths[i]) - 1, -1, -1):
+			if on_water(paths[i][j, :], ф_map, λ_map, z_map):
+				paths[i] = np.concatenate([paths[i][:j, :], paths[i][j + 1:, :]])
 	# finally, simplify all paths
 	for i in range(len(paths)):
-		paths[i] = simplify_path(paths[i])
+		paths[i] = decimate_path(paths[i], sqrt(2)/RESOLUTION)
 
 	# save and plot them
 	np.savetxt("../spec/cuts_mountains.txt", np.concatenate(paths), fmt="%.1f")  # type: ignore
 	plt.figure()
-	plt.contourf(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 31), vmax=3000, cmap="cividis")
-	plt.contour(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 31), colors="k", linewidths=0.2)
+	plot_map(z_map, (λ_map[0] - .5/RESOLUTION, λ_map[-1] + .5/RESOLUTION,
+	                 ф_map[0] - .5/RESOLUTION, ф_map[-1] + .5/RESOLUTION))
+	plt.contour(λ_map, ф_map, z_map, levels=np.linspace(0.5, 10000, 31), colors="w", linewidths=0.2)
 	for river in rivers:
 		i, j = np.transpose(river)
 		plt.plot(λ_map[0] + (λ_map[1] - λ_map[0])*j,
-		         ф_map[0] + (ф_map[1] - ф_map[0])*i, "w", linewidth=0.6)
+		         ф_map[0] + (ф_map[1] - ф_map[0])*i, "#206", linewidth=0.5)
 	for path in paths:
 		plt.plot(path[:, 1], path[:, 0], "C3")
 	plt.scatter([λ for ф, λ in endpoints], [ф for ф, λ in endpoints], c=f"C{len(paths)}")
@@ -151,22 +158,15 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | NDArr
 		if len(paths_to_plot) == 6:
 			plt.clf()
 			for path in paths_to_plot:
-				plt.plot(path.j, path.i, "--", linewidth=0.8, color="#000", zorder=10)
-			plt.scatter([path.end[1] for path in paths_to_plot],
-			            [path.end[0] for path in paths_to_plot],
-			            color="#000", zorder=10)
-			plt.gca().set_facecolor("#206")
-			plt.imshow(
-				np.where(z_nodes > 0, z_nodes, nan),
-				extent=(-0.5, y_nodes.size - 0.5, -0.5, x_nodes.size - 0.5),
-				norm=colors.LogNorm(
-					vmin=np.max(z_nodes)**-(1/3),
-					vmax=np.max(z_nodes)),
-				origin="lower", zorder=-3)
+				plt.plot(path.j, path.i, "--", linewidth=1.0, color="#000", zorder=10)
+			plt.plot([path.end[1] for path in paths_to_plot],
+			         [path.end[0] for path in paths_to_plot],
+			         "o", markerfacecolor="#fff", markeredgecolor="#000", markersize=4, zorder=10)
+			plot_map(z_nodes, (-0.5, y_nodes.size - 0.5, -0.5, x_nodes.size - 0.5))
 			for barrier in barriers:
 				ф, λ = zip(*barrier)
-				plt.plot(λ, ф, "#206",
-				         linewidth=1.2, zorder=-2)
+				plt.plot(λ, ф, color="#206",
+				         linewidth=0.5, zorder=-2)
 			i_nodes = np.arange(0, x_nodes.size)
 			j_nodes = np.arange(0, y_nodes.size)
 			plt.contour(j_nodes, i_nodes, np.where(visited, 0, 1),
@@ -179,6 +179,18 @@ def find_hiest_path(start: tuple[float, float], end: tuple[float, float] | NDArr
 			plt.tight_layout()
 			plt.pause(.01)
 			paths_to_plot = []
+
+
+def plot_map(z_nodes: NDArray[float], extent: tuple[float, float, float, float]):
+	""" display the given elevation map as a nice looking map """
+	plt.gca().set_facecolor("#205")
+	plt.imshow(
+		np.where(z_nodes > 0, z_nodes, nan),
+		extent=extent,
+		norm=colors.LogNorm(
+			vmin=np.max(z_nodes)**-(1/5),
+			vmax=np.max(z_nodes)),
+		origin="lower", zorder=-3)
 
 
 def load_elevation_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> NDArray[float]:
@@ -234,7 +246,9 @@ def load_river_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> list[
 	# start by loading the rivers as lists
 	rivers: list[list[tuple[float, float]]] = []
 	with shapefile.Reader(f"../data/ne_50m_rivers_lake_centerlines.zip") as shape_f:
-		for shape in shape_f.shapes():
+		for record, shape in zip(shape_f.records(), shape_f.shapes()):
+			if "運河" in record.name_ja:
+				continue  # make sure to skip all canals
 			parts = np.concatenate([shape.parts, [len(shape.points)]])
 			for k in range(1, len(parts)):
 				points = shape.points[parts[k - 1]:parts[k]]
@@ -279,6 +293,12 @@ def define_adjacency_matrix(ф_nodes: NDArray[float], λ_nodes: NDArray[float],
 								adjacency[i, j, di, dj] = False
 								adjacency[i + di, j + dj, -di, -dj] = False
 	return adjacency
+
+
+def on_water(point: tuple[float, float], ф_map: NDArray[float], λ_map: NDArray[float], z_map: NDArray[float]) -> bool:
+	nearest_i = np.argmin(abs(point[0] - ф_map))
+	nearest_j = np.argmin(abs(point[1] - λ_map))
+	return z_map[nearest_i, nearest_j] <= 0
 
 
 def check_wrapping(points: NDArray[float]) -> NDArray[float]:
