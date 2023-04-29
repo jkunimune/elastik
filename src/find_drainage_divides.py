@@ -91,7 +91,7 @@ def calculate_drainage_divides(endpoints: list[tuple[float, float]]):
 		         ф_map[0] + (ф_map[1] - ф_map[0])*i, "#206", linewidth=0.5)
 	for path in paths:
 		plt.plot(path[:, 1], path[:, 0], "C3")
-	plt.scatter([λ for ф, λ in endpoints], [ф for ф, λ in endpoints], c=f"C{len(paths)}")
+	plt.scatter([λ for ф, λ in endpoints], [ф for ф, λ in endpoints], c=f"C{len(paths)}", zorder=10)
 	plt.xlabel("Longitude (°)")
 	plt.ylabel("Latitude (°)")
 	plt.tight_layout()
@@ -245,7 +245,7 @@ def load_river_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> list[
 	"""
 	# start by loading the rivers as lists
 	rivers: list[list[tuple[float, float]]] = []
-	with shapefile.Reader(f"../data/ne_50m_rivers_lake_centerlines.zip") as shape_f:
+	with shapefile.Reader(f"../data/ne_10m_rivers_lake_centerlines.zip") as shape_f:
 		for record, shape in zip(shape_f.records(), shape_f.shapes()):
 			if "運河" in record.name_ja:
 				continue  # make sure to skip all canals
