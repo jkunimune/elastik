@@ -612,22 +612,17 @@ def save_projection(name: str, descript: str, mesh: Mesh, section_names: list[st
 		file["sections"] = [f"section{i}" for i in range(mesh.num_sections)]
 
 		for h in range(mesh.num_sections):
-			i_relevant = dilate(np.any(~np.isnan(mesh.nodes[h, :, :, 0]), axis=1), 1)
-			num_ф = np.count_nonzero(i_relevant)
-			j_relevant = dilate(np.any(~np.isnan(mesh.nodes[h, 1:-1, :, 0]), axis=0), 1)
-			num_λ = np.count_nonzero(j_relevant)
-
 			group = file.create_group(f"section{h}")
 			group.attrs["name"] = section_names[h]
-			group["latitude"] = np.degrees(mesh.ф[i_relevant]) # TODO: internationalize
+			group["latitude"] = np.degrees(mesh.ф) # TODO: internationalize
 			group["latitude"].attrs["units"] = "°"
 			group["latitude"].make_scale()
-			group["longitude"] = np.degrees(mesh.λ[j_relevant])
+			group["longitude"] = np.degrees(mesh.λ)
 			group["longitude"].make_scale()
 			group["longitude"].attrs["units"] = "°"
-			group.create_dataset("projection", shape=(num_ф, num_λ), dtype=h5_xy_tuple)
-			group["projection"]["x"] = mesh.nodes[h, i_relevant][:, j_relevant, 0]
-			group["projection"]["y"] = mesh.nodes[h, i_relevant][:, j_relevant, 1]
+			group.create_dataset("projection", shape=(mesh.ф.size, mesh.λ.size), dtype=h5_xy_tuple)
+			group["projection"]["x"] = mesh.nodes[h, :, :, 0]
+			group["projection"]["y"] = mesh.nodes[h, :, :, 1]
 			group["projection"].attrs["units"] = "km"
 			group["projection"].dims[0].attach_scale(group["latitude"])
 			group["projection"].dims[1].attach_scale(group["longitude"])
