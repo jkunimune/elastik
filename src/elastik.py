@@ -31,8 +31,10 @@ XYFeature = tuple[int, float, list[XYLine]]
 SNIPPING_LENGTH = 1000
 
 
-def create_map(name: str, projection: str, background_style: Style, border_style: Style, data: list[tuple[str, Style]]):
-	""" build a new map using an elastik projection and some datasets.
+def create_map(name: str, projection: str,
+               background_style: Style, border_style: Style,
+               data: list[tuple[str, Style]]):
+	""" draw a world map in a MatPlotLib figure using an elastik projection and some datasets.
 	    :param name: the name with which to save the figure
 	    :param projection: the name of the elastik projection to use
 	    :param background_style: the Style for the otherwise unfilled regions of the map area
@@ -69,7 +71,7 @@ def create_map(name: str, projection: str, background_style: Style, border_style
 				patch = PathPatch(path, **feature_specific_style)
 				ax.add_patch(patch)
 		else:
-			for width, lines in projected_data:
+			for category, width, lines in projected_data:
 				feature_specific_style = {**style, **{"linewidth": width}}
 				for line in lines:
 					ax.plot(line["x"], line["y"], **feature_specific_style)
@@ -81,10 +83,11 @@ def create_map(name: str, projection: str, background_style: Style, border_style
 	fig.tight_layout()
 	fig.savefig(f"../examples/{name}.svg",
 	            bbox_inches="tight", pad_inches=0)
+	print(f"saved the {name} projection!")
 
 
 def project(features: list[ΦΛFeature], projection: list[Section]) -> list[XYFeature]:
-	""" apply an Elastik projection, defined by a list of sections, to the given series of
+	""" apply the given Elastik projection, defined by a list of sections, to the given series of
 	    latitudes and longitudes.
 	"""
 	projected_features: list[XYFeature] = []
@@ -102,12 +105,13 @@ def project(features: list[ΦΛFeature], projection: list[Section]) -> list[XYFe
 			assert not np.any(np.isnan(projected_line["x"])), line[np.isnan(projected_line["x"])]
 			projected_lines.append(projected_line)
 		projected_features.append((category, width, projected_lines))
+	print("done!")
 	return projected_features
 
 
 def cut_lines_that_cross_interruptions(features: list[XYFeature], closed: bool) -> list[XYFeature]:
 	""" if you naively project lines on a map projection that are not pre-cut at the interruptions,
-	    you’ll get a lot of extraneous lines criss-crossing the map.  this function deals with that
+	    you’ll get a lot of extraneous lines crisscrossing the map.  this function deals with that
 	    problem by cutting any lines that seem suspiciusly long.
 	    :param features: the data to investigate and adjust
 	    :param closed: whether to worry about forming closed paths from the continuus regions of each line
@@ -179,9 +183,10 @@ def cut_lines_that_cross_interruptions(features: list[XYFeature], closed: bool) 
 	return new_features
 
 
-def load_elastik_projection(name: str) -> tuple[list[Section], ΦΛLine]:
+def load_elastik_projection(name: str) -> tuple[list[Section], XYLine]:
 	""" load the hdf5 file that defines an elastik projection
-	    :param name: one of "countries", "oceans", or "continents"
+	    :param name: one of "elastic-earth-I", "elastic-earth-II", or "elastic-earth-III"
+	    :return: the list of sections that comprise this projection, and the map’s full projected outer shape
 	"""
 	with h5py.File(f"../projection/elastik-{name}.h5", "r") as file:
 		sections = []
@@ -198,8 +203,10 @@ def load_elastik_projection(name: str) -> tuple[list[Section], ΦΛLine]:
 def load_geographic_data(filename: str) -> tuple[list[ΦΛFeature], bool]:
 	""" load a bunch of polylines from a shapefile
 	    :param filename: the name of the shapefile zip file
-	    :return: a list of lines, each one having the scale rank and the coordinates along the border of each part
-	             (degrees), and a bool indicating whether this is an open polyline as opposed to a closed polygon
+	    :return: a list of features, each comprising a "category" (the biome if available, the index
+	             otherwise), a "width" (only available from Natural Earth’s "rivers with scale
+	             ranks" dataset), and a list of series of geographic coordinates (degrees);
+	             and a bool indicating whether this is a closed polygon rather than an open polyline
 	"""
 	encoding = "latin-1" if "wwf_" in filename else "utf-8"
 	features: list[ΦΛFeature] = []
@@ -254,6 +261,7 @@ class Section:
 
 
 	def contains(self, points: NDArray[ΦΛPoint]) -> NDArray[bool]:
+		""" whether the given point is within this Section’s boundary """
 		nearest_segment = np.full(points.shape, inf)
 		ф, λ = points["latitude"], points["longitude"]
 		inside = np.full(np.shape(ф), False)
@@ -335,7 +343,7 @@ def create_example_elastik_maps():
 		           )),
 		           ("ne_50m_coastline", dict(
 			           color="#007",
-			           linewidth=0.30,
+			           linewidth=0.15,
 		           )),
 		           ("ne_50m_rivers_lake_centerlines_scale_rank", dict(
 			           color="#007",
@@ -404,8 +412,8 @@ def create_example_elastik_maps():
 			           ],
 		           )),
 	           ])
-	plt.show()
 
 
 if __name__ == "__main__":
 	create_example_elastik_maps()
+	plt.show()
