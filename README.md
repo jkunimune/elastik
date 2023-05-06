@@ -1,9 +1,12 @@
-# elastik
- A new and improved suite of map projections based on a polydimensional mesh
+# Elastic Earth projections
 
  The Elastic projections are a map projections of a new breed that uses
  interpolation on a mesh to minimize and control the distortion in maps of the
  whole Earth like never before.
+ 
+![Elastic Earth I projection with mesh](examples/mesh-1.svg "Elastic Earth I projection with mesh")
+![Elastic Earth II projection with mesh](examples/mesh-2.svg "Elastic Earth II projection with mesh")
+![Elastic Earth III projection with mesh](examples/mesh-3.svg "Elastic Earth III projection with mesh")
 
 ## Using the maps
 
