@@ -1,5 +1,4 @@
-name: land
-descript: a map projection that shows landmasses splayed out with accurate shapes and sizes
+number: 1
 cuts: oceans
 shape_weights: land
 scale_weights: land

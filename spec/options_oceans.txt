@@ -1,5 +1,4 @@
-name: mar
-descript: a map projection that shows oceans and rivers unbroken with accurate shapes and sizes
+number: 2
 cuts: mountains
 shape_weights: sea
 scale_weights: sea

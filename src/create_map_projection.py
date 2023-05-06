@@ -7,6 +7,7 @@ create a new Elastic Projection.
 """
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import threading
@@ -33,7 +34,7 @@ logging.basicConfig(
 	format="%(asctime)s | %(levelname)s | %(message)s",
 	datefmt="%b %d %H:%M",
 	handlers=[
-		logging.FileHandler("../projection/elastik.log"),
+		logging.FileHandler("../projection/output.log"),
 		logging.StreamHandler(sys.stdout)
 	]
 )
@@ -90,18 +91,19 @@ def create_map_projection(configuration_file: str):
 	schedule += [(0, 1, True)]  # and finally switch to the complete mesh
 
 	# set up the plotting axes and state variables
-	small_fig = plt.figure(figsize=(3, 5), num=f"Elastik-{configuration_file} fitting")
+	small_fig = plt.figure(figsize=(3, 5), num=f"Elastic {configuration_file} fitting")
 	gridspecs = (plt.GridSpec(3, 1, height_ratios=[2, 1, 1]),
 	             plt.GridSpec(3, 1, height_ratios=[2, 1, 1], hspace=0))
 	hist_axes = small_fig.add_subplot(gridspecs[0][0, :])
 	valu_axes = small_fig.add_subplot(gridspecs[1][1, :])
 	diff_axes = small_fig.add_subplot(gridspecs[1][2, :], sharex=valu_axes)
-	main_fig, map_axes = plt.subplots(figsize=(7, 5), num=f"Elastik-{configuration_file}")
+	main_fig, map_axes = plt.subplots(figsize=(7, 5), num=f"Elastic {configuration_file}")
 
 	current_state = node_positions
 	current_positions = node_positions
 	latest_step = np.zeros_like(node_positions)
 	values, grads = [], []
+	thread_lock = False
 
 	# define the objective functions
 	def compute_energy_aggressive(positions: NDArray[float]) -> float:
@@ -138,12 +140,15 @@ def create_map_projection(configuration_file: str):
 			return (scale_term*cell_scale_weights + 2*shape_term*cell_shape_weights).sum()
 
 	def record_status(state: NDArray[float], value: float, grad: NDArray[float], step: NDArray[float]) -> None:
-		nonlocal current_state, current_positions, latest_step
+		nonlocal current_state, current_positions, latest_step, thread_lock
+		while thread_lock: pass
+		thread_lock = True
 		current_state = state
 		current_positions = restore @ state
 		latest_step = step
 		values.append(value)
 		grads.append(np.linalg.norm(grad)*EARTH.R)
+		thread_lock = False
 
 	# then minimize! follow the scheduled progression.
 	logging.info("begin fitting process.")
@@ -210,6 +215,8 @@ def create_map_projection(configuration_file: str):
 		calculation.start()
 		# calculate()
 		while True:
+			while thread_lock: pass
+			thread_lock = True
 			done = not calculation.is_alive()
 			show_projection(current_state, current_positions,
 			                latest_step, values, grads, done,
@@ -217,6 +224,7 @@ def create_map_projection(configuration_file: str):
 			                cell_definitions, cell_scale_weights,
 			                coastlines, border_matrix, width, height,
 			                map_axes, hist_axes, valu_axes, diff_axes)
+			thread_lock = False
 			main_fig.canvas.draw()
 			small_fig.canvas.draw()
 			plt.pause(2)
@@ -240,15 +248,21 @@ def create_map_projection(configuration_file: str):
 	mesh = Mesh(section_borders, ф_mesh, λ_mesh,
 	            node_positions_with_nan[node_indices, :])
 
-	# and save it!
+	# save the final version of the plot
+	map_axes.axis("off")
+	main_fig.savefig(f"../examples/mesh-{configure['number']}.svg",
+	                 bbox_inches="tight", pad_inches=0)
+	main_fig.savefig(f"../examples/mesh-{configure['number']}.png", dpi=300,
+	                 bbox_inches="tight", pad_inches=0)
+
+	# and save the projection itself!
 	logging.info("projecting section borders...")
 	border_matrix = project_section_borders(mesh_indices, 5e-3)
 	logging.info("saving results...")
-	save_projection(configure["name"], configure["descript"],
-	                mesh, configure["section_names"].split(","),
+	save_projection(int(configure["number"]), mesh, configure["section_names"].split(","),
 	                decimate_path(border_matrix @ node_positions, resolution=5))
 
-	logging.info(f"elastik {configure['name']} projection saved!")
+	logging.info(f"projection {configure['number']} saved!")
 
 	small_fig.canvas.manager.set_window_title("Done!")
 
@@ -524,16 +538,19 @@ def show_projection(fit_positions: NDArray[float], all_positions: NDArray[float]
 		for line in coastlines:
 			projected_line = project(line)
 			map_axes.plot(projected_line[:, 0], projected_line[:, 1], "#000", linewidth=.8, zorder=2)
-		# plot the outline of the mesh_indices
-		border_points = border @ all_positions
-		map_axes.fill(border_points[:, 0], border_points[:, 1],
-		              facecolor="none", edgecolor="#000", linewidth=1.3, zorder=2)
 
-	map_axes.plot(np.multiply([-1, 1, 1, -1, -1], map_width/2),
-	              np.multiply([-1, -1, 1, 1, -1], map_hite/2), "#000", linewidth=.3, zorder=2)
+	# plot the outline of the mesh_indices
+	border_points = border @ all_positions
+	map_axes.fill(border_points[:, 0], border_points[:, 1],
+	              facecolor="none", edgecolor="#000", linewidth=1.3, zorder=2)
+	# plot the bounding rectangle if there is one
+	if not final:
+		map_axes.plot(np.multiply([-1, 1, 1, -1, -1], map_width/2),
+		              np.multiply([-1, -1, 1, 1, -1], map_hite/2), "#000", linewidth=.3, zorder=2)
 
 	if not final and velocity is not None:
 		# indicate the speed of each node
+		print(fit_positions.shape, velocity.shape)
 		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=5,
 		                 c=-np.linalg.norm(velocity, axis=1),
 		                 vmax=0, cmap=CUSTOM_CMAP["speed"], zorder=0)
@@ -547,6 +564,7 @@ def show_projection(fit_positions: NDArray[float], all_positions: NDArray[float]
 		map_axes.plot(all_positions[[east, west], 0], all_positions[[east, west], 1], "#f50", linewidth=.8)
 		map_axes.plot(all_positions[[north, south], 0], all_positions[[north, south], 1], "#f50", linewidth=.8)
 	map_axes.axis("equal")
+	map_axes.margins(.01)
 
 	# histogram the principal strains
 	hist_axes.clear()
@@ -575,16 +593,18 @@ def show_projection(fit_positions: NDArray[float], all_positions: NDArray[float]
 	diff_axes.grid(which="major", axis="y")
 
 
-def save_projection(name: str, descript: str, mesh: Mesh, section_names: list[str],
+def save_projection(number: int, mesh: Mesh, section_names: list[str],
                     projected_border: NDArray[float]) -> None:
 	""" save all of the important map projection information as a HDF5 and text file.
-	    :param name: the name of this elastick map projection
-	    :param descript: a short description of the map projection, to be included in the HDF5 file as an attribute.
+	    :param number: the sequence number of this map projection
 	    :param mesh: the mesh of the projection being saved
 	    :param section_names: a list of the names of the n sections. these will be added to the HDF5 file as attributes.
 	    :param projected_border: the px2 array of cartesian points representing the border of the whole map
 	"""
 	assert len(section_names) == mesh.num_sections
+
+	with open("../resources/lang.json", "r", encoding="utf-8") as f:
+		languages = json.load(f)
 
 	# start by calculating some things
 	((left, bottom), (right, top)) = get_bounding_box(projected_border)
@@ -592,75 +612,92 @@ def save_projection(name: str, descript: str, mesh: Mesh, section_names: list[st
 	x_raster = np.linspace(left, right, raster_resolution)
 	y_raster = np.linspace(bottom, top, raster_resolution)
 	inverse_raster = np.degrees(inverse_project(
-		np.transpose(np.meshgrid(x_raster, y_raster, indexing="xy"), (1, 2, 0)), mesh))
+		np.transpose(np.meshgrid(x_raster, y_raster, indexing="ij"), (1, 2, 0)), mesh))
 
 	# do the self-explanatory HDF5 file
-	with h5py.File(f"../projection/elastik-{name}.h5", "w") as file:
-		file.attrs["name"] = name
-		file.attrs["description"] = descript
-		file.attrs["num_sections"] = mesh.num_sections
-		file.create_dataset("projected_border", shape=(projected_border.shape[0],), dtype=h5_xy_tuple)
-		file["projected_border"]["x"] = projected_border[:, 0]
-		file["projected_border"]["y"] = projected_border[:, 1]
-		file.create_dataset("inverse_projected_raster", shape=inverse_raster.shape[:2], dtype=h5_фλ_tuple)
-		file["inverse_projected_raster"]["latitude"] = inverse_raster[:, :, 0]
-		file["inverse_projected_raster"]["longitude"] = inverse_raster[:, :, 1]
-		file.create_dataset("bounding_box", shape=(2,), dtype=h5_xy_tuple)
-		file["bounding_box"]["x"] = [left, right]
-		file["bounding_box"]["y"] = [bottom, top]
-		file["bounding_box"].attrs["units"] = "km"
-		file["sections"] = [f"section{i}" for i in range(mesh.num_sections)]
+	for language_code, lang in languages.items():
+		language_suffix = f"-{language_code}" if language_code != "en" else ""
+		numeral = lang["numerals"][number]
+		h5_xy_tuple = [(lang["x"], float), (lang["y"], float)]
+		h5_фλ_tuple = [(lang["latitude"], float), (lang["longitude"], float)]
 
-		for h in range(mesh.num_sections):
-			group = file.create_group(f"section{h}")
-			group.attrs["name"] = section_names[h]
-			group["latitude"] = np.degrees(mesh.ф) # TODO: internationalize
-			group["latitude"].attrs["units"] = "°"
-			group["latitude"].make_scale()
-			group["longitude"] = np.degrees(mesh.λ)
-			group["longitude"].make_scale()
-			group["longitude"].attrs["units"] = "°"
-			group.create_dataset("projection", shape=(mesh.ф.size, mesh.λ.size), dtype=h5_xy_tuple)
-			group["projection"]["x"] = mesh.nodes[h, :, :, 0]
-			group["projection"]["y"] = mesh.nodes[h, :, :, 1]
-			group["projection"].attrs["units"] = "km"
-			group["projection"].dims[0].attach_scale(group["latitude"])
-			group["projection"].dims[1].attach_scale(group["longitude"])
-			group.create_dataset("border", shape=(mesh.section_borders[h].shape[0],), dtype=h5_фλ_tuple)
-			group["border"]["latitude"] = np.degrees(mesh.section_borders[h][:, 0])
-			group["border"]["longitude"] = np.degrees(mesh.section_borders[h][:, 1])
-			group["border"].attrs["units"] = "°"
-			((left_h, bottom_h), (right_h, top_h)) = get_bounding_box(mesh.nodes[h, :, :, :])
-			group.create_dataset("bounding_box", shape=(2,), dtype=h5_xy_tuple)
-			group["bounding_box"]["x"] = [max(left, left_h), min(right, right_h)]
-			group["bounding_box"]["y"] = [max(bottom, bottom_h), min(top, top_h)]
-			group["bounding_box"].attrs["units"] = "km"
+		with h5py.File(f"../projection/{lang['elastic-earth']}-{numeral}{language_suffix}.h5", "w") as file:
+			file.attrs[lang["name"]] = lang["elastic earth #"].format(numeral)
+			file.attrs[lang["descript"]] = lang[f"descript{number}"]
+			file.attrs[lang["num sections"]] = mesh.num_sections
+			file.create_dataset(lang["projected border"], shape=(projected_border.shape[0],), dtype=h5_xy_tuple)
+			file[lang["projected border"]][lang["x"]] = projected_border[:, 0]
+			file[lang["projected border"]][lang["y"]] = projected_border[:, 1]
+			file.create_dataset(lang["bounding box"], shape=(2,), dtype=h5_xy_tuple)
+			file[lang["bounding box"]][lang["x"]] = [left, right]
+			file[lang["bounding box"]][lang["y"]] = [bottom, top]
+			file[lang["bounding box"]].attrs[lang["units"]] = "km"
+			file[lang["sections"]] = [lang["section #"].format(h) for h in range(mesh.num_sections)]
+			group = file.create_group(lang["inverse"])
+			group[lang["x"]] = x_raster
+			group[lang["x"]].attrs[lang["units"]] = "km"
+			group[lang["x"]].make_scale()
+			group[lang["y"]] = y_raster
+			group[lang["y"]].attrs[lang["units"]] = "km"
+			group[lang["y"]].make_scale()
+			group.create_dataset(lang["inverse"], shape=inverse_raster.shape[:2], dtype=h5_фλ_tuple)
+			group[lang["inverse"]][lang["latitude"]] = inverse_raster[:, :, 0]
+			group[lang["inverse"]][lang["longitude"]] = inverse_raster[:, :, 1]
+			group[lang["inverse"]].attrs[lang["units"]] = "°"
+			group[lang["inverse"]].dims[0].attach_scale(group[lang["x"]])
+			group[lang["inverse"]].dims[1].attach_scale(group[lang["y"]])
 
-	# then save a simpler but larger and less explanatory txt file
-	with open(f"../projection/elastik-{name}.csv", "w") as f:
-		f.write(f"elastik {name} projection ({mesh.num_sections} sections):\n") # the number of sections
-		for h in range(mesh.num_sections):
-			f.write(f"border ({mesh.section_borders[h].shape[0]} vertices):\n") # the number of section border vertices
-			for i in range(mesh.section_borders[h].shape[0]):
-				f.write(f"{mesh.section_borders[h][i, 0]:.6f},{mesh.section_borders[h][i, 1]:.6f}\n") # the section border vertices (°)
-			f.write(f"projection ({mesh.nodes.shape[1]}x{mesh.nodes.shape[2]} points):\n") # the shape of the section mesh_indices
-			for i in range(mesh.nodes.shape[1]):
-				for j in range(mesh.nodes.shape[2]):
-					f.write(f"{mesh.nodes[h, i, j, 0]:.3f},{mesh.nodes[h, i, j, 1]:.3f}") # the section mesh_indices points (km)
-					if j != mesh.nodes.shape[2] - 1:
+			for h in range(mesh.num_sections):
+				group = file.create_group(lang["section #"].format(h))
+				group.attrs[lang["name"]] = lang[section_names[h]]
+				group[lang["latitude"]] = np.degrees(mesh.ф)
+				group[lang["latitude"]].attrs[lang["units"]] = "°"
+				group[lang["latitude"]].make_scale()
+				group[lang["longitude"]] = np.degrees(mesh.λ)
+				group[lang["longitude"]].make_scale()
+				group[lang["longitude"]].attrs[lang["units"]] = "°"
+				group.create_dataset(lang["projected points"], shape=(mesh.ф.size, mesh.λ.size), dtype=h5_xy_tuple)
+				group[lang["projected points"]][lang["x"]] = mesh.nodes[h, :, :, 0]
+				group[lang["projected points"]][lang["y"]] = mesh.nodes[h, :, :, 1]
+				group[lang["projected points"]].attrs[lang["units"]] = "km"
+				group[lang["projected points"]].dims[0].attach_scale(group[lang["latitude"]])
+				group[lang["projected points"]].dims[1].attach_scale(group[lang["longitude"]])
+				group.create_dataset(lang["border"], shape=(mesh.section_borders[h].shape[0],), dtype=h5_фλ_tuple)
+				group[lang["border"]][lang["latitude"]] = np.degrees(mesh.section_borders[h][:, 0])
+				group[lang["border"]][lang["longitude"]] = np.degrees(mesh.section_borders[h][:, 1])
+				group[lang["border"]].attrs[lang["units"]] = "°"
+				((left_h, bottom_h), (right_h, top_h)) = get_bounding_box(mesh.nodes[h, :, :, :])
+				group.create_dataset(lang["bounding box"], shape=(2,), dtype=h5_xy_tuple)
+				group[lang["bounding box"]][lang["x"]] = [max(left, left_h), min(right, right_h)]
+				group[lang["bounding box"]][lang["y"]] = [max(bottom, bottom_h), min(top, top_h)]
+				group[lang["bounding box"]].attrs[lang["units"]] = "km"
+
+		# then save a simpler but larger and less explanatory txt file
+		with open(f"../projection/{lang['elastic-earth']}-{numeral}{language_suffix}.csv", "w", encoding="utf-8") as f:
+			f.write(lang["projection header"].format(numeral, mesh.num_sections)) # the number of sections
+			for h in range(mesh.num_sections):
+				f.write(lang["section header"].format(h))
+				f.write(lang["section border header"].format(mesh.section_borders[h].shape[0])) # the number of section border vertices
+				for i in range(mesh.section_borders[h].shape[0]):
+					f.write(f"{mesh.section_borders[h][i, 0]:5.1f},{mesh.section_borders[h][i, 1]:5.1f}\n") # the section border vertices (°)
+				f.write(lang["section points header"].format(*mesh.nodes[h].shape)) # the shape of the section mesh_indices
+				for i in range(mesh.nodes.shape[1]):
+					for j in range(mesh.nodes.shape[2]):
+						f.write(f"{mesh.nodes[h, i, j, 0]:8.2f},{mesh.nodes[h, i, j, 1]:8.2f}") # the section mesh_indices points (km)
+						if j != mesh.nodes.shape[2] - 1:
+							f.write(", ")
+					f.write("\n")
+			f.write(lang["border header"].format(projected_border.shape[0])) # the number of map edge vertices
+			for i in range(projected_border.shape[0]):
+				f.write(f"{projected_border[i, 0]:8.2f},{projected_border[i, 1]:8.2f}\n") # the map edge vertices (km)
+			f.write(lang["inverse header"].format(*inverse_raster.shape)) # the shape of the sample raster
+			f.write(f"{left} - {right}, {bottom} - {top}\n") # the bounding box of the sample raster
+			for j in range(inverse_raster.shape[1]):
+				for i in range(inverse_raster.shape[0]):
+					f.write(f"{inverse_raster[i, j, 0]:5.1f},{inverse_raster[i, j, 1]:5.1f}") # the sample raster (°)
+					if j != inverse_raster.shape[1] - 1:
 						f.write(", ")
 				f.write("\n")
-		f.write(f"projected border ({projected_border.shape[0]} vertices):\n") # the number of map edge vertices
-		for i in range(projected_border.shape[0]):
-			f.write(f"{projected_border[i, 0]:.3f},{projected_border[i, 1]:.3f}\n") # the map edge vertices (km)
-		f.write(f"projected raster ({inverse_raster.shape[0]}x{inverse_raster.shape[1]}):\n") # the shape of the sample raster
-		f.write(f"{left}-{right}, {bottom}-{top}\n") # the bounding box of the sample raster
-		for i in range(inverse_raster.shape[0]):
-			for j in range(inverse_raster.shape[1]):
-				f.write(f"{inverse_raster[i, j, 0]:.6f},{inverse_raster[i, j, 1]:.6f}") # the sample raster (°)
-				if j != inverse_raster.shape[1] - 1:
-					f.write(", ")
-			f.write("\n")
 
 
 def load_options(filename: str) -> dict[str, str]:
@@ -999,7 +1036,7 @@ def product(values: Iterable[NDArray[float] | float | int]) -> NDArray[float] | 
 class Mesh:
 	def __init__(self, section_borders: list[NDArray[float]],
 	             ф: NDArray[float], λ: NDArray[float], nodes: NDArray[float] | NDArray[int]):
-		""" a record containing the arrays that define an Elastik map projection
+		""" a record containing the arrays that define an arbitrary map projection
 		    :param ф: the m latitudes at which the nodes are defined (radians)
 		    :param λ: the n longitudes at which the nodes are defined (radians)
 		    :param nodes: either a) an l×m×n×2 array of x and y coordinates for each section, from which the
@@ -1017,8 +1054,8 @@ class Mesh:
 
 
 if __name__ == "__main__":
-	# create_map_projection("oceans")
 	create_map_projection("continents")
-	# create_map_projection("countries")
+	create_map_projection("oceans")
+	create_map_projection("countries")
 
 	plt.show()

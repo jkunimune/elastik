@@ -79,9 +79,12 @@ def create_map(name: str, projection: str,
 	ax.fill(border["x"], border["y"], facecolor="none", **border_style)
 
 	ax.axis("equal")
+	ax.margins(.01)
 	ax.axis("off")
 	fig.tight_layout()
 	fig.savefig(f"../examples/{name}.svg",
+	            bbox_inches="tight", pad_inches=0)
+	fig.savefig(f"../examples/{name}.png", dpi=300,
 	            bbox_inches="tight", pad_inches=0)
 	print(f"saved the {name} projection!")
 
@@ -188,15 +191,15 @@ def load_elastik_projection(name: str) -> tuple[list[Section], XYLine]:
 	    :param name: one of "elastic-earth-I", "elastic-earth-II", or "elastic-earth-III"
 	    :return: the list of sections that comprise this projection, and the map’s full projected outer shape
 	"""
-	with h5py.File(f"../projection/elastik-{name}.h5", "r") as file:
+	with h5py.File(f"../projection/{name}.h5", "r") as file:
 		sections = []
-		for h in range(file.attrs["num_sections"]):
-			sections.append(Section(file[f"section{h}/latitude"][:],
-			                        file[f"section{h}/longitude"][:],
-			                        file[f"section{h}/projection"][:, :],
-			                        file[f"section{h}/border"][:],
+		for h in range(file.attrs["number of sections"]):
+			sections.append(Section(file[f"section {h}/latitude"][:],
+			                        file[f"section {h}/longitude"][:],
+			                        file[f"section {h}/projected points"][:, :],
+			                        file[f"section {h}/border"][:],
 			                        ))
-		border = file["projected_border"][:]
+		border = file["projected border"][:]
 	return sections, border
 
 
@@ -285,7 +288,7 @@ class Section:
 
 def create_example_elastik_maps():
 	create_map(name="water",
-	           projection="mar",
+	           projection="elastic-earth-II",
 	           background_style=dict(
 		           facecolor="#fff",
 	           ),
@@ -356,7 +359,7 @@ def create_example_elastik_maps():
 		           )),
 	           ])
 	create_map(name="biomes",
-	           projection="land",
+	           projection="elastic-earth-I",
 	           background_style=dict(
 		           facecolor="#0b2c9e",
 	           ),
@@ -390,7 +393,7 @@ def create_example_elastik_maps():
 		           ))
 	           ])
 	create_map(name="political",
-	           projection="countries",
+	           projection="elastic-earth-III",
 	           background_style=dict(
 		           facecolor="#ebf8ff",
 	           ),

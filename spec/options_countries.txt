@@ -1,5 +1,4 @@
-name: countries
-descript: a map projection that shows landmasses with accurate shapes, but inflated sizes relative to the oceans
+number: 3
 cuts: basic
 shape_weights: land
 scale_weights: land_sinATA
