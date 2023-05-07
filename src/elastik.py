@@ -31,6 +31,137 @@ XYFeature = tuple[int, float, list[XYLine]]
 SNIPPING_LENGTH = 1000
 
 
+def create_example_elastik_maps():
+	create_map(name="political",
+	           projection="elastic-earth-III",
+	           background_style=dict(
+		           facecolor="#ebf8ff",
+	           ),
+	           border_style=dict(
+		           edgecolor="#000",
+		           linewidth=1.0,
+	           ),
+	           data=[
+		           ("ne_110m_admin_0_countries", dict(
+			           edgecolor="#000",
+			           linewidth=0.5,
+			           facecolor=[
+				           "#c799b5", "#d6a4b7", "#e3afb9", "#cf9f9d", "#daac9e", "#e2b9a0",
+				           "#caab88", "#ceba8e", "#b3ab7c", "#b5ba87", "#b7c994", "#9bb987",
+				           "#9bc797", "#9cd5a8", "#81c49e", "#83d1b1", "#68bfa7", "#6dcbbb",
+				           "#75d7cf", "#60c4c5", "#6dced8", "#5ebacd", "#70c4df", "#83cdf0",
+				           "#79b8e2", "#8ec0f1", "#a3c9ff", "#9ab4ed", "#aebcf8", "#a4a7e2",
+				           "#b7afeb", "#cab8f2", "#bda4da", "#ceaddf", "#dfb7e3", "#d0a4c9",
+			           ],
+		           )),
+	           ])
+	create_map(name="biomes",
+	           projection="elastic-earth-I",
+	           background_style=dict(
+		           facecolor="#0b2c9e",
+	           ),
+	           border_style=dict(
+		           edgecolor="none",
+	           ),
+	           data=[
+		           ("wwf_teow", dict(
+			           edgecolor="none",
+			           facecolor=[
+				           "#244b04",  # 1: tropical moist broadleaf forest
+				           "#3b5511",  # 2: tropical dry broadleaf forest
+				           "#215b24",  # 3: tropical conifer forest
+				           "#487e35",  # 4: temperate broadleaf forest
+				           "#215b24",  # 5: temperate conifer forest
+				           "#145329",  # 6: polar conifer forest (taiga)
+				           "#6b7b30",  # 7: tropical grassland
+				           "#87904f",  # 8: temperate grassland
+				           "#7c9045",  # 9: flooded grassland
+				           "#bda575",  # 10: mountain grassland
+				           "#ffffff",  # 11: polar grassland (tundra)
+				           "#9ba96b",  # 12: mediterranean forest
+				           "#fbeaae",  # 13: desert
+				           "#2e651d",  # 14: mangrove
+				           "#ffffff",  # 99: rock and ice
+			           ],
+		           )),
+		           ("ne_10m_lakes", dict(
+			           edgecolor="none",
+			           facecolor="#0b2c9e",
+		           ))
+	           ])
+	create_map(name="water",
+	           projection="elastic-earth-II",
+	           background_style=dict(
+		           facecolor="#fff",
+	           ),
+	           border_style=dict(
+		           edgecolor="none",
+	           ),
+	           data=[
+		           ("ne_50m_ocean", dict(
+			           facecolor="#8bf3f9",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_K_200", dict(
+			           facecolor="#63dcf2",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_J_1000", dict(
+			           facecolor="#44c3ec",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_I_2000", dict(
+			           facecolor="#28aae7",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_H_3000", dict(
+			           facecolor="#0c92e4",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_G_4000", dict(
+			           facecolor="#1878e0",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_F_5000", dict(
+			           facecolor="#335dcd",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_E_6000", dict(
+			           facecolor="#3c47a9",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_D_7000", dict(
+			           facecolor="#363680",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_C_8000", dict(
+			           facecolor="#292657",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_B_9000", dict(
+			           facecolor="#191534",
+			           edgecolor="none",
+		           )),
+		           ("ne_10m_bathymetry_A_10000", dict(
+			           facecolor="#060413",
+			           edgecolor="none",
+		           )),
+		           ("ne_50m_coastline", dict(
+			           color="#007",
+			           linewidth=0.15,
+		           )),
+		           ("ne_50m_rivers_lake_centerlines_scale_rank", dict(
+			           color="#007",
+			           linewidth=0,
+		           )),
+		           ("ne_50m_lakes", dict(
+			           facecolor="#8bf3f9",
+			           edgecolor="#007",
+			           linewidth=0.15,
+		           )),
+	           ])
+
+
 def create_map(name: str, projection: str,
                background_style: Style, border_style: Style,
                data: list[tuple[str, Style]]):
@@ -220,7 +351,7 @@ def load_geographic_data(filename: str) -> tuple[list[ΦΛFeature], bool]:
 			except IndexError:
 				category = index
 			try:
-				width = record["strokeweig"]
+				width = 0.5*record["strokeweig"]
 			except IndexError:
 				width = 1
 			lines: list[XYLine] = []
@@ -282,137 +413,6 @@ class Section:
 			inside = np.where(distance < nearest_segment, (λ1 > λ0) != (фX > ф), inside)
 			nearest_segment = np.minimum(nearest_segment, distance)
 		return inside
-
-
-def create_example_elastik_maps():
-	create_map(name="water",
-	           projection="elastic-earth-II",
-	           background_style=dict(
-		           facecolor="#fff",
-	           ),
-	           border_style=dict(
-		           edgecolor="none",
-	           ),
-	           data=[
-		           ("ne_50m_ocean", dict(
-			           facecolor="#8bf3f9",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_K_200", dict(
-			           facecolor="#63dcf2",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_J_1000", dict(
-			           facecolor="#44c3ec",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_I_2000", dict(
-			           facecolor="#28aae7",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_H_3000", dict(
-			           facecolor="#0c92e4",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_G_4000", dict(
-			           facecolor="#1878e0",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_F_5000", dict(
-			           facecolor="#335dcd",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_E_6000", dict(
-			           facecolor="#3c47a9",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_D_7000", dict(
-			           facecolor="#363680",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_C_8000", dict(
-			           facecolor="#292657",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_B_9000", dict(
-			           facecolor="#191534",
-			           edgecolor="none",
-		           )),
-		           ("ne_10m_bathymetry_A_10000", dict(
-			           facecolor="#060413",
-			           edgecolor="none",
-		           )),
-		           ("ne_50m_coastline", dict(
-			           color="#007",
-			           linewidth=0.15,
-		           )),
-		           ("ne_50m_rivers_lake_centerlines_scale_rank", dict(
-			           color="#007",
-			           linewidth=0,
-		           )),
-		           ("ne_50m_lakes", dict(
-			           facecolor="#8bf3f9",
-			           edgecolor="#007",
-			           linewidth=0.15,
-		           )),
-	           ])
-	create_map(name="biomes",
-	           projection="elastic-earth-I",
-	           background_style=dict(
-		           facecolor="#0b2c9e",
-	           ),
-	           border_style=dict(
-		           edgecolor="none",
-	           ),
-	           data=[
-		           ("wwf_teow", dict(
-			           edgecolor="none",
-			           facecolor=[
-				           "#244b04",  # 1: tropical moist broadleaf forest
-				           "#3b5511",  # 2: tropical dry broadleaf forest
-				           "#215b24",  # 3: tropical conifer forest
-				           "#487e35",  # 4: temperate broadleaf forest
-				           "#215b24",  # 5: temperate conifer forest
-				           "#145329",  # 6: polar conifer forest (taiga)
-				           "#6b7b30",  # 7: tropical grassland
-				           "#87904f",  # 8: temperate grassland
-				           "#7c9045",  # 9: flooded grassland
-				           "#bda575",  # 10: mountain grassland
-				           "#ffffff",  # 11: polar grassland (tundra)
-				           "#9ba96b",  # 12: mediterranean forest
-				           "#fbeaae",  # 13: desert
-				           "#2e651d",  # 14: mangrove
-				           "#ffffff",  # 99: rock and ice
-			           ],
-		           )),
-		           ("ne_10m_lakes", dict(
-			           edgecolor="none",
-			           facecolor="#0b2c9e",
-		           ))
-	           ])
-	create_map(name="political",
-	           projection="elastic-earth-III",
-	           background_style=dict(
-		           facecolor="#ebf8ff",
-	           ),
-	           border_style=dict(
-		           edgecolor="#000",
-		           linewidth=1.0,
-	           ),
-	           data=[
-		           ("ne_110m_admin_0_countries", dict(
-			           edgecolor="#000",
-			           linewidth=0.5,
-			           facecolor=[
-				           "#c799b5", "#d6a4b7", "#e3afb9", "#cf9f9d", "#daac9e", "#e2b9a0",
-				           "#caab88", "#ceba8e", "#b3ab7c", "#b5ba87", "#b7c994", "#9bb987",
-				           "#9bc797", "#9cd5a8", "#81c49e", "#83d1b1", "#68bfa7", "#6dcbbb",
-				           "#75d7cf", "#60c4c5", "#6dced8", "#5ebacd", "#70c4df", "#83cdf0",
-				           "#79b8e2", "#8ec0f1", "#a3c9ff", "#9ab4ed", "#aebcf8", "#a4a7e2",
-				           "#b7afeb", "#cab8f2", "#bda4da", "#ceaddf", "#dfb7e3", "#d0a4c9",
-			           ],
-		           )),
-	           ])
 
 
 if __name__ == "__main__":
