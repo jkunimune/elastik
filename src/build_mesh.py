@@ -21,9 +21,9 @@ STRAITS = np.radians([(66.5, -169.0), # Bering
                       (9.1, -79.7), # Panama canal
                       (30.7, 32.3), # Suez Canal
                       (1.8, 102.4), # Malacca
-                      (-9, 102.4), # Sunda (offset to make it aline with adjacent ones)
-                      (-9, 114.4), # various indonesian straits
-                      (-9, 142.4), # Torres (offset to make it aline with adjacent ones)
+                      (-10, 102.4), # Sunda (offset to make it aline with adjacent ones)
+                      (-10, 116), # Lombok (offset to make it aline with adjacent ones)
+                      (-10, 129), # Timor sea
                       (-60, -65), # Drake
                       ])
 # the distance around a strait that should be duplicated for clarity
@@ -386,6 +386,6 @@ def build_mesh(name: str, resolution: int):
 
 if __name__ == "__main__":
 	build_mesh("basic", 25)
-	# build_mesh("oceans", 20)
-	# build_mesh("mountains", 20)
+	build_mesh("oceans", 25)
+	build_mesh("mountains", 25)
 	plt.show()

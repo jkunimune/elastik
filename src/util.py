@@ -103,11 +103,11 @@ def dilate(x: NDArray[bool], distance: int) -> NDArray[bool]:
 	return x
 
 
-def search_out_from(i0: int, j0: int, shape: tuple[int, int]) -> Iterable[tuple[int, int]]:
+def search_out_from(i0: int, j0: int, shape: tuple[int, int], max_distance: int) -> Iterable[tuple[int, int]]:
 	option_grid = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]))
 	option_list = np.reshape(np.stack(option_grid, axis=-1), (-1, 2))
 	option_distance = abs(option_list[:, 0] - i0) + abs(option_list[:, 1] - j0)
-	option_order = np.argsort(option_distance)
+	option_order = np.argsort(option_distance[option_distance <= max_distance])
 	return option_list[option_order, :]
 
 
@@ -191,13 +191,26 @@ def convex_hull(points: NDArray[float]) -> NDArray[float]:
 			hull.pop(-2)
 	return np.array(hull)
 
-def decimate_path(path: list[tuple[float, float]] | NDArray[float], resolution: float) -> list[tuple[float, float]] | NDArray[float]:
+def decimate_path(path: list[tuple[float, float]] | NDArray[float], resolution: float,
+                  watch_for_longitude_wrapping=False) -> list[tuple[float, float]] | NDArray[float]:
 	""" simplify a path in-place such that the number of nodes on each segment is only as
 	    many as needed to make the curves look nice, using Ramer-Douglas
 	"""
 	if len(path) <= 2:
 		return path
 	path = np.array(path)
+
+	# if this is on a globe, look for points where it’s jumping from one side to the other
+	if watch_for_longitude_wrapping:
+		wrapping_segments = abs(path[1:, 1] - path[0:-1, 1]) > 180
+		# if you find one, do each hemisphere separately
+		if np.any(wrapping_segments):
+			wrap = np.nonzero(wrapping_segments)[0][0] + 1
+			decimated_east = decimate_path(path[:wrap, :], resolution)
+			decimated_west = decimate_path(path[wrap:, :], resolution, True)
+			return np.concatenate([decimated_east, decimated_west])
+
+	# otherwise, look for the point that is furthest from the strait-line representation of this path
 	xA, yA = path[0, :]
 	xB, yB = path[1:-1, :].T
 	xC, yC = path[-1, :]
@@ -205,13 +218,15 @@ def decimate_path(path: list[tuple[float, float]] | NDArray[float], resolution: 
 	ac = np.hypot(xC - xA, yC - yA)
 	ab_ac = (xB - xA)*(xC - xA) + (yB - yA)*(yC - yA)
 	distance = np.sqrt(np.maximum(0, ab**2 - (ab_ac/ac)**2))
+	# if it’s not so far, declare this safe to simplify
 	if np.max(distance) < resolution:
 		return [(xA, yA), (xC, yC)]
+	# if it is too far, split the path there and call this function recursively on the two parts
 	else:
 		furthest = np.argmax(distance) + 1
 		decimated_head = decimate_path(path[:furthest + 1, :], resolution)
 		decimated_tail = decimate_path(path[furthest:, :], resolution)
-		return np.concatenate([decimated_head, decimated_tail])
+		return np.concatenate([decimated_head[:-1], decimated_tail])
 
 
 def simplify_path(path: Union[NDArray[float], "SparseNDArray"], cyclic=False

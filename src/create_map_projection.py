@@ -61,7 +61,7 @@ def create_map_projection(configuration_file: str):
 	shape_weights = load_pixel_values(configure["shape_weights"], configure["cuts"], mesh.shape[0])
 	logging.info(f"loaded the {configure['shape_weights']} map as the angle weights")
 	width, height = (float(value) for value in configure["size"].split(","))
-	logging.info(f"setting the maximum map size to {width}×{height} km")
+	logging.info(f"set the maximum map size to {width}×{height} km")
 
 	# assume the coordinates are more or less evenly spaced
 	dΦ = EARTH.a*(1 - EARTH.e2)*(1 - EARTH.e2*np.sin(ф_mesh)**2)**(3/2)*(ф_mesh[1] - ф_mesh[0])
@@ -76,6 +76,7 @@ def create_map_projection(configuration_file: str):
 		node_indices, [shape_weights, scale_weights], dΦ, dΛ)
 
 	# set up the fitting constraints that will force the map to fit inside a box
+	logging.info(f"projecting section borders...")
 	border_matrix = project_section_borders(mesh_indices, 5e-2)
 	map_size = np.array([width, height])
 
@@ -550,7 +551,6 @@ def show_projection(fit_positions: NDArray[float], all_positions: NDArray[float]
 
 	if not final and velocity is not None:
 		# indicate the speed of each node
-		print(fit_positions.shape, velocity.shape)
 		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=5,
 		                 c=-np.linalg.norm(velocity, axis=1),
 		                 vmax=0, cmap=CUSTOM_CMAP["speed"], zorder=0)
@@ -828,20 +828,19 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 		logging.info(f"{point_index}/{points.shape[:-1]}")
 		possible_results = np.empty((mesh.num_sections, 2), dtype=float)
 		closenesses = np.empty(mesh.num_sections, dtype=float)
-		guesses = np.reshape(np.stack(np.meshgrid(
-			np.linspace(-pi/2, pi/2, 25)[1:-1], np.linspace(-pi, pi, 49)), axis=-1), (-1, 2))
 		for h in hs:
-			# start by vectorizedly scanning some prechosen guesses
-			reprojected_guesses = project(guesses, mesh, h)
-			residuals = np.sum((reprojected_guesses - np.array([point]))**2, axis=-1)
-			ф, λ = guesses[np.nanargmin(residuals), :]
+			# start by vectorizedly scanning every node position
+			residuals = np.sum((mesh.nodes[h, :, :, :] - np.array([point]))**2, axis=-1)
+			closest_node = np.unravel_index(np.nanargmin(residuals.ravel()), residuals.shape)
+			ф_closest, λ_closest = mesh.nodes[(h, *closest_node)]
 			# this scan minimization will serve as the backup result if we find noting better
-			possible_results[h, :] = [ф, λ]
-			closenesses[h] = np.nanmin(residuals)
+			possible_results[h, :] = [ф_closest, λ_closest]
+			closenesses[h] = residuals[closest_node]
 			# but more importantly, this will serve as the initial guess for the more detailed search
-			i_guess = bin_index(ф, mesh.ф)
-			j_guess = bin_index(λ, mesh.λ)
-			for i, j in search_out_from(i_guess, j_guess, mesh.nodes.shape[1:3]):
+			i_guess = bin_index(ф_closest, mesh.ф)
+			j_guess = bin_index(λ_closest, mesh.λ)
+			# look at each _cell_ in the vicinity and see if any contain the point
+			for i, j in search_out_from(i_guess, j_guess, mesh.nodes.shape[1:3], 6):
 				# look for a cell that contains the point
 				if np.all(np.isfinite(mesh.nodes[i-1:i+1, j-1:j+1])):
 					sw = mesh.nodes[h, i - 1, j - 1]

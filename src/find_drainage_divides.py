@@ -2,9 +2,8 @@
 """
 find_drainage_divides.py
 
-locate continental divides and save them in a way that can be used as optimal cuts for
-the oceanic elastic map
-all angles are in degrees. indexing is z[i,j] = z(ф[i], λ[j])
+locate continental divides and save them in a way that can be used as optimal cuts for the oceanic map.
+all angles are in degrees. indexing is z[i,j] = z(ф[i], λ[j]).
 """
 from __future__ import annotations
 
@@ -77,7 +76,7 @@ def calculate_drainage_divides(endpoints: list[tuple[float, float]]):
 				paths[i] = np.concatenate([paths[i][:j, :], paths[i][j + 1:, :]])
 	# finally, simplify all paths
 	for i in range(len(paths)):
-		paths[i] = decimate_path(paths[i], sqrt(2)/RESOLUTION)
+		paths[i] = decimate_path(paths[i], sqrt(2)/RESOLUTION, watch_for_longitude_wrapping=True)
 
 	# save and plot them
 	np.savetxt("../spec/cuts_mountains.txt", np.concatenate(paths), fmt="%.1f")  # type: ignore
