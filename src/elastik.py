@@ -82,8 +82,6 @@ def create_map(name: str, projection: str,
 	ax.margins(.01)
 	ax.axis("off")
 	fig.tight_layout()
-	fig.savefig(f"../examples/{name}.svg",
-	            bbox_inches="tight", pad_inches=0)
 	fig.savefig(f"../examples/{name}.png", dpi=300,
 	            bbox_inches="tight", pad_inches=0)
 	print(f"saved the {name} projection!")
