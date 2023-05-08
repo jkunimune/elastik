@@ -39,12 +39,12 @@ def create_example_elastik_maps():
 	           ),
 	           border_style=dict(
 		           edgecolor="#000",
-		           linewidth=1.0,
+		           linewidth=0.6,
 	           ),
 	           data=[
 		           ("ne_110m_admin_0_countries", dict(
 			           edgecolor="#000",
-			           linewidth=0.5,
+			           linewidth=0.3,
 			           facecolor=[
 				           "#c799b5", "#d6a4b7", "#e3afb9", "#cf9f9d", "#daac9e", "#e2b9a0",
 				           "#caab88", "#ceba8e", "#b3ab7c", "#b5ba87", "#b7c994", "#9bb987",
@@ -147,17 +147,17 @@ def create_example_elastik_maps():
 			           edgecolor="none",
 		           )),
 		           ("ne_50m_coastline", dict(
-			           color="#007",
-			           linewidth=0.15,
+			           color="#009",
+			           linewidth=0.2,
 		           )),
 		           ("ne_50m_rivers_lake_centerlines_scale_rank", dict(
-			           color="#007",
+			           color="#009",
 			           linewidth=0,
 		           )),
-		           ("ne_50m_lakes", dict(
+		           ("ne_110m_lakes", dict(
 			           facecolor="#8bf3f9",
-			           edgecolor="#007",
-			           linewidth=0.15,
+			           edgecolor="#009",
+			           linewidth=0.2,
 		           )),
 	           ])
 
@@ -179,19 +179,22 @@ def create_map(name: str, projection: str,
 
 	ax.fill(border["x"], border["y"], edgecolor="none", **background_style)
 
-	for data_name, style in data:
+	for i, (data_name, style) in enumerate(data):
+		print(f"adding {data_name} to the map...")
+		zorder = 1 + i
 		multiple_colors = "facecolor" in style and type(style["facecolor"]) is list
+		multiple_widths = "linewidth" in style and style["linewidth"] == 0
 		unprojected_data, closed = load_geographic_data(data_name)
 		projected_data = project(unprojected_data, sections)
 		projected_data = cut_lines_that_cross_interruptions(projected_data, closed)
 		if closed:
 			for category, width, lines in projected_data:
-				codes: list[int] = []
-				points: list[tuple[float, float]] = []
 				feature_specific_style = {**style}
 				if multiple_colors:
 					color_index = category%len(style["facecolor"])
 					feature_specific_style["facecolor"] = style["facecolor"][color_index]
+				points: list[tuple[float, float]] = []
+				codes: list[int] = []
 				for line in lines:
 					for k, point in enumerate(line):
 						points.append((point["x"], point["y"]))
@@ -199,20 +202,21 @@ def create_map(name: str, projection: str,
 					points.append((nan, nan))
 					codes.append(Path.CLOSEPOLY)
 				path = Path(points, codes)  # type: ignore
-				patch = PathPatch(path, **feature_specific_style)
+				patch = PathPatch(path, zorder=zorder, **feature_specific_style)
 				ax.add_patch(patch)
 		else:
 			for category, width, lines in projected_data:
-				feature_specific_style = {**style, **{"linewidth": width}}
+				feature_specific_style = {**style}
+				if multiple_widths:
+					feature_specific_style["linewidth"] = width
 				for line in lines:
-					ax.plot(line["x"], line["y"], **feature_specific_style)
+					ax.plot(line["x"], line["y"], zorder=zorder, **feature_specific_style)
 
 	ax.fill(border["x"], border["y"], facecolor="none", **border_style)
 
 	ax.axis("equal")
 	ax.margins(.01)
 	ax.axis("off")
-	fig.tight_layout()
 	fig.savefig(f"../examples/{name}.png", dpi=300,
 	            bbox_inches="tight", pad_inches=0)
 	print(f"saved the {name} projection!")
