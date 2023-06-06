@@ -309,7 +309,7 @@ def build_mesh(name: str, resolution: int):
 	    :param resolution: how many cells per 90°
 	"""
 	# start by defining a grid of Cells
-	ф = np.linspace(-pi/2, pi/2, 2*resolution) # note that this is inherently odd
+	ф = np.linspace(-pi/2, pi/2, 2*resolution) # note that this is intentionally odd
 	num_ф = ф.size - 1
 	λ = np.linspace(-pi, pi, 4*resolution)
 	num_λ = λ.size - 1

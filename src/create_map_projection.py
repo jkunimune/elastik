@@ -11,7 +11,7 @@ import json
 import logging
 import sys
 import threading
-from math import inf, pi, log2, nan, floor, isfinite
+from math import inf, pi, log2, nan, floor, isfinite, degrees
 from typing import Iterable, Sequence
 
 import h5py
@@ -609,19 +609,19 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 	# start by calculating some things
 	((left, bottom), (right, top)) = get_bounding_box(projected_border)
 	raster_resolution = 20
-	x_raster = np.linspace(left, right, raster_resolution)
-	y_raster = np.linspace(bottom, top, raster_resolution)
+	x_raster = np.linspace(left, right, raster_resolution + 1)
+	y_raster = np.linspace(bottom, top, raster_resolution + 1)
 	inverse_raster = np.degrees(inverse_project(
 		np.transpose(np.meshgrid(x_raster, y_raster, indexing="ij"), (1, 2, 0)), mesh))
 
 	# do the self-explanatory HDF5 file
 	for language_code, lang in languages.items():
-		language_suffix = f"-{language_code}" if language_code != "en" else ""
+		subdirectory = f"{language_code}/" if language_code != "en" else ""
 		numeral = lang["numerals"][number]
 		h5_xy_tuple = [(lang["x"], float), (lang["y"], float)]
 		h5_фλ_tuple = [(lang["latitude"], float), (lang["longitude"], float)]
 
-		with h5py.File(f"../projection/{lang['elastic-earth']}-{numeral}{language_suffix}.h5", "w") as file:
+		with h5py.File(f"../projection/{subdirectory}{lang['elastic-earth']}-{numeral}.h5", "w") as file:
 			file.attrs[lang["name"]] = lang["elastic earth #"].format(numeral)
 			file.attrs[lang["descript"]] = lang[f"descript{number}"]
 			file.attrs[lang["num sections"]] = mesh.num_sections
@@ -673,13 +673,15 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 				group[lang["bounding box"]].attrs[lang["units"]] = "km"
 
 		# then save a simpler but larger and less explanatory txt file
-		with open(f"../projection/{lang['elastic-earth']}-{numeral}{language_suffix}.csv", "w", encoding="utf-8") as f:
+		with open(f"../projection/{subdirectory}{lang['elastic-earth']}-{numeral}.csv",
+		          "w", encoding="utf-8") as f:
 			f.write(lang["projection header"].format(numeral, mesh.num_sections)) # the number of sections
 			for h in range(mesh.num_sections):
 				f.write(lang["section header"].format(h))
 				f.write(lang["section border header"].format(mesh.section_borders[h].shape[0])) # the number of section border vertices
 				for i in range(mesh.section_borders[h].shape[0]):
-					f.write(f"{mesh.section_borders[h][i, 0]:5.1f},{mesh.section_borders[h][i, 1]:5.1f}\n") # the section border vertices (°)
+					f.write(f"{degrees(mesh.section_borders[h][i, 0]):6.1f},"
+					        f"{degrees(mesh.section_borders[h][i, 1]):6.1f}\n") # the section border vertices (°)
 				f.write(lang["section points header"].format(*mesh.nodes[h].shape)) # the shape of the section mesh_indices
 				for i in range(mesh.nodes.shape[1]):
 					for j in range(mesh.nodes.shape[2]):
@@ -691,11 +693,11 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 			for i in range(projected_border.shape[0]):
 				f.write(f"{projected_border[i, 0]:8.2f},{projected_border[i, 1]:8.2f}\n") # the map edge vertices (km)
 			f.write(lang["inverse header"].format(*inverse_raster.shape)) # the shape of the sample raster
-			f.write(f"{left} - {right}, {bottom} - {top}\n") # the bounding box of the sample raster
+			f.write(f"{left:8.2f},{right:8.2f}, {bottom:8.2f},{top:8.2f}\n") # the bounding box of the sample raster
 			for j in range(inverse_raster.shape[1]):
 				for i in range(inverse_raster.shape[0]):
-					f.write(f"{inverse_raster[i, j, 0]:5.1f},{inverse_raster[i, j, 1]:5.1f}") # the sample raster (°)
-					if j != inverse_raster.shape[1] - 1:
+					f.write(f"{inverse_raster[i, j, 0]:6.1f},{inverse_raster[i, j, 1]:6.1f}") # the sample raster (°)
+					if i != inverse_raster.shape[0] - 1:
 						f.write(", ")
 				f.write("\n")
 

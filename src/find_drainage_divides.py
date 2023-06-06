@@ -24,7 +24,7 @@ from util import bin_centers, bin_index, intersects, decimate_path
 # how many pixels per degree
 RESOLUTION = 10
 # how to determine the height value of a pixel that contains multiple data points
-REDUCTION = np.median
+REDUCTION = np.min
 # what fraction of the found paths should be plotted
 AMOUNT_TO_PLOT = 5e-2/RESOLUTION**2
 

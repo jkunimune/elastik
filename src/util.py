@@ -321,7 +321,7 @@ def inside_region(ф: Numeric, λ: Numeric, region: NDArray[float], period=360) 
 	δλ_border = region[1:, 1] - region[:-1, 1]
 	ф_border = region[1:, 0]
 	if np.array_equal(region[0, :], region[-1, :]):
-		inside_out = δλ_border[np.argmax(ф_border[:-1] + ф_border[1:])] > 0 # for closed regions we have this nice trick
+		inside_out = δλ_border[np.argmax(region[:-1, 0] + region[1:, 0])] > 0 # for closed regions we have this nice trick
 	else:
 		endpoints_down = np.mean(ф_border) > (ф_border[0] + ф_border[-1])/2
 		goes_east = np.sum(δλ_border, where=abs(δλ_border) <= period/2) > 0
