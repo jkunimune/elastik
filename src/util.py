@@ -104,11 +104,16 @@ def dilate(x: NDArray[bool], distance: int) -> NDArray[bool]:
 
 
 def search_out_from(i0: int, j0: int, shape: tuple[int, int], max_distance: int) -> Iterable[tuple[int, int]]:
+	""" yield a list of index pairs in the given shape orderd such that iterating thru the list spirals
+	    outward from i0,j0.  it will be treated periodically on axis 1 (so j=0 is next to j=n-1) """
 	option_grid = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]))
 	option_list = np.reshape(np.stack(option_grid, axis=-1), (-1, 2))
-	option_distance = abs(option_list[:, 0] - i0) + abs(option_list[:, 1] - j0)
-	option_order = np.argsort(option_distance[option_distance <= max_distance])
-	return option_list[option_order, :]
+	i_distance = abs(option_list[:, 0] - i0)
+	j_distance = abs(option_list[:, 1] - j0)
+	j_distance = np.minimum(j_distance, shape[1] - j_distance)  # account for periodicity
+	distance = i_distance + j_distance
+	order = np.argsort(distance)
+	return option_list[order[distance[order] <= max_distance], :]
 
 
 def intersects(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float], d: tuple[float, float]) -> bool:
