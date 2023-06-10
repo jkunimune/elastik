@@ -725,7 +725,7 @@ def load_pixel_values(filename: str, cut_set: str, num_sections: int) -> list[ND
 
 def load_coastline_data(reduction=2) -> list[NDArray[float]]:
 	coastlines = []
-	with shapefile.Reader(f"../data/ne_110m_coastline.zip") as shapef:
+	with shapefile.Reader(f"../resources/shapefiles/ne_110m_coastline.zip") as shapef:
 		for shape in shapef.shapes():
 			if len(shape.points) > 3*reduction:
 				coastlines.append(np.radians(shape.points)[::reduction, ::-1])

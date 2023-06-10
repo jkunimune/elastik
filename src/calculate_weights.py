@@ -49,7 +49,7 @@ def load_coast_vertices(precision: float) -> list[tuple[float, float]]:
 	points = []
 	λ_last, ф_last = nan, nan
 	for data in ["coastline", "minor_islands_coastline"]:
-		with shapefile.Reader(f"../data/ne_10m_{data}.zip") as shape_f:
+		with shapefile.Reader(f"../resources/shapefiles/ne_10m_{data}.zip") as shape_f:
 			for shape in shape_f.shapes():
 				for λ, ф in shape.points:
 					edge_length = hypot(
@@ -119,7 +119,7 @@ def load_cut_file(filename: str) -> list[NDArray[float]]:
 def load_land_polygons() -> list[list[tuple[float, float]]]:
 	""" load the land polygon shapefile (110m resolution) """
 	polygons = []
-	with shapefile.Reader(f"../data/ne_110m_land.zip") as shape_f:
+	with shapefile.Reader(f"../resources/shapefiles/ne_110m_land.zip") as shape_f:
 		for shape in shape_f.shapes():
 			polygons.append(shape.points)
 	return polygons

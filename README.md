@@ -47,7 +47,7 @@
  To run the `calculate_weights.py` script, which computes a map of the distance of
  each point on earth from the nearest shoreline, you will need the coastline and
  land polygon datasets from Natural Earth (naturalearthdata.com).   Download the
- zip files and put them in data/.  The script will unzip them automatically.
+ zip files and put them in resources/shapefiles/.  The script will unzip them automatically.
  You specifically need
  - Natural Earth 10m coastline dataset
  - Natural Earth 10m minor islands coastline dataset
@@ -56,5 +56,5 @@
  To run the `find_drainage_divides.py` script, which locates and saves
  continental divides for use as interruptions, you will need the USGS EROS
  Center's global 30 arcsec elevation data set (GTOPO30, DOI: 10.5066/F7DF6PQS).
- Download it as GeoTIF files and put it in data/elevation/.  The script will load
+ Download it as GeoTIF files and put it in resources/elevation/.  The script will load
  and assemble it automatically.

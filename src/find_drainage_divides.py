@@ -193,7 +193,7 @@ def plot_map(z_nodes: NDArray[float], extent: tuple[float, float, float, float])
 
 
 def load_elevation_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> NDArray[float]:
-	""" look for tiff files in the data/elevation/ folder and tile them together
+	""" look for tiff files in the resources/elevation/ folder and tile them together
 	    to form a single global map, with its resolution set by ф_nodes and λ_nodes.
 	    each pixel will correspond to one node and have value equal to the average
 	    elevation in the region that is closer to it than to any other node, accounting
@@ -209,9 +209,9 @@ def load_elevation_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> N
 	z_nodes = np.full((ф_nodes.size, λ_nodes.size), nan)
 
 	# look at each data file (they may not achieve full coverage)
-	for filename in os.listdir("../data/elevation"):
+	for filename in os.listdir("../resources/elevation"):
 		print(f"loading {filename}")
-		z_data = tifffile.imread(f"../data/elevation/{filename}")
+		z_data = tifffile.imread(f"../resources/elevation/{filename}")
 
 		# read its location and assine node indices
 		ф0 = float(filename[-6:-4]) * (1 if filename[-7] == "n" else -1)
@@ -244,7 +244,7 @@ def load_river_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> list[
 	"""
 	# start by loading the rivers as lists
 	rivers: list[list[tuple[float, float]]] = []
-	with shapefile.Reader(f"../data/ne_10m_rivers_lake_centerlines.zip") as shape_f:
+	with shapefile.Reader(f"../resources/shapefiles/ne_10m_rivers_lake_centerlines.zip") as shape_f:
 		for record, shape in zip(shape_f.records(), shape_f.shapes()):
 			if "運河" in record.name_ja:
 				continue  # make sure to skip all canals

@@ -11,7 +11,8 @@ cmake-build-debug/*
 .idea/*
 
 # input data files (see README for where to get them)
-data/*
+resources/elevation/*
+resources/shapefiles/*
 
 # log files
 *.log

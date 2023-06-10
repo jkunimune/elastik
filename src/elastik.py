@@ -347,7 +347,7 @@ def load_geographic_data(filename: str) -> tuple[list[ΦΛFeature], bool]:
 	encoding = "latin-1" if "wwf_" in filename else "utf-8"
 	features: list[ΦΛFeature] = []
 	closed = True
-	with shapefile.Reader(f"../data/{filename}.zip", encoding=encoding) as f:
+	with shapefile.Reader(f"../resources/shapefiles/{filename}.zip", encoding=encoding) as f:
 		for index, (record, shape) in enumerate(zip(f.records(), f.shapes())):
 			closed = shape.shapeTypeName == "POLYGON"
 			try:
