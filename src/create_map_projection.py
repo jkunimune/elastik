@@ -1002,7 +1002,7 @@ def project_section_borders(mesh: Mesh, resolution: float) -> Union[NDArray[floa
 		borders.append(project(refine_path(border, resolution, period=2*pi),
 		                       mesh, section_index=h))
 	# combine the section borders into one path
-	if type(borders[0] is np.ndarray):
+	if type(borders[0]) is np.ndarray:
 		complete_border = np.concatenate(borders)
 	else:
 		complete_border = SparseNDArray.concatenate(borders)
