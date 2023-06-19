@@ -169,9 +169,12 @@ def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float
 
 def rotate_and_shift(points: NDArray[float], rotation: float, shift: NDArray[float]) -> NDArray[float]:
 	""" rotate some points about the origin and then translate them """
-	if points.ndim != 2 or points.shape[1] != 2:
-		raise ValueError("the polygon must be a sequence of at least 3 point sin 2-space")
-	return (rotation_matrix(rotation)@points.T).T + shift
+	if points.shape[-1] != 2:
+		raise ValueError("the points must be in 2D space")
+	points = np.moveaxis(points, -1, -2)  # for some reason the x/y axis must be -2 specificly for matmul
+	rotated = rotation_matrix(rotation)@points
+	rotated = np.moveaxis(rotated, -2, -1)
+	return rotated + shift
 
 def convex_hull(points: NDArray[float]) -> NDArray[float]:
 	""" take a set of points and return a copy that is missing all of the points that are inside the

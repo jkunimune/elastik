@@ -12,8 +12,8 @@ import logging
 import re
 import sys
 import threading
-from math import inf, pi, log2, nan, floor, isfinite, degrees
-from typing import Iterable, Sequence
+from math import inf, pi, log2, nan, floor, isfinite, degrees, isnan
+from typing import Iterable, Sequence, Union
 
 import h5py
 import numpy as np
@@ -55,22 +55,22 @@ def create_map_projection(configuration_file: str):
 	"""
 	configure = load_options(configuration_file)
 	logging.info(f"loaded options from {configuration_file}")
-	ф_mesh, λ_mesh, mesh, section_borders = load_mesh(configure["cuts"])
-	logging.info(f"loaded a {np.sum(np.isfinite(mesh[:, :, :, 0]))}-node mesh")
-	scale_weights = load_pixel_values(configure["scale_weights"], configure["cuts"], mesh.shape[0])
+	mesh = load_mesh(configure["cuts"])
+	logging.info(f"loaded a {np.count_nonzero(np.isfinite(mesh.nodes[:, :, :, 0]))}-node mesh")
+	scale_weights = load_pixel_values(configure["scale_weights"], configure["cuts"], mesh.nodes.shape[0])
 	logging.info(f"loaded the {configure['scale_weights']} map as the area weights")
-	shape_weights = load_pixel_values(configure["shape_weights"], configure["cuts"], mesh.shape[0])
+	shape_weights = load_pixel_values(configure["shape_weights"], configure["cuts"], mesh.nodes.shape[0])
 	logging.info(f"loaded the {configure['shape_weights']} map as the angle weights")
 	width, height = (float(value) for value in configure["size"].split(","))
 	logging.info(f"set the maximum map size to {width}×{height} km")
 
 	# assume the coordinates are more or less evenly spaced
-	dΦ = EARTH.a*(1 - EARTH.e2)*(1 - EARTH.e2*np.sin(ф_mesh)**2)**(3/2)*(ф_mesh[1] - ф_mesh[0])
-	dΛ = EARTH.a*(1 + (1 - EARTH.e2)*np.tan(ф_mesh)**2)**(-1/2)*(λ_mesh[1] - λ_mesh[0])
+	dΦ = EARTH.a*(1 - EARTH.e2)*(1 - EARTH.e2*np.sin(mesh.ф)**2)**(3/2)*(mesh.ф[1] - mesh.ф[0])
+	dΛ = EARTH.a*(1 + (1 - EARTH.e2)*np.tan(mesh.ф)**2)**(-1/2)*(mesh.λ[1] - mesh.λ[0])
 
 	# reformat the nodes into a list without gaps or duplicates
-	node_indices, node_positions = enumerate_nodes(mesh)
-	mesh_indices = Mesh(section_borders, ф_mesh, λ_mesh, node_indices)
+	node_indices, node_positions = enumerate_nodes(mesh.nodes)
+	index_mesh = Mesh(mesh.section_borders, mesh.ф, mesh.λ, node_indices)
 
 	# and then do the same thing for cell corners
 	cell_definitions, [cell_shape_weights, cell_scale_weights] = enumerate_cells(
@@ -78,7 +78,7 @@ def create_map_projection(configuration_file: str):
 
 	# set up the fitting constraints that will force the map to fit inside a box
 	logging.info(f"projecting section borders...")
-	border_matrix = project_section_borders(mesh_indices, 5e-2)
+	border_matrix = project_section_borders(index_mesh, 2e-2)
 	map_size = np.array([width, height])
 
 	# load the coastline data from Natural Earth
@@ -86,7 +86,7 @@ def create_map_projection(configuration_file: str):
 
 	# now we can bild up the progression schedule
 	skeleton_factors = np.ceil(np.geomspace(
-		ф_mesh.size/10, 1., int(log2(ф_mesh.size/10)) + 1)).astype(int)
+		mesh.ф.size/10, 1., int(log2(mesh.ф.size/10)) + 1)).astype(int)
 	schedule = [(skeleton_factors[0], 0, False),  # start with the roughest fit, with no bounds
 	            (skeleton_factors[0], 0, True)]  # switch to the strict cost function before imposing bounds
 	schedule += [(factor, factor, True) for factor in skeleton_factors]  # impose the bounds and then make the mesh finer
@@ -163,7 +163,7 @@ def create_map_projection(configuration_file: str):
 		if mesh_factor > 0:
 			gradient_tolerance = 1e-3/EARTH.R
 			barrier_tolerance = 1e-2*EARTH.R
-			reduce, restore = mesh_skeleton(mesh_indices, mesh_factor)
+			reduce, restore = mesh_skeleton(index_mesh, mesh_factor)
 		else:
 			gradient_tolerance = 1e-4/EARTH.R
 			barrier_tolerance = 1e-3*EARTH.R
@@ -183,7 +183,7 @@ def create_map_projection(configuration_file: str):
 			for k in range(bounds_limits.shape[1]):
 				if isfinite(map_size[k]):
 					excess = np.ptp(border[:, k])/(2*bounds_limits[0, k])
-					set_size = 2*bounds_limits[0, k]*min(1 - .1/λ_mesh.size, 1/excess)
+					set_size = 2*bounds_limits[0, k]*min(1 - .1/mesh.λ.size, 1/excess)
 					node_positions[:, k] = interp(node_positions[:, k],
 					                              np.min(border[:, k]), np.max(border[:, k]),
 					                              -set_size/2, set_size/2)
@@ -215,14 +215,13 @@ def create_map_projection(configuration_file: str):
 			success = True
 		calculation = threading.Thread(target=calculate)
 		calculation.start()
-		# calculate()
 		while True:
 			while thread_lock: pass
 			thread_lock = True
 			done = not calculation.is_alive()
 			show_projection(current_state, current_positions,
 			                latest_step, values, grads, done,
-			                mesh_indices, dΦ, dΛ,
+			                index_mesh, dΦ, dΛ,
 			                cell_definitions, cell_scale_weights,
 			                coastlines, border_matrix, width, height,
 			                map_axes, hist_axes, valu_axes, diff_axes)
@@ -242,14 +241,6 @@ def create_map_projection(configuration_file: str):
 	logging.info("end fitting process.")
 	small_fig.canvas.manager.set_window_title("Saving...")
 
-	# fit the result in a landscape rectangle
-	node_positions = rotate_and_shift(node_positions, *fit_in_rectangle(border_matrix@node_positions))
-
-	# apply the optimized vector back to the mesh
-	node_positions_with_nan = np.concatenate([node_positions, [[nan, nan]]])
-	mesh = Mesh(section_borders, ф_mesh, λ_mesh,
-	            node_positions_with_nan[node_indices, :])
-
 	# save the final version of the plot
 	map_axes.axis("off")
 	main_fig.savefig(f"../examples/mesh-{configure['number']}.svg",
@@ -257,13 +248,21 @@ def create_map_projection(configuration_file: str):
 	main_fig.savefig(f"../examples/mesh-{configure['number']}.png", dpi=300,
 	                 bbox_inches="tight", pad_inches=0)
 
-	# and save the projection itself!
-	logging.info("projecting section borders...")
-	border_matrix = project_section_borders(mesh_indices, 5e-3)
-	logging.info("saving results...")
-	save_projection(int(configure["number"]), mesh, configure["section_names"].split(","),
-	                decimate_path(border_matrix @ node_positions, resolution=5))
+	# apply the optimized vector back to the mesh
+	node_positions_with_nan = np.concatenate([node_positions, [[nan, nan]]])
+	mesh = Mesh(mesh.section_borders, mesh.ф, mesh.λ, node_positions_with_nan[index_mesh.nodes, :])
 
+	# do a final decimated version of the projected border (and realline it so it's still centerd)
+	logging.info("projecting section borders...")
+	border = project_section_borders(mesh, 5e-3)
+	border = decimate_path(border, resolution=5)
+
+	# fit the result into a landscape rectangle
+	mesh.nodes = rotate_and_shift(mesh.nodes, *fit_in_rectangle(border))
+
+	# and finally, save the projection
+	logging.info("saving results...")
+	save_projection(int(configure["number"]), mesh, configure["section_names"].split(","), border)
 	logging.info(f"projection {configure['number']} saved!")
 
 	small_fig.canvas.manager.set_window_title("Done!")
@@ -693,7 +692,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 		for i in range(projected_border.shape[0]):
 			text += f"{projected_border[i, 0]:9.2f},{projected_border[i, 1]:9.2f}\n" # the map edge vertices (km)
 		text += lang["inverse header"].format(*inverse_raster.shape) # the shape of the sample raster
-		text += f"{left:9.2f},{right:9.2f}, {bottom:9.2f},{top:9.2f}\n" # the bounding box of the sample raster
+		text += f"{x_raster[0]:9.2f},{x_raster[-1]:9.2f}, {y_raster[0]:9.2f},{y_raster[-1]:9.2f}\n" # the bounding box of the sample raster
 		for j in range(inverse_raster.shape[1]):
 			for i in range(inverse_raster.shape[0]):
 				text += f"{inverse_raster[i, j, 0]:6.1f},{inverse_raster[i, j, 1]:6.1f}" # the sample raster (°)
@@ -736,7 +735,7 @@ def load_coastline_data(reduction=2) -> list[NDArray[float]]:
 	return coastlines
 
 
-def load_mesh(filename: str) -> tuple[NDArray[float], NDArray[float], NDArray[float], list[NDArray[float]]]:
+def load_mesh(filename: str) -> Mesh:
 	""" load the ф values, λ values, node locations, and section borders from a HDF5
 	    file, in that order.
 	"""
@@ -744,12 +743,12 @@ def load_mesh(filename: str) -> tuple[NDArray[float], NDArray[float], NDArray[fl
 		ф = np.radians(file["section0/latitude"])
 		λ = np.radians(file["section0/longitude"])
 		num_sections = file.attrs["num_sections"]
-		mesh = np.empty((num_sections, ф.size, λ.size, 2))
-		sections = []
+		nodes = np.empty((num_sections, ф.size, λ.size, 2))
+		section_borders = []
 		for h in range(num_sections):
-			mesh[h, :, :, :] = file[f"section{h}/projection"]
-			sections.append(np.radians(file[f"section{h}/border"][:, :]))
-	return ф, λ, mesh, sections
+			nodes[h, :, :, :] = file[f"section{h}/projection"]
+			section_borders.append(np.radians(file[f"section{h}/border"][:, :]))
+	return Mesh(section_borders, ф, λ, nodes)
 
 
 def project(points: list[tuple[float, float]] | NDArray[float], mesh: Mesh,
@@ -989,18 +988,26 @@ def gradient(Y: NDArray[float], x: NDArray[float], where: NDArray[bool], axis: i
 	        impossible.transpose(old_axis_order)) # I could use a maskedarray here, but it feels weerd to import the whole module just for this
 
 
-def project_section_borders(index_mesh: Mesh,
-                            resolution: float) -> SparseNDArray:
+def project_section_borders(mesh: Mesh, resolution: float) -> Union[NDArray[float], SparseNDArray]:
 	""" take the section borders, concatenate them, project them, and trim off the shared edges """
 	borders = []
-	for h, border in enumerate(index_mesh.section_borders): # take the border of each section
+	# take the border of each section
+	for h, border in enumerate(mesh.section_borders):
 		first_pole = np.nonzero(abs(border[:, 0]) == pi/2)[0][0]
-		border = np.concatenate([border[first_pole:], border[1:first_pole + 1]]) # rotate the path so it starts and ends at a pole
-		border = border[dilate(abs(border[:, 0]) != pi/2, 1)] # and then remove points that move along the pole
-		borders.append(project(refine_path(border, resolution, period=2*pi),  # finally, refine it before projecting
-		                       index_mesh, section_index=h))
-	border_matrix = simplify_path(SparseNDArray.concatenate(borders), cyclic=True) # simplify the borders together to remove excess
-	return border_matrix
+		# rotate the path so it starts and ends at a pole
+		border = np.concatenate([border[first_pole:], border[1:first_pole + 1]])
+		# and then remove points that move along the pole
+		border = border[dilate(abs(border[:, 0]) != pi/2, 1)]
+		# finally, refine it before projecting
+		borders.append(project(refine_path(border, resolution, period=2*pi),
+		                       mesh, section_index=h))
+	# combine the section borders into one path
+	if type(borders[0] is np.ndarray):
+		complete_border = np.concatenate(borders)
+	else:
+		complete_border = SparseNDArray.concatenate(borders)
+	# simplify the borders together to remove excess
+	return simplify_path(complete_border, cyclic=True)
 
 
 def downsample(full: NDArray[float], shape: tuple):
