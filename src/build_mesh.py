@@ -367,10 +367,12 @@ def build_mesh(name: str, resolution: int):
 	mean_nodes = np.tile(np.nanmean(nodes, axis=0), (len(sections), 1, 1, 1))
 	nodes[include_nodes & share_nodes, :] = mean_nodes[include_nodes & share_nodes, :]
 	# and assert the identity of the poles and antimeridian
+	node_exists = np.all(np.isfinite(nodes), axis=3)
 	for i_pole in [0, -1]:
 		all_hs = np.any(np.isfinite(nodes[:, i_pole, :, 0]), axis=-1)
 		nodes[all_hs, i_pole, :, :] = np.nanmean(nodes[all_hs, i_pole, :, :], axis=(0, 1))
 	nodes[:, :, -1, :] = nodes[:, :, 0, :]
+	nodes[~node_exists, :] = nan  # but make sure nan nodes stay nan
 
 	# show the result
 	plt.figure(f"{name.capitalize()} mesh")

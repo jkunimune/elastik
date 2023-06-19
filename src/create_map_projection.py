@@ -728,8 +728,8 @@ def load_pixel_values(filename: str, cut_set: str, num_sections: int) -> list[ND
 
 def load_coastline_data(reduction=2) -> list[NDArray[float]]:
 	coastlines = []
-	with shapefile.Reader(f"../resources/shapefiles/ne_110m_coastline.zip") as shapef:
-		for shape in shapef.shapes():
+	with shapefile.Reader(f"../resources/shapefiles/ne_110m_coastline.zip") as shape_f:
+		for shape in shape_f.shapes():
 			if len(shape.points) > 3*reduction:
 				coastlines.append(np.radians(shape.points)[::reduction, ::-1])
 	return coastlines
@@ -779,31 +779,27 @@ def project(points: list[tuple[float, float]] | NDArray[float], mesh: Mesh,
 		).to_array_array()[mesh.nodes]
 		mesh = Mesh(mesh.section_borders, mesh.ф, mesh.λ, new_nodes)
 
-	# next, we must identify any nodes that exist in multiple layers
-	hs = np.arange(mesh.num_sections)
-	shared = np.tile(
-		np.any(
-			valid & np.all(
-				np.reshape(mesh.nodes[hs, ...] == mesh.nodes[hs - 1, ...], mesh.nodes.shape[:3] + (-1,)),
-				axis=3
-			), axis=0
-		), (mesh.num_sections, 1, 1))
-
 	# and start calculating gradients
-	ф_gradients = np.empty(mesh.nodes.shape, dtype=mesh.nodes.dtype)
-	λ_gradients = np.empty(mesh.nodes.shape, dtype=mesh.nodes.dtype)
-	for where in [valid, shared]:
-		gradients, gradients_mask = gradient(mesh.nodes, mesh.ф, where=where, axis=1)
-		ф_gradients[~gradients_mask, ...] = gradients[~gradients_mask, ...]
-		gradients, gradients_mask = gradient(mesh.nodes, mesh.λ, where=where, axis=2)
-		λ_gradients[~gradients_mask, ...] = gradients[~gradients_mask, ...]
+	ф_gradients = gradient(mesh.nodes, mesh.ф, where=valid, axis=1)
+	λ_gradients = gradient(mesh.nodes, mesh.λ, where=valid, axis=2)
+
+	# set the gradients to match between sections on shared nodes, so that the section seams are smooth
+	hs = np.arange(mesh.num_sections)
+	shared = np.any(
+		valid & np.all(
+			np.reshape(mesh.nodes[hs, ...] == mesh.nodes[hs - 1, ...], mesh.nodes.shape[:3] + (-1,)),
+			axis=3
+		), axis=0
+	)
+	ф_gradients[:, shared] = np.nanmean(ф_gradients[:, shared], axis=0)
+	λ_gradients[:, shared] = np.nanmean(λ_gradients[:, shared], axis=0)
 
 	# finally, interpolate
 	result = []
 	for point in points:
 		h = section_index
 		if h is None:
-			for trial_h, border in zip(hs, mesh.section_borders): # on the correct section
+			for trial_h, border in enumerate(mesh.section_borders): # on the correct section
 				if inside_region(*point, border, period=2*pi):
 					h = trial_h
 					break
@@ -838,6 +834,19 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 			residuals = np.sum((mesh.nodes[h, :, :, :] - np.array([point]))**2, axis=-1)
 			i_closest, j_closest = np.unravel_index(np.nanargmin(residuals.ravel()), residuals.shape)
 			ф_closest, λ_closest = mesh.ф[i_closest], mesh.λ[j_closest]
+			# adjust the best position so it doesn't fall on the very edge of the mesh (to make finite differences easier later)
+			if i_closest - 1 < 0 or \
+					isnan(mesh.nodes[h, i_closest - 1, j_closest, 0]):
+				ф_closest += 1.1e-2
+			elif i_closest + 1 >= mesh.nodes.shape[1] or \
+					isnan(mesh.nodes[h, i_closest + 1, j_closest, 0]):
+				ф_closest -= 1.1e-2
+			if j_closest - 1 < 0 or \
+					isnan(mesh.nodes[h, i_closest, j_closest - 1, 0]):
+				λ_closest += 1.1e-2
+			elif j_closest + 1 >= mesh.nodes.shape[2] or \
+					isnan(mesh.nodes[h, i_closest, j_closest + 1, 0]):
+				λ_closest -= 1.1e-2
 			# this scan minimization will serve as the backup result if we find noting better
 			possible_results[h, :] = [ф_closest, λ_closest]
 			closenesses[h] = residuals[i_closest, j_closest]
@@ -935,7 +944,7 @@ def smooth_interpolate(xs: Sequence[float | NDArray[float]], x_grids: Sequence[N
 	return result
 
 
-def gradient(Y: NDArray[float], x: NDArray[float], where: NDArray[bool], axis: int) -> (NDArray[float], NDArray[bool]):
+def gradient(Y: NDArray[float], x: NDArray[float], where: NDArray[bool], axis: int) -> NDArray[float]:
 	""" Return the gradient of an N-dimensional array.
 	    The gradient is computed using second ordre accurate central differences in the interior points and either
 	    first- or twoth-order accurate one-sides (forward or backwards) differences at the boundaries. The returned
@@ -946,8 +955,7 @@ def gradient(Y: NDArray[float], x: NDArray[float], where: NDArray[bool], axis: i
 	                  the same shape as Y. values of Y corresponding to a falsy in where will be ignored, and gradients
 	                  centerd at such points will be markd as nan.
 	    :param axis: the axis along which to take the gradient
-	    :return: an array with the gradient values, as well as a boolean mask indicating which of the returnd values are
-	             invalid (because there were not enuff valid inputs in the vicinity)
+	    :return: an array with the gradient values
 	"""
 	if Y.shape[:where.ndim] != where.shape:
 		raise ValueError("where must have the same shape as Y")
@@ -984,8 +992,7 @@ def gradient(Y: NDArray[float], x: NDArray[float], where: NDArray[bool], axis: i
 
 	# finally, reset the axes
 	old_axis_order = np.roll(np.arange(where.ndim), axis)
-	return (grad.transpose(np.concatenate([old_axis_order, np.arange(where.ndim, Y.ndim)])),
-	        impossible.transpose(old_axis_order)) # I could use a maskedarray here, but it feels weerd to import the whole module just for this
+	return grad.transpose(np.concatenate([old_axis_order, np.arange(where.ndim, Y.ndim)]))
 
 
 def project_section_borders(mesh: Mesh, resolution: float) -> Union[NDArray[float], SparseNDArray]:
