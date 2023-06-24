@@ -3,4 +3,4 @@ cuts: basic
 shape_weights: land
 scale_weights: land_sinATA
 size: 24_000,17_000
-section_names: west,east
+section_names: east,west

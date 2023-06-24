@@ -888,8 +888,9 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 		result[point_index] = possible_results[best_h]
 		# but mainly prioritize being inside the section borders
 		for h in hs:
-			if inside_region(possible_results[h, 0], possible_results[h, 1],
-			                 mesh.section_borders[h], period=2*pi):
+			if closenesses[h] == 0 and \
+				inside_region(possible_results[h, 0], possible_results[h, 1],
+			                  mesh.section_borders[h], period=2*pi):
 				result[point_index] = possible_results[h]
 
 	return result
