@@ -259,6 +259,7 @@ def create_map_projection(configuration_file: str):
 
 	# fit the result into a landscape rectangle
 	mesh.nodes = rotate_and_shift(mesh.nodes, *fit_in_rectangle(border))
+	border = rotate_and_shift(border, *fit_in_rectangle(border))
 
 	# and finally, save the projection
 	logging.info("saving results...")

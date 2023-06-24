@@ -65,7 +65,8 @@ def create_example_elastik_maps():
 	           ),
 	           data=[
 		           ("wwf_teow", dict(
-			           edgecolor="none",
+			           edgecolor="facecolor",
+			           linewidth=0.1,
 			           facecolor=[
 				           "#244b04",  # 1: tropical moist broadleaf forest
 				           "#3b5511",  # 2: tropical dry broadleaf forest
@@ -193,6 +194,8 @@ def create_map(name: str, projection: str,
 				if multiple_colors:
 					color_index = category%len(style["facecolor"])
 					feature_specific_style["facecolor"] = style["facecolor"][color_index]
+				if style["edgecolor"] == "facecolor":
+					feature_specific_style["edgecolor"] = feature_specific_style["facecolor"]
 				points: list[tuple[float, float]] = []
 				codes: list[int] = []
 				for line in lines:
