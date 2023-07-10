@@ -608,8 +608,8 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 		languages = json.load(f)
 
 	# start by calculating some things
-	((left, bottom), (right, top)) = get_bounding_box(projected_border)
-	raster_resolution = 20
+	((left, bottom), (right, top)) = get_bounding_box(mesh.nodes)
+	raster_resolution = 100
 	x_raster = np.linspace(left, right, raster_resolution + 1)
 	y_raster = np.linspace(bottom, top, raster_resolution + 1)
 	inverse_raster = np.degrees(inverse_project(
