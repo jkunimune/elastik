@@ -12,7 +12,7 @@ import logging
 import re
 import sys
 import threading
-from math import inf, pi, log2, nan, floor, isfinite, degrees, isnan
+from math import inf, pi, log2, nan, floor, isfinite, degrees, isnan, sqrt
 from typing import Iterable, Sequence, Union
 
 import h5py
@@ -609,7 +609,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 
 	# start by calculating some things
 	((left, bottom), (right, top)) = get_bounding_box(mesh.nodes)
-	raster_resolution = 100
+	raster_resolution = 20
 	x_raster = np.linspace(left, right, raster_resolution + 1)
 	y_raster = np.linspace(bottom, top, raster_resolution + 1)
 	inverse_raster = np.degrees(inverse_project(
@@ -857,29 +857,16 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 					i_closest, j_closest, (mesh.nodes.shape[1] - 1, mesh.nodes.shape[2] - 1), 6):
 				# look for a cell that contains the point
 				if np.all(np.isfinite(mesh.nodes[h, i:i + 2, j:j + 2])):
-					sw = mesh.nodes[h, i, j]
-					se = mesh.nodes[h, i, j + 1]
-					nw = mesh.nodes[h, i + 1, j]
-					ne = mesh.nodes[h, i + 1, j + 1]
-					if inside_polygon(*point, np.array([ne, nw, sw, se]), convex=True):
+					node_sw = mesh.nodes[h, i, j]
+					node_se = mesh.nodes[h, i, j + 1]
+					node_nw = mesh.nodes[h, i + 1, j]
+					node_ne = mesh.nodes[h, i + 1, j + 1]
+					cell = np.array([node_ne, node_nw, node_sw, node_se])
+					if inside_polygon(*point, cell, convex=True):
 						# do inverse 2d linear interpolation (it's harder than one mite expect!)
-						coords = [nan, nan]
-						things = [(mesh.ф, i, [[sw, se], [nw, ne]]), (mesh.λ, j, [[sw, nw], [se, ne]])]
-						# for each of the two dimensions (latitude and longitude)
-						for f, (axis, index, corners) in enumerate(things):
-							# try these two orientations (vertical or horizontal)
-							for g in [0, 1]:
-								x, y = point[g], point[1 - g]
-								y0 = interp(x,
-								            corners[0][0][    g], corners[0][1][    g],
-								            corners[0][0][1 - g], corners[0][1][1 - g])
-								y1 = interp(x,
-								            corners[1][0][    g], corners[1][1][    g],
-								            corners[1][0][1 - g], corners[1][1][1 - g])
-								if (y0 < y) != (y1 < y):
-									coords[f] = interp(y, y0, y1, axis[index], axis[index + 1])
-									break
-						possible_results[h, :] = coords
+						possible_results[h, :] = inverse_in_tetragon(
+							point, node_sw, node_se, node_nw, node_ne,
+							mesh.ф[i], mesh.ф[i + 1], mesh.λ[j], mesh.λ[j + 1])
 						closenesses[h] = 0
 						break
 
@@ -895,6 +882,49 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 				result[point_index] = possible_results[h]
 
 	return result
+
+
+def inverse_in_tetragon(point: NDArray[float],
+                        node_sw: NDArray[float], node_se: NDArray[float],
+                        node_nw: NDArray[float], node_ne: NDArray[float],
+                        ф_min: float, ф_max: float, λ_min: float, λ_max: float
+                        ) -> tuple[float, float]:
+	""" compute the latitude and longitude that linearly interpolates to a specific point in a
+	    tetragon, given the locations of its vertices and the latitudes and longitudes that
+	    correspond to its edges.
+	    :param point: the cartesian location of the target point
+	    :param node_sw: the cartesian location of the southwest corner of the tetragon
+	    :param node_se: the cartesian location of the southeast corner of the tetragon
+	    :param node_nw: the cartesian location of the northwest corner of the tetragon
+	    :param node_ne: the cartesian location of the northeast corner of the tetragon
+	    :param ф_min: the latitude corresponding to the southern edge of the tetragon
+	    :param ф_max: the latitude corresponding to the northern edge of the tetragon
+	    :param λ_min: the longitude corresponding to the western edge of the tetragon
+	    :param λ_max: the longitude corresponding to the eastern edge of the tetragon
+	    :return: the latitude and longitude that correspond to the target point
+	"""
+	def cross(u: NDArray[float], v: NDArray[float]) -> float:
+		return u[0]*v[1] - u[1]*v[0]
+
+	# first solve this quadratic equation for λ
+	A = cross(node_sw - point, node_sw - node_nw)
+	B = 1/2*(cross(node_sw - point, node_se - node_ne) + cross(node_se - point, node_sw - node_nw))
+	C = cross(node_se - point, node_se - node_ne)
+	for s in [-1, 1]:
+		l = ((A - B) + s*sqrt(B**2 - A*C))/(A - 2*B + C)
+		if 0 <= l <= 1:
+			λ = λ_min + (λ_max - λ_min)*l
+
+			# then linearly interpolate along a meridian to get ф
+			node_s = interp(λ, λ_min, λ_max, node_sw, node_se)
+			node_n = interp(λ, λ_min, λ_max, node_nw, node_ne)
+			for g in [0, 1]:
+				if node_s[g] != node_n[g]:
+					ф = interp(point[g], node_s[g], node_n[g], ф_min, ф_max)
+					return ф, λ
+
+			raise ValueError(f"this tetragon is degenerate ({node_sw}--{node_se}")
+	raise ValueError("this point is not inside the tetragon")
 
 
 def smooth_interpolate(xs: Sequence[float | NDArray[float]], x_grids: Sequence[NDArray[float]],

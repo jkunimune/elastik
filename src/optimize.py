@@ -206,7 +206,7 @@ def minimize_with_bounds(objective_func: Callable[[NDArray[float] | Variable], f
 		initial_objective_force = abs(initial_objective_value.gradient)
 	initial_barrier_force = abs(barrier_func(guess_variable).gradient)
 	near = initial_barrier_force > np.max(initial_barrier_force)/1.1
-	barrier_height = 2*np.max(initial_objective_force[near]/initial_barrier_force[near])
+	barrier_height = 6*np.max(initial_objective_force[near]/initial_barrier_force[near])
 
 	# set up the new objective function (the old one plus the barrier function)
 	def compound_func(x):

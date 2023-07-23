@@ -89,7 +89,7 @@ def rotation_matrix(angle: float) -> NDArray[float]:
 	return np.array([[cos(angle), -sin(angle)],
 	                 [sin(angle),  cos(angle)]])
 
-def interp(x: Numeric, x0: float, x1: float, y0: float, y1: float):
+def interp(x: Numeric, x0: float, x1: float, y0: Numeric, y1: Numeric):
 	""" do linear interpolation given two points, and *not* assuming x1 >= x0 """
 	return (x - x0)/(x1 - x0)*(y1 - y0) + y0
 
