@@ -330,9 +330,9 @@ def load_elastik_projection(name: str) -> tuple[list[Section], XYLine]:
 	with h5py.File(f"../projection/{name}.h5", "r") as file:
 		sections = []
 		for h in range(file.attrs["number of sections"]):
-			sections.append(Section(file[f"section {h}/latitude"][:],
-			                        file[f"section {h}/longitude"][:],
-			                        file[f"section {h}/projected points"][:, :],
+			sections.append(Section(file[f"section {h}/projected points/latitude"][:],
+			                        file[f"section {h}/projected points/longitude"][:],
+			                        file[f"section {h}/projected points/points"][:, :],
 			                        file[f"section {h}/border"][:],
 			                        ))
 		border = file["projected border"][:]
