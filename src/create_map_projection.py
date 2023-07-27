@@ -42,6 +42,10 @@ logging.basicConfig(
 
 
 MIN_WEIGHT = .03 # the ratio of the whitespace weight to the subject weight
+CONSTRAINT_RESOLUTION = 2e-2 # the fineness of the border polygons used for applying constraints (rad)
+BORDER_PROJECTION_RESOLUTION = 5e-3 # the fineness of the borders before they get projected and saved (rad)
+BORDER_OUTPUT_RESOLUTION = 5 # the fineness of the projected borders as saved (km)
+RASTER_RESOLUTION = 20 # the number of pixels across the inverse raster
 
 
 # some useful custom h5 datatypes
@@ -78,7 +82,7 @@ def create_map_projection(configuration_file: str):
 
 	# set up the fitting constraints that will force the map to fit inside a box
 	logging.info(f"projecting section borders...")
-	border_matrix = project_section_borders(index_mesh, 2e-2)
+	border_matrix = project_section_borders(index_mesh, CONSTRAINT_RESOLUTION)
 	map_size = np.array([width, height])
 
 	# load the coastline data from Natural Earth
@@ -254,8 +258,8 @@ def create_map_projection(configuration_file: str):
 
 	# do a final decimated version of the projected border (and realline it so it's still centerd)
 	logging.info("projecting section borders...")
-	border = project_section_borders(mesh, 5e-3)
-	border = decimate_path(border, resolution=5)
+	border = project_section_borders(mesh, BORDER_PROJECTION_RESOLUTION)
+	border = decimate_path(border, resolution=BORDER_OUTPUT_RESOLUTION)
 
 	# fit the result into a landscape rectangle
 	mesh.nodes = rotate_and_shift(mesh.nodes, *fit_in_rectangle(border))
@@ -609,7 +613,6 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 
 	# start by calculating some things
 	((left, bottom), (right, top)) = get_bounding_box(mesh.nodes)
-	raster_resolution = 20
 	x_raster = np.linspace(left, right, raster_resolution + 1)
 	y_raster = np.linspace(bottom, top, raster_resolution + 1)
 	inverse_raster = np.degrees(inverse_project(
