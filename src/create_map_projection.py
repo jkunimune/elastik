@@ -413,7 +413,7 @@ def mesh_skeleton(lookup_table: Mesh, factor: int) -> tuple[Tensor, Tensor]:
 		important_i = np.arange(lookup_table.nodes.shape[1])
 	for h in range(lookup_table.nodes.shape[0]):
 		for i in range(lookup_table.nodes.shape[1]):
-			num_λ = max(1, round((lookup_table.nodes.shape[2] - 1)*np.cos(lookup_table.ф[i])/factor))
+			num_λ = max(4, round((lookup_table.nodes.shape[2] - 1)*np.cos(lookup_table.ф[i])/factor))
 			if num_λ <= lookup_table.nodes.shape[2]/1.5:
 				important_λ = np.linspace(0, 360, num_λ, endpoint=False)
 				important_j = np.round(important_λ*(lookup_table.nodes.shape[2] - 1)/360)
@@ -1031,10 +1031,9 @@ def project_section_borders(mesh: Mesh, resolution: float) -> Union[NDArray[floa
 	borders = []
 	# take the border of each section
 	for h, border in enumerate(mesh.section_borders):
-		first_pole = np.nonzero(abs(border[:, 0]) == pi/2)[0][0]
-		# rotate the path so it starts and ends at a pole
-		border = np.concatenate([border[first_pole:], border[1:first_pole + 1]])
-		# and then remove points that move along the pole
+		# rotate the path so it starts and ends at a shared point
+		border = np.concatenate([border[-2:], border[1:-1]])
+		# and then remove points that move along a pole
 		border = border[dilate(abs(border[:, 0]) != pi/2, 1)]
 		# finally, refine it before projecting
 		borders.append(project(refine_path(border, resolution, period=2*pi),

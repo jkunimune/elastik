@@ -77,6 +77,8 @@ def calculate_drainage_divides(endpoints: list[tuple[float, float]]):
 	# finally, simplify all paths
 	for i in range(len(paths)):
 		paths[i] = decimate_path(paths[i], sqrt(2)/RESOLUTION, watch_for_longitude_wrapping=True)
+	# add the glue point at the top of the path list
+	paths = [[(-90, 0)]] + paths
 
 	# save and plot them
 	np.savetxt("../spec/cuts_mountains.txt", np.concatenate(paths), fmt="%.1f")  # type: ignore

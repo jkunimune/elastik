@@ -6,7 +6,7 @@ take an interruption file, and use it to generate and save a basic interrupted m
 projection mesh that can be further optimized.
 all angles are in radians. indexing is z[i,j] = z(ф[i], λ[j])
 """
-from math import cos, hypot, pi, ceil, sin, nan, tan, inf
+from math import cos, hypot, pi, ceil, sin, nan, tan, inf, copysign
 
 import h5py
 import numpy as np
@@ -31,53 +31,56 @@ STRAIT_RADIUS = 1800/EARTH.R # (radians)
 
 
 class Section:
-	def __init__(self, left_border: NDArray[float], rite_border: NDArray[float], glue_on_north: bool):
+	def __init__(self, left_border: NDArray[float], rite_border: NDArray[float], glue_tripoint: NDArray[float]):
 		""" a polygon that selects a portion of the globe bounded by two cuts originating
 		    from the same point (the "cut_tripoint") and two continuous seams from those
 		    cuts to a different point (the "glue_tripoint")
-		    :param glue_on_north: whether the glue_tripoint should be the north pole (if
-		                          not, it will be the south pole)
+		    :param glue_tripoint: the location at which the sections all meet and join together
 		"""
 		if not (left_border[0, 0] == rite_border[0, 0] and left_border[0, 1] == rite_border[0, 1]):
 			raise ValueError("the borders are supposed to start at the same point")
 
 		self.cut_border = np.concatenate([left_border[:0:-1, :], rite_border])
+		self.glue_tripoint = glue_tripoint
 
-		self.glue_border = Section.path_through_pole(self.cut_border[-1, :],
-		                                             self.cut_border[0, :],
-		                                             glue_on_north)
+		self.glue_border = Section.path_through(self.cut_border[-1, :],
+		                                        self.glue_tripoint,
+		                                        self.cut_border[0, :])
 
 		self.border = np.concatenate([self.cut_border[:-1, :], self.glue_border])
 
-		self.glue_pole = 1 if glue_on_north else -1
-
 
 	@staticmethod
-	def path_through_pole(start: NDArray[float], end: NDArray[float], north: bool) -> NDArray[float]:
+	def path_through(start: NDArray[float], middle: NDArray[float], end: NDArray[float]) -> NDArray[float]:
 		""" find a simple path that goes to the nearest pole, circles around it clockwise,
 		    and then goes to the endpoint. assume the y axis to be periodic, and break the
 		    path up at the antimeridian if necessary. the poles are at x = ±pi/2.
 			:param start: the 2-vector at which to start
+			:param middle: the 2-vector thru which to pass
 			:param end: the 2-vector at which to finish
-			:param north: whether the nearest pole is north (vs south)
 			:return: the n×2 path array
 		"""
-		sign = 1 if north else -1
-		# start with some strait lines
-		path = [start, [sign*pi/2, start[1]], [sign*pi/2, end[1]], end]
-		# if it looks like it's circling the rong way
-		if np.sign(start[1] - end[1]) != sign:
-			path.insert(2, [sign*pi/2, -sign*pi])
-			path.insert(3, [sign*pi/2, sign*pi])
-		for k in range(len(path) - 1, 0, -1):
-			dy = abs(path[k][1] - path[k - 1][1])
-			# if at any point the direction could still be considerd ambiguous, clarify it
-			if dy > pi and dy != 2*pi:
-				path.insert(k, [sign*pi/2, 0])
-			# also, if there are any zero-length segments, remove them
-			elif np.all(path[k] == path[k - 1]):
-				path.pop(k)
-		return np.array(path)
+		# for normal points...
+		if abs(middle[0]) < pi/2:
+			return np.array([start, middle, end])
+		# if the midpoint is a pole...
+		else:
+			sign = copysign(1, middle[0])
+			# start with some strait lines
+			path = [start, [sign*pi/2, start[1]], [sign*pi/2, end[1]], end]
+			# if it looks like it's circling the rong way
+			if np.sign(start[1] - end[1]) != sign:
+				path.insert(2, [sign*pi/2, -sign*pi])
+				path.insert(3, [sign*pi/2, sign*pi])
+			for k in range(len(path) - 1, 0, -1):
+				dy = abs(path[k][1] - path[k - 1][1])
+				# if at any point the direction could still be considerd ambiguous, clarify it
+				if dy > pi and dy != 2*pi:
+					path.insert(k, [sign*pi/2, 0])
+				# also, if there are any zero-length segments, remove them
+				elif np.all(path[k] == path[k - 1]):
+					path.pop(k)
+			return np.array(path)
 
 
 	def inside(self, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:
@@ -244,13 +247,14 @@ def rotated_coordinates(ф_ref: NDArray[float], λ_ref: NDArray[float],
 	x_rotate = np.sin(ф_ref)*np.cos(ф1)*np.cos(λ1 - λ_ref) - np.cos(ф_ref)*np.sin(ф1)
 	y_rotate = np.cos(ф1)*np.sin(λ1 - λ_ref)
 	z_rotate = np.cos(ф_ref)*np.cos(ф1)*np.cos(λ1 - λ_ref) + np.sin(ф_ref)*np.sin(ф1)
-	θ_rotate = pi/2 - np.arctan(z_rotate/np.hypot(x_rotate, y_rotate))
+	p_rotate = pi/2 - np.arctan(z_rotate/np.hypot(x_rotate, y_rotate))
 	λ_rotate = np.arctan2(y_rotate, x_rotate)
-	return θ_rotate, λ_rotate
+	return p_rotate, λ_rotate
 
 
 def resolve_path(фs: NDArray[float], λs: NDArray[float],
                  resolution: float) -> tuple[NDArray[float], NDArray[float]]:
+	""" refire a path such that its segments are no longer than resolution """
 	assert фs.size == λs.size
 	new_фs, new_λs = [фs[0]], [λs[0]]
 	for i in range(1, фs.size):
@@ -264,16 +268,18 @@ def resolve_path(фs: NDArray[float], λs: NDArray[float],
 
 
 def load_sections(filename: str) -> list[Section]:
+	""" load a cuts_*.txt file and convert it into a list of Sections """
 	data = np.radians(np.loadtxt(filename))
-	cut_tripoint = data[0, :]
-	starts = np.nonzero((data[:, 0] == cut_tripoint[0]) & (data[:, 1] == cut_tripoint[1]))[0]
+	glue_tripoint = data[0, :]
+	cut_tripoint = data[1, :]
+	starts, = np.nonzero(np.all(data == cut_tripoint, axis=1))
 	endpoints = np.concatenate([starts, [None]])
 	cuts = []
 	for h in range(starts.size):
 		cuts.append(data[endpoints[h]:endpoints[h + 1]])
 	sections = []
 	for h in range(len(cuts)):
-		sections.append(Section(cuts[h - 1], cuts[h], cut_tripoint[0] < 0))
+		sections.append(Section(cuts[h - 1], cuts[h], glue_tripoint))
 	return sections
 
 
@@ -342,19 +348,38 @@ def build_mesh(name: str, resolution: int):
 					(abs(wrap_angle(λ_grid - λ_strait)) < STRAIT_RADIUS/cos(ф_strait))
 				include_cells[cell_near_strait] = True
 
+		# force it to include the whole polar region when it touches the polar region
+		for i_pole in [0, -1]:
+			if np.any(include_cells[i_pole, :]):
+				include_cells[i_pole, :] = True
+			# and share the whole pole when some of the pole is shared
+			if np.any(share_cells[i_pole, :]):
+				share_cells[i_pole, :] = True
+
 		include_nodes[h, :, :] = expand_bool_array(include_cells)
 
-		# and specialize a map projection for it
+		# and create an oblique stereographic projection just for it
 		ф_center, λ_center = section.choose_center()
 		p_transform, λ_transform = rotated_coordinates(
 			ф_center, λ_center, ф[:, np.newaxis], λ[np.newaxis, :])
-		p_center = ф_center - section.glue_pole*pi/2
-		scale = 3*EARTH.R*cos(p_center/2)**2
-		r, θ = scale*np.tan(p_transform/2), λ_transform + section.glue_pole*λ_center
-		r0, θ0 = scale*tan(p_center/2), section.glue_pole*λ_center
-		nodes[h, include_nodes[h, :, :], 0] =  (r*np.sin(θ) - r0*sin(θ0))[include_nodes[h, :, :]]
-		nodes[h, include_nodes[h, :, :], 1] = -(r*np.cos(θ) - r0*cos(θ0))[include_nodes[h, :, :]]
+		r, θ = np.tan(p_transform/2), λ_transform
+		# shift it so the shared point is at the origin for all sections
+		p_gluepoint, λ_gluepoint = rotated_coordinates(
+			ф_center, λ_center, section.glue_tripoint[0], section.glue_tripoint[1])
+		r_gluepoint, θ_gluepoint = tan(p_gluepoint/2), λ_gluepoint
+		x1 =  r*np.sin(θ) - r_gluepoint*np.sin(θ_gluepoint)
+		y1 = -r*np.cos(θ) + r_gluepoint*np.cos(θ_gluepoint)
+		# rotate and scale it so it's locally continuus at the shared point
+		_, β_center = rotated_coordinates(
+			section.glue_tripoint[0], section.glue_tripoint[1], ф_center, λ_center)
+		scale = 3*EARTH.R*cos(p_gluepoint/2)**2
+		rotation = β_center - θ_gluepoint - pi
+		x2 = scale*(x1*cos(rotation) - y1*sin(rotation))
+		y2 = scale*(x1*sin(rotation) + y1*cos(rotation))
+		nodes[h, include_nodes[h, :, :], 0] = x2[include_nodes[h, :, :]]
+		nodes[h, include_nodes[h, :, :], 1] = y2[include_nodes[h, :, :]]
 
+		# plot it
 		plt.figure(f"{name.capitalize()} mesh, section {h}")
 		plt.pcolormesh(λ, ф, np.where(include_cells, np.where(share_cells, 2, 1), 0))
 		plt.plot(section.border[:, 1], section.border[:, 0], "k")
@@ -368,9 +393,10 @@ def build_mesh(name: str, resolution: int):
 	nodes[include_nodes & share_nodes, :] = mean_nodes[include_nodes & share_nodes, :]
 	# and assert the identity of the poles and antimeridian
 	node_exists = np.all(np.isfinite(nodes), axis=3)
-	for i_pole in [0, -1]:
-		all_hs = np.any(np.isfinite(nodes[:, i_pole, :, 0]), axis=-1)
-		nodes[all_hs, i_pole, :, :] = np.nanmean(nodes[all_hs, i_pole, :, :], axis=(0, 1))
+	for h in range(nodes.shape[0]):
+		for i_pole in [0, -1]:
+			if np.any(np.isfinite(nodes[h, i_pole])):
+				nodes[h, i_pole, :, :] = np.nanmean(nodes[h, i_pole, :, :], axis=0)
 	nodes[:, :, -1, :] = nodes[:, :, 0, :]
 	nodes[~node_exists, :] = nan  # but make sure nan nodes stay nan
 
@@ -388,6 +414,6 @@ def build_mesh(name: str, resolution: int):
 
 if __name__ == "__main__":
 	build_mesh("basic", 25)
-	build_mesh("oceans", 25)
-	build_mesh("mountains", 25)
+	# build_mesh("oceans", 25)
+	# build_mesh("mountains", 25)
 	plt.show()

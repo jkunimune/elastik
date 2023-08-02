@@ -99,7 +99,7 @@ def calculate_coast_distance(ф: NDArray[float], λ: NDArray[float], coast: list
 def load_cut_file(filename: str) -> list[NDArray[float]]:
 	""" load the borders of the sections for a given map projection """
 	cut_data = np.loadtxt(filename)
-	section_indices = np.nonzero(np.all(cut_data == cut_data[0, :], axis=1))[0]
+	section_indices = np.nonzero(np.all(cut_data == cut_data[1, :], axis=1))[0]
 	section_indices = np.concatenate([section_indices, [None]])
 	cuts = []
 	for h in range(len(section_indices) - 1):
