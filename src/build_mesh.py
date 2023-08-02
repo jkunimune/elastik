@@ -27,7 +27,7 @@ STRAITS = np.radians([(66.5, -169.0), # Bering
                       (-60, -65), # Drake
                       ])
 # the distance around a strait that should be duplicated for clarity
-STRAIT_RADIUS = 1800/EARTH.R # (radians)
+STRAIT_RADIUS = 1500/EARTH.R # (radians)
 
 
 class Section:
@@ -414,6 +414,6 @@ def build_mesh(name: str, resolution: int):
 
 if __name__ == "__main__":
 	build_mesh("basic", 25)
-	# build_mesh("oceans", 25)
-	# build_mesh("mountains", 25)
+	build_mesh("oceans", 25)
+	build_mesh("mountains", 25)
 	plt.show()
