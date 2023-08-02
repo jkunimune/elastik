@@ -15,7 +15,6 @@ from numpy.typing import NDArray
 
 from util import bin_centers, to_cartesian, inside_region
 
-FUDGE_FACTOR = 4 # some extra padding to put on the contiguus joints of the sections
 # latitude of southernmost settlement
 ANTARCTIC_CUTOFF = -56.
 # latitude of northernmost settlement
@@ -104,14 +103,13 @@ def load_cut_file(filename: str) -> list[NDArray[float]]:
 	cuts = []
 	for h in range(len(section_indices) - 1):
 		cuts.append(cut_data[section_indices[h]:section_indices[h + 1]])
-	margin = FUDGE_FACTOR if cut_data[0][0] > 0 else -FUDGE_FACTOR
 	sections = []
 	for h in range(len(section_indices) - 1):
 		sections.append(np.concatenate([
-			[cuts[h - 1][-1, :] + [0, margin]],
+			[cuts[h - 1][-1, :]],
 			cuts[h - 1][::-1],
 			cuts[h],
-			[cuts[h][-1, :] - [0, margin]],
+			[cuts[h][-1, :]],
 		]))
 	return sections
 
