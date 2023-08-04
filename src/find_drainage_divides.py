@@ -8,7 +8,6 @@ all angles are in degrees. indexing is z[i,j] = z(ф[i], λ[j]).
 from __future__ import annotations
 
 import bisect
-import os
 from math import floor, ceil, nan, inf, copysign, sqrt
 from typing import Iterable, Sequence
 
@@ -210,16 +209,24 @@ def load_elevation_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> N
 	# then begin bilding the map
 	z_nodes = np.full((ф_nodes.size, λ_nodes.size), nan)
 
-	# look at each data file (they may not achieve full coverage)
-	for filename in os.listdir("../resources/elevation"):
-		print(f"loading {filename}")
-		z_data = tifffile.imread(f"../resources/elevation/{filename}")
+	# look at each data file (full coverage of the globe is not necessary)
+	required_sectors = [
+		"gt30w180n90", "gt30w140n40", "gt30w140n90",
+		"gt30w100s10", "gt30w100n40", "gt30w020s10",
+		"gt30e020s10", "gt30e020n40", "gt30e020n90",
+		"gt30e060n40", "gt30e060n90",
+		"gt30e100s10", "gt30e100n40", "gt30e100n90",
+		"gt30e140s10", "gt30e140n40", "gt30e140n90",
+	]
+	for filename in required_sectors:
+		print(f"loading {filename}.tif")
+		z_data = tifffile.imread(f"../resources/elevation/{filename}.tif")
 
 		# read its location and assine node indices
-		ф0 = float(filename[-6:-4]) * (1 if filename[-7] == "n" else -1)
+		ф0 = float(filename[-2:]) * (1 if filename[-3] == "n" else -1)
 		ф_data = bin_centers(np.linspace(ф0, ф0 - 50, z_data.shape[0] + 1))
 		i_data = bin_index(ф_data, ф_bins)
-		λ0 = float(filename[-10:-7]) * (1 if filename[-11] == "e" else -1)
+		λ0 = float(filename[-6:-3]) * (1 if filename[-7] == "e" else -1)
 		λ_data = bin_centers(np.linspace(λ0, λ0 + 40, z_data.shape[1] + 1))
 		j_data = bin_index(λ_data, λ_bins)%z_nodes.shape[1]
 
@@ -235,6 +242,11 @@ def load_elevation_data(ф_nodes: NDArray[float], λ_nodes: NDArray[float]) -> N
 
 	z_nodes[z_nodes < 0] = 0
 	z_nodes[np.isnan(z_nodes)] = -inf
+
+	# remove Europe to speed up the pathfinding
+	Φ_nodes, Λ_nodes = np.meshgrid(ф_nodes, λ_nodes, indexing="ij", sparse=True)
+	z_nodes[(Φ_nodes > 45) & (Λ_nodes > 0) & (Λ_nodes < 90)] = -inf
+
 	return z_nodes
 
 
