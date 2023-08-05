@@ -56,11 +56,10 @@ def bin_centers(bin_edges: NDArray[float]) -> NDArray[float]:
 	""" calculate the center of each bin """
 	return (bin_edges[1:] + bin_edges[:-1])/2
 
-def bin_index(x: float | NDArray[float], bin_edges: NDArray[float]) -> int | NDArray[int]:
+def bin_index(x: float | NDArray[float], bin_edges: NDArray[float], right=False) -> int | NDArray[int]:
 	""" I dislike the way numpy defines this function
-	    :param: coerce whether to force everything into the bins (useful when there's round-off)
 	"""
-	return np.where(x < bin_edges[-1], np.digitize(x, bin_edges) - 1, bin_edges.size - 2)
+	return np.where(x < bin_edges[-1], np.digitize(x, bin_edges, right=right) - 1, bin_edges.size - 2)
 
 def index_grid(shape: Sequence[int]) -> Sequence[NDArray[int]]:
 	""" create a set of int matrices that together cover every index in an array of the given shape """

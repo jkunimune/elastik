@@ -15,7 +15,6 @@ from numpy.typing import NDArray
 
 from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, interp
 
-
 # locations of various straits that should be shown continuously
 STRAITS = np.radians([(66.5, -169.0), # Bering
                       (9.1, -79.7), # Panama canal
@@ -31,26 +30,27 @@ STRAIT_RADIUS = 1500/EARTH.R # (radians)
 
 
 class Section:
-	def __init__(self, left_border: NDArray[float], rite_border: NDArray[float], glue_tripoint: NDArray[float]):
+	def __init__(self, left_border: NDArray[float], rite_border: NDArray[float],
+	             glue_tripoint: NDArray[float]):
 		""" a polygon that selects a portion of the globe bounded by two cuts originating
 		    from the same point (the "cut_tripoint") and two continuous seams from those
 		    cuts to a different point (the "glue_tripoint")
-		    :param glue_tripoint: the location at which the sections all meet and join together
+		    :param glue_tripoint: the location at which the Sections all meet and join together
 		"""
 		if not (left_border[0, 0] == rite_border[0, 0] and left_border[0, 1] == rite_border[0, 1]):
 			raise ValueError("the borders are supposed to start at the same point")
 
 		self.cut_border = np.concatenate([left_border[:0:-1, :], rite_border])
 		self.glue_tripoint = glue_tripoint
-
-		self.glue_border = path_through(self.cut_border[-1, :],
-		                                self.glue_tripoint,
+		self.glue_border = construct_path_through(self.cut_border[-1, :],
+		                                          self.glue_tripoint,
 		                                self.cut_border[0, :])
 
 		self.border = np.concatenate([self.cut_border[:-1, :], self.glue_border])
 
 
-def path_through(start: NDArray[float], middle: NDArray[float], end: NDArray[float]) -> NDArray[float]:
+def construct_path_through(start: NDArray[float], middle: NDArray[float], end: NDArray[float]
+                           ) -> NDArray[float]:
 	""" find a simple path that goes to the nearest pole, circles around it clockwise,
 	    and then goes to the endpoint. assume the y axis to be periodic, and break the
 	    path up at the antimeridian if necessary. the poles are at x = ±pi/2.
@@ -61,7 +61,11 @@ def path_through(start: NDArray[float], middle: NDArray[float], end: NDArray[flo
 	"""
 	# for normal points...
 	if abs(middle[0]) < pi/2:
-		return np.array([start, middle, end])
+		return np.array([start,
+		                 [start[0], middle[1]],
+		                 middle,
+		                 [end[0], middle[1]],
+		                 end])
 	# if the midpoint is a pole...
 	else:
 		sign = copysign(1, middle[0])
@@ -82,7 +86,7 @@ def path_through(start: NDArray[float], middle: NDArray[float], end: NDArray[flo
 		return np.array(path)
 
 
-def cells_inside_of(section: Section, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:
+def cells_inside_of(section: Section, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:  # TODO: finite radius
 	""" find the locus of tiles binned by x and y that are inside the Section. count
 	    tiles that intersect the boundary as in.
 	    :param section: the Section whose border forms the region of interest
@@ -95,32 +99,23 @@ def cells_inside_of(section: Section, x_edges: NDArray[float], y_edges: NDArray[
 	       inside_region(bin_centers(x_edges), bin_centers(y_edges), section.border, period=2*pi)
 
 
-def cells_shared_by(section: Section, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:
+def cells_shared_by(section: Section, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:  # TODO: finite radius
 	""" find the locus of tiles binned by x_edges and λ that span a glue-border
-	    between this section and another
+	    between this Section and another
 	    :param section: the Section whose border forms the region of interest
 	    :param x_edges: the bin edges for axis 0
 	    :param y_edges: the bin edges for axis 1
 	    :return: a boolean grid of True for shared and False for not shared
 	"""
-	# share any cells that are on the glue border
-	shared = cells_touched_by(x_edges, y_edges, section.glue_border)
-	# and this other edge case with cuts that pass in and out of the shared region
-	i = bin_index(section.cut_border[:, 0], x_edges)
-	j = bin_index(section.cut_border[:, 1], y_edges)
-	shared_points = shared[i, j]
-	emerging = np.nonzero(shared_points[:-1] & ~shared_points[1:])[0]
-	entering = np.nonzero(~shared_points[:-1] & shared_points[1:])[0] + 1
-	shared[i[emerging[1:]], j[emerging[1:]]] = False # (strike all re-exiting cells)
-	shared[i[entering[:-1]], j[entering[:-1]]] = False # (and all early-entering cells)
-
-	return shared
+	# it's all cells touched by the glue border excluding any that are also touched by the cut border
+	return cells_touched_by(x_edges, y_edges, section.glue_border) & \
+	       ~cells_touched_by(x_edges, y_edges, section.cut_border)
 
 
 def center_of(section: Section) -> tuple[float, float]:
 	""" calculate the point that should go at the center of the stereographic
 	    projection that minimizes the maximum distortion of this region of the globe
-	    :param section: the section being stereographically projected
+	    :param section: the Section being stereographically projected
 	    :return: the latitude and longitude of the ideal center
 	"""
 	ф_grid = np.linspace(-pi/2, pi/2, 13)
@@ -143,8 +138,8 @@ def center_of(section: Section) -> tuple[float, float]:
 
 def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
                      path: NDArray[float]) -> NDArray[bool]:
-	""" find and mark each tile binned by x_edges and y_edges that is touched by this
-        polygon path
+	""" find and mark each tile binned by x_edges and y_edges that intersects this polygon path.
+	    tangency doesn't count.
         :param x_edges: the bin edges for axis 0
         :param y_edges: the bin edges for axis 1
         :param path: a n×2 array of ordered x and y coordinates
@@ -152,15 +147,16 @@ def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
 	"""
 	touched = np.full((x_edges.size - 1, y_edges.size - 1), False)
 	for i in range(path.shape[0] - 1):
-		x0, y0 = path[i, :] + 1e-6 # add a tiny amount so there's less roundoff instability
-		x1, y1 = path[i + 1, :] + 1e-6
-		touched[bin_index(x0, x_edges), bin_index(y0, y_edges)] = True
+		x0, y0 = path[i, :]  # add a tiny amount so there's less roundoff instability
+		x1, y1 = path[i + 1, :]
 		if x0 != x1:
-			i_crossings, j_crossings = grid_intersections_with(x_edges, y_edges[:-1], x0, y0, x1, y1, False, True)
+			i_crossings, j_crossings = grid_intersections_with(
+				x_edges, y_edges, x0, y0, x1, y1, False, True)
 			touched[i_crossings, j_crossings] = True
 			touched[i_crossings - 1, j_crossings] = True
 		if y0 != y1:
-			j_crossings, i_crossings = grid_intersections_with(y_edges[:-1], x_edges, y0, x0, y1, x1, True, False)
+			j_crossings, i_crossings = grid_intersections_with(
+				y_edges, x_edges, y0, x0, y1, x1, True, False)
 			touched[i_crossings, j_crossings] = True
 			touched[i_crossings, j_crossings - 1] = True
 	return touched
@@ -207,9 +203,9 @@ def grid_intersections_with(x_values: NDArray[float], y_edges: NDArray[float],
 	elif x1 < x0:
 		return grid_intersections_with(x_values, y_edges, x1, y1, x0, y0, periodic_x, periodic_y)
 	elif x1 > x0:
-		i0 = bin_index(x0, x_values) + 1
-		i1 = bin_index(x1, x_values)
-		i_crossings = np.arange(i0, i1 + 1)
+		i_first = bin_index(x0, x_values) + 1
+		i_last = bin_index(x1, x_values, right=True)
+		i_crossings = np.arange(i_first, i_last + 1)
 		x_crossings = x_values[i_crossings]
 		y_crossings = interp(x_crossings, x0, x1, y0, y1)
 		j_crossings = bin_index(y_crossings, y_edges)
@@ -218,9 +214,38 @@ def grid_intersections_with(x_values: NDArray[float], y_edges: NDArray[float],
 		return np.empty((0,), dtype=int), np.empty((0,), dtype=int)
 
 
+def trim_to_grid(path: NDArray[float], x_edges: NDArray[float], y_edges: NDArray[float]
+                 ) -> NDArray[float]:
+	""" copy and modify a palygon path that ends on a cell edge that it never crosses.
+	    :param path: the polygon path, which must be longer than a cell length
+	    :param x_edges: the bin edges for axis 0
+	    :param y_edges: the bin edges for axis 1
+	    :return: a new Section that we can use instead of the given one
+	"""
+	# find the cell in which the path will end
+	i = bin_index(path[:, 0], x_edges)
+	j = bin_index(path[:, 1], y_edges)
+	i_final, j_final = i[-1], j[-1]
+	# and the point at which it first enters that cell
+	k_final = np.nonzero((i == i_final) & (j == j_final))[0][0]
+
+	# find the point between vertices at which to make the cut
+	k_cut = None
+	for coordinates, cell_edges in [(path[:, 0], x_edges[i_final:i_final + 2]), (path[:, 1], y_edges[j_final:j_final + 2])]:
+		for edge in cell_edges:
+			k = interp(edge, coordinates[k_final - 1], coordinates[k_final], k_final - 1, k_final)
+			if k >= k_final - 1 and k <= k_final and (k_cut is None or k > k_cut):
+				k_cut = k
+	# and calculate the exact location at which the cut was made
+	endpoint = interp(k_cut, k_final - 1, k_final, path[k_final - 1], path[k_final])
+
+	return np.concatenate([path[:ceil(k_cut)], [endpoint]])
+
+
 def expand_bool_array(arr: NDArray[bool]) -> NDArray[bool]:
 	""" create an array one bigger in both dimensions representing the anser to the
-	    question: are any of the surrounding pixels True? """
+	    question: are any of the surrounding pixels True?
+	"""
 	out = np.full((arr.shape[0] + 1, arr.shape[1] + 1), False)
 	out[:-1, :-1] |= arr
 	out[:-1, 1:] |= arr
@@ -245,7 +270,7 @@ def rotated_coordinates(ф_ref: float | NDArray[float], λ_ref: float | NDArray[
 
 def resolve_path(фs: NDArray[float], λs: NDArray[float],
                  resolution: float) -> tuple[NDArray[float], NDArray[float]]:
-	""" refire a path such that its segments are no longer than resolution """
+	""" refine a path such that its segments are no longer than resolution """
 	assert фs.size == λs.size
 	new_фs, new_λs = [фs[0]], [λs[0]]
 	for i in range(1, фs.size):
@@ -258,9 +283,13 @@ def resolve_path(фs: NDArray[float], λs: NDArray[float],
 	return np.array(new_фs), np.array(new_λs)
 
 
-def load_sections(filename: str) -> list[Section]:
-	""" load a cuts_*.txt file and convert it into a list of Sections """
-	data = np.radians(np.loadtxt(filename))
+def load_interruptions(filename: str) -> tuple[NDArray[float], list[NDArray[float]]]:
+	""" load a cuts_*.txt file and break it up into its key components
+	    :param filename: the relative filepath to load
+	    :return: the glue tripoint where the sections are to be bound together, and
+	             the set of interruptions, radiating out from a common point and arranged clockwise
+	"""
+	data = np.radians(np.loadtxt(filename))  # TODO: use degrees
 	glue_tripoint = data[0, :]
 	cut_tripoint = data[1, :]
 	starts, = np.nonzero(np.all(data == cut_tripoint, axis=1))
@@ -268,10 +297,7 @@ def load_sections(filename: str) -> list[Section]:
 	cuts = []
 	for h in range(starts.size):
 		cuts.append(data[endpoints[h]:endpoints[h + 1]])
-	sections = []
-	for h in range(len(cuts)):
-		sections.append(Section(cuts[h - 1], cuts[h], glue_tripoint))
-	return sections
+	return glue_tripoint, cuts
 
 
 def save_mesh(filename: str, ф: NDArray[float], λ: NDArray[float],
@@ -281,7 +307,7 @@ def save_mesh(filename: str, ф: NDArray[float], λ: NDArray[float],
 	    :param ф: the (m+1) array of latitudes positions at which there are nodes
 	    :param λ: the (l+1) array of longitudes at which there are nodes
 	    :param nodes: the (n × m+1 × l+1 × 2) array of projected cartesian coordinates (n
-	                  is the number of sections)
+	                  is the number of Sections)
 	    :param sections: list of Sections, each corresponding to a layer of Cells and Nodes
 	"""
 	num_sections = len(sections)
@@ -305,14 +331,22 @@ def build_mesh(name: str, resolution: int):
 	    :param name: "basic" | "oceans" | "mountains"
 	    :param resolution: how many cells per 90°
 	"""
-	# start by defining a grid of Cells
-	ф = np.linspace(-pi/2, pi/2, 2*resolution) # note that this is intentionally odd
+	# start by defining a grid of cells
+	ф = np.linspace(-pi/2, pi/2, 2*resolution + 1)
 	num_ф = ф.size - 1
-	λ = np.linspace(-pi, pi, 4*resolution)
+	λ = np.linspace(-pi, pi, 4*resolution + 1)
 	num_λ = λ.size - 1
 
 	# load the interruptions
-	sections = load_sections(f"../spec/cuts_{name}.txt")
+	glue_tripoint, interruptions = load_interruptions(f"../spec/cuts_{name}.txt")
+	# adjust the interruptions to fit with the cell grid
+	for h in range(len(interruptions)):
+		interruptions[h] = trim_to_grid(interruptions[h], ф, λ)
+
+	# create the Sections
+	sections = []
+	for h in range(len(interruptions)):
+		sections.append(Section(interruptions[h - 1], interruptions[h], glue_tripoint))
 
 	# create the node array
 	nodes = np.full((len(sections), num_ф + 1, num_λ + 1, 2), nan)
@@ -326,7 +360,8 @@ def build_mesh(name: str, resolution: int):
 		include_cells = cells_inside_of(section, ф, λ)
 
 		# add in any straits that happen to be split across it's edge
-		ф_border, λ_border = resolve_path(section.cut_border[:, 0], section.cut_border[:, 1], STRAIT_RADIUS)
+		ф_border, λ_border = resolve_path(section.cut_border[:, 0], section.cut_border[:, 1],
+		                                  STRAIT_RADIUS)
 		for ф_strait, λ_strait in STRAITS:
 			border_near_strait =\
 				(abs(ф_border - ф_strait) < STRAIT_RADIUS/2) &\
