@@ -73,9 +73,9 @@ def normalize(vector: NDArray[float]) -> NDArray[float]:
 	else:
 		return np.divide(vector, abs(vector[np.argmax(np.abs(vector))]))
 
-def wrap_angle(x: Numeric) -> Numeric:
-	""" wrap an angular value into the range [-pi, pi) """
-	return x - np.floor((x + pi)/(2*pi))*2*pi
+def wrap_angle(x: Numeric, period=360) -> Numeric:
+	""" wrap an angular value into the range [-period/2, period/2) """
+	return x - np.floor((x + period/2)/period)*period
 
 def to_cartesian(ф: Numeric, λ: Numeric) -> tuple[Numeric, Numeric, Numeric]:
 	""" convert spherical coordinates in degrees to unit-sphere cartesian coordinates """
