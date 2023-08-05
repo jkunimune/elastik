@@ -43,189 +43,179 @@ class Section:
 		self.cut_border = np.concatenate([left_border[:0:-1, :], rite_border])
 		self.glue_tripoint = glue_tripoint
 
-		self.glue_border = Section.path_through(self.cut_border[-1, :],
-		                                        self.glue_tripoint,
-		                                        self.cut_border[0, :])
+		self.glue_border = path_through(self.cut_border[-1, :],
+		                                self.glue_tripoint,
+		                                self.cut_border[0, :])
 
 		self.border = np.concatenate([self.cut_border[:-1, :], self.glue_border])
 
 
-	@staticmethod
-	def path_through(start: NDArray[float], middle: NDArray[float], end: NDArray[float]) -> NDArray[float]:
-		""" find a simple path that goes to the nearest pole, circles around it clockwise,
-		    and then goes to the endpoint. assume the y axis to be periodic, and break the
-		    path up at the antimeridian if necessary. the poles are at x = ±pi/2.
-			:param start: the 2-vector at which to start
-			:param middle: the 2-vector thru which to pass
-			:param end: the 2-vector at which to finish
-			:return: the n×2 path array
-		"""
-		# for normal points...
-		if abs(middle[0]) < pi/2:
-			return np.array([start, middle, end])
-		# if the midpoint is a pole...
-		else:
-			sign = copysign(1, middle[0])
-			# start with some strait lines
-			path = [start, [sign*pi/2, start[1]], [sign*pi/2, end[1]], end]
-			# if it looks like it's circling the rong way
-			if np.sign(start[1] - end[1]) != sign:
-				path.insert(2, [sign*pi/2, -sign*pi])
-				path.insert(3, [sign*pi/2, sign*pi])
-			for k in range(len(path) - 1, 0, -1):
-				dy = abs(path[k][1] - path[k - 1][1])
-				# if at any point the direction could still be considerd ambiguous, clarify it
-				if dy > pi and dy != 2*pi:
-					path.insert(k, [sign*pi/2, 0])
-				# also, if there are any zero-length segments, remove them
-				elif np.all(path[k] == path[k - 1]):
-					path.pop(k)
-			return np.array(path)
+def path_through(start: NDArray[float], middle: NDArray[float], end: NDArray[float]) -> NDArray[float]:
+	""" find a simple path that goes to the nearest pole, circles around it clockwise,
+	    and then goes to the endpoint. assume the y axis to be periodic, and break the
+	    path up at the antimeridian if necessary. the poles are at x = ±pi/2.
+		:param start: the 2-vector at which to start
+		:param middle: the 2-vector thru which to pass
+		:param end: the 2-vector at which to finish
+		:return: the n×2 path array
+	"""
+	# for normal points...
+	if abs(middle[0]) < pi/2:
+		return np.array([start, middle, end])
+	# if the midpoint is a pole...
+	else:
+		sign = copysign(1, middle[0])
+		# start with some strait lines
+		path = [start, [sign*pi/2, start[1]], [sign*pi/2, end[1]], end]
+		# if it looks like it's circling the rong way
+		if np.sign(start[1] - end[1]) != sign:
+			path.insert(2, [sign*pi/2, -sign*pi])
+			path.insert(3, [sign*pi/2, sign*pi])
+		for k in range(len(path) - 1, 0, -1):
+			dy = abs(path[k][1] - path[k - 1][1])
+			# if at any point the direction could still be considerd ambiguous, clarify it
+			if dy > pi and dy != 2*pi:
+				path.insert(k, [sign*pi/2, 0])
+			# also, if there are any zero-length segments, remove them
+			elif np.all(path[k] == path[k - 1]):
+				path.pop(k)
+		return np.array(path)
 
 
-	def inside(self, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:
-		""" find the locus of tiles binned by x and y that are inside this section. count
-		    tiles that intersect the boundary as in
-		    :param x_edges: the bin edges for axis 0
-		    :param y_edges: the bin edges for axis 1
-		    :return: a boolean grid of True for in and False for out
-		"""
-		# start by including anything on the border
-		included = Section.cells_touched(x_edges, y_edges, self.border)
-
-		# then do a simple polygon inclusion test
-		included |= inside_region(bin_centers(x_edges), bin_centers(y_edges), self.border, period=2*pi)
-
-		return included
+def cells_inside_of(section: Section, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:
+	""" find the locus of tiles binned by x and y that are inside the Section. count
+	    tiles that intersect the boundary as in.
+	    :param section: the Section whose border forms the region of interest
+	    :param x_edges: the bin edges for axis 0
+	    :param y_edges: the bin edges for axis 1
+	    :return: a boolean grid of True for in and False for out
+	"""
+	# it's the union of cells touched by the border and cells with centers inside the border
+	return cells_touched_by(x_edges, y_edges, section.border) | \
+	       inside_region(bin_centers(x_edges), bin_centers(y_edges), section.border, period=2*pi)
 
 
-	def shared(self, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:
-		""" find the locus of tiles binned by x_edges and λ that span a soft glue border
-		    between this section and another
-		    :param x_edges: the bin edges for axis 0
-		    :param y_edges: the bin edges for axis 1
-		    :return: a boolean grid of True for shared and False for not shared
-		"""
-		# share any cells that are on the glue border
-		shared = Section.cells_touched(x_edges, y_edges, self.glue_border)
-		# except for this one weerd edge case with the poles
-		for x_endpoint, y_endpoint in self.cut_border[[0, -1], :]:
-			j = bin_index(y_endpoint, y_edges)
-			if x_endpoint == -pi/2:
-				shared[0, j - 1: j + 2] = False
-			elif x_endpoint == pi/2:
-				shared[-1, j - 1: j + 2] = False
-		# and this other edge case with cuts that pass in and out of the shared region
-		i = bin_index(self.cut_border[:, 0], x_edges)
-		j = bin_index(self.cut_border[:, 1], y_edges)
-		shared_points = shared[i, j]
-		emerging = np.nonzero(shared_points[:-1] & ~shared_points[1:])[0]
-		entering = np.nonzero(~shared_points[:-1] & shared_points[1:])[0] + 1
-		shared[i[emerging[1:]], j[emerging[1:]]] = False # (strike all re-exiting cells)
-		shared[i[entering[:-1]], j[entering[:-1]]] = False # (and all early-entering cells)
+def cells_shared_by(section: Section, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:
+	""" find the locus of tiles binned by x_edges and λ that span a glue-border
+	    between this section and another
+	    :param section: the Section whose border forms the region of interest
+	    :param x_edges: the bin edges for axis 0
+	    :param y_edges: the bin edges for axis 1
+	    :return: a boolean grid of True for shared and False for not shared
+	"""
+	# share any cells that are on the glue border
+	shared = cells_touched_by(x_edges, y_edges, section.glue_border)
+	# and this other edge case with cuts that pass in and out of the shared region
+	i = bin_index(section.cut_border[:, 0], x_edges)
+	j = bin_index(section.cut_border[:, 1], y_edges)
+	shared_points = shared[i, j]
+	emerging = np.nonzero(shared_points[:-1] & ~shared_points[1:])[0]
+	entering = np.nonzero(~shared_points[:-1] & shared_points[1:])[0] + 1
+	shared[i[emerging[1:]], j[emerging[1:]]] = False # (strike all re-exiting cells)
+	shared[i[entering[:-1]], j[entering[:-1]]] = False # (and all early-entering cells)
 
-		return shared
+	return shared
 
 
-	def choose_center(self):
-		""" calculate the point that should go at the center of the stereographic
-		    projection that minimizes the maximum distortion of this region of the globe
-		"""
-		ф_grid = np.linspace(-pi/2, pi/2, 13)
-		λ_grid = np.linspace(-pi, pi, 25)
-		ф_sample, λ_sample = bin_centers(ф_grid), bin_centers(λ_grid)
-		inside = self.inside(ф_grid, λ_grid)
-		max_distortion = np.where(inside, inf, 0)
-		for points, importance in [(self.border, 1), (self.glue_border, 2)]:
-			distance, _ = rotated_coordinates(
-				ф_sample[:, np.newaxis, np.newaxis],
-				λ_sample[np.newaxis, :, np.newaxis],
-				points[np.newaxis, np.newaxis, :, 0],
-				points[np.newaxis, np.newaxis, :, 1])
-			distortion = importance/np.sin(distance/2)**2
-			max_distortion = np.maximum(max_distortion, np.max(distortion, axis=2))
-		best_i, best_j = np.unravel_index(np.argmin(max_distortion), max_distortion.shape)
-		ф_anti, λ_anti = ф_sample[best_i], λ_sample[best_j]
-		return -ф_anti, wrap_angle(λ_anti + pi)
+def center_of(section: Section) -> tuple[float, float]:
+	""" calculate the point that should go at the center of the stereographic
+	    projection that minimizes the maximum distortion of this region of the globe
+	    :param section: the section being stereographically projected
+	    :return: the latitude and longitude of the ideal center
+	"""
+	ф_grid = np.linspace(-pi/2, pi/2, 13)
+	λ_grid = np.linspace(-pi, pi, 25)
+	ф_sample, λ_sample = bin_centers(ф_grid), bin_centers(λ_grid)
+	inside = cells_inside_of(section, ф_grid, λ_grid)
+	max_distortion = np.where(inside, inf, 0)
+	for points, importance in [(section.border, 1), (section.glue_border, 2)]:
+		distance, _ = rotated_coordinates(
+			ф_sample[:, np.newaxis, np.newaxis],
+			λ_sample[np.newaxis, :, np.newaxis],
+			points[np.newaxis, np.newaxis, :, 0],
+			points[np.newaxis, np.newaxis, :, 1])
+		distortion = importance/np.sin(distance/2)**2
+		max_distortion = np.maximum(max_distortion, np.max(distortion, axis=2))
+	best_i, best_j = np.unravel_index(np.argmin(max_distortion), max_distortion.shape)
+	ф_anti, λ_anti = ф_sample[best_i], λ_sample[best_j]
+	return -ф_anti, wrap_angle(λ_anti + pi)
 
 
-	@staticmethod
-	def cells_touched(x_edges: NDArray[float], y_edges: NDArray[float],
-	                  path: NDArray[float]) -> NDArray[bool]:
-		""" find and mark each tile binned by x_edges and y_edges that is touched by this
-	        polygon path
-	        :param x_edges: the bin edges for axis 0
-	        :param y_edges: the bin edges for axis 1
-	        :param path: a n×2 array of ordered x and y coordinates
-	        :return: a boolean grid of True for in and False for out
-		"""
-		touched = np.full((x_edges.size - 1, y_edges.size - 1), False)
-		for i in range(path.shape[0] - 1):
-			x0, y0 = path[i, :] + 1e-6 # add a tiny amount so there's less roundoff instability
-			x1, y1 = path[i + 1, :] + 1e-6
-			touched[bin_index(x0, x_edges), bin_index(y0, y_edges)] = True
-			if x0 != x1:
-				i_crossings, j_crossings = Section.grid_intersections(x_edges, y_edges[:-1], x0, y0, x1, y1, False, True)
-				touched[i_crossings, j_crossings] = True
-				touched[i_crossings - 1, j_crossings] = True
-			if y0 != y1:
-				j_crossings, i_crossings = Section.grid_intersections(y_edges[:-1], x_edges, y0, x0, y1, x1, True, False)
-				touched[i_crossings, j_crossings] = True
-				touched[i_crossings, j_crossings - 1] = True
-		return touched
+def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
+                     path: NDArray[float]) -> NDArray[bool]:
+	""" find and mark each tile binned by x_edges and y_edges that is touched by this
+        polygon path
+        :param x_edges: the bin edges for axis 0
+        :param y_edges: the bin edges for axis 1
+        :param path: a n×2 array of ordered x and y coordinates
+        :return: a boolean grid of True for in and False for out
+	"""
+	touched = np.full((x_edges.size - 1, y_edges.size - 1), False)
+	for i in range(path.shape[0] - 1):
+		x0, y0 = path[i, :] + 1e-6 # add a tiny amount so there's less roundoff instability
+		x1, y1 = path[i + 1, :] + 1e-6
+		touched[bin_index(x0, x_edges), bin_index(y0, y_edges)] = True
+		if x0 != x1:
+			i_crossings, j_crossings = grid_intersections_with(x_edges, y_edges[:-1], x0, y0, x1, y1, False, True)
+			touched[i_crossings, j_crossings] = True
+			touched[i_crossings - 1, j_crossings] = True
+		if y0 != y1:
+			j_crossings, i_crossings = grid_intersections_with(y_edges[:-1], x_edges, y0, x0, y1, x1, True, False)
+			touched[i_crossings, j_crossings] = True
+			touched[i_crossings, j_crossings - 1] = True
+	return touched
 
 
-	@staticmethod
-	def grid_intersections(x_values: NDArray[float], y_edges: NDArray[float],
-	                       x0: float, y0: float, x1: float, y1: float,
-	                       periodic_x: bool, periodic_y: bool
-	                       ) -> tuple[NDArray[int], NDArray[int]]:
-		""" bin the y value at each point where this single line segment crosses one of
-		    the x_values.
-	        :param x_values: the values at which we should detect and bin positions (must
-		                     be evenly spaced if periodic)
-		    :param y_edges: the edges of the bins in which to place y values (must be
-		                    evenly spaced if periodic)
-	        :param x0: the x coordinate of the start of the line segment
-	        :param y0: the y coordinate of the start of the line segment
-	        :param x1: the x coordinate of the end of the line segment
-	        :param y1: the y coordinate of the end of the line segment
-	        :param periodic_x: whether the x axis must be treated as periodic
-	        :param periodic_y: whether the y axis must be treated as periodic
-		    :return: the 1D array of x value indices and the 1D array of y bin indices
-		"""
-		# make sure we don't have to worry about periodicity issues
-		if periodic_x and abs(x1 - x0) > pi:
-			shift = bin_index(max(x0, x1), x_values)
-			x_step = x_values[1] - x_values[0]
-			i_crossings, j_crossings = Section.grid_intersections(
-				x_values, y_edges,
-				wrap_angle(x0 - x_step*shift), y0,
-				wrap_angle(x1 - x_step*shift), y1,
-				periodic_x, periodic_y)
-			return (i_crossings + shift)%x_values.size, j_crossings
-		elif periodic_y and abs(y0 - y1) > pi:
-			shift = bin_index(max(y0, y1), y_edges)
-			y_step = y_edges[1] - y_edges[0]
-			i_crossings, j_crossings = Section.grid_intersections(
-				x_values, y_edges,
-				x0, wrap_angle(y0 - y_step*shift),
-				x1, wrap_angle(y1 - y_step*shift),
-				periodic_x, periodic_y)
-			return i_crossings, (j_crossings + shift)%y_edges.size
-		# and we want to be able to assume they go left to rite
-		elif x1 < x0:
-			return Section.grid_intersections(x_values, y_edges, x1, y1, x0, y0, periodic_x, periodic_y)
-		elif x1 > x0:
-			i0 = bin_index(x0, x_values) + 1
-			i1 = bin_index(x1, x_values)
-			i_crossings = np.arange(i0, i1 + 1)
-			x_crossings = x_values[i_crossings]
-			y_crossings = interp(x_crossings, x0, x1, y0, y1)
-			j_crossings = bin_index(y_crossings, y_edges)
-			return i_crossings, j_crossings
-		else:
-			return np.empty((0,), dtype=int), np.empty((0,), dtype=int)
+def grid_intersections_with(x_values: NDArray[float], y_edges: NDArray[float],
+                            x0: float, y0: float, x1: float, y1: float,
+                            periodic_x: bool, periodic_y: bool
+                            ) -> tuple[NDArray[int], NDArray[int]]:
+	""" bin the y value at each point where this single line segment crosses one of
+	    the x_values.
+        :param x_values: the values at which we should detect and bin positions (must
+	                     be evenly spaced if periodic)
+	    :param y_edges: the edges of the bins in which to place y values (must be
+	                    evenly spaced if periodic)
+        :param x0: the x coordinate of the start of the line segment
+        :param y0: the y coordinate of the start of the line segment
+        :param x1: the x coordinate of the end of the line segment
+        :param y1: the y coordinate of the end of the line segment
+        :param periodic_x: whether the x axis must be treated as periodic
+        :param periodic_y: whether the y axis must be treated as periodic
+	    :return: the 1D array of x value indices and the 1D array of y bin indices
+	"""
+	# make sure we don't have to worry about periodicity issues
+	if periodic_x and abs(x1 - x0) > pi:
+		shift = bin_index(max(x0, x1), x_values)
+		x_step = x_values[1] - x_values[0]
+		i_crossings, j_crossings = grid_intersections_with(
+			x_values, y_edges,
+			wrap_angle(x0 - x_step*shift), y0,
+			wrap_angle(x1 - x_step*shift), y1,
+			periodic_x, periodic_y)
+		return (i_crossings + shift)%x_values.size, j_crossings
+	elif periodic_y and abs(y0 - y1) > pi:
+		shift = bin_index(max(y0, y1), y_edges)
+		y_step = y_edges[1] - y_edges[0]
+		i_crossings, j_crossings = grid_intersections_with(
+			x_values, y_edges,
+			x0, wrap_angle(y0 - y_step*shift),
+			x1, wrap_angle(y1 - y_step*shift),
+			periodic_x, periodic_y)
+		return i_crossings, (j_crossings + shift)%y_edges.size
+	# and we want to be able to assume they go left to rite
+	elif x1 < x0:
+		return grid_intersections_with(x_values, y_edges, x1, y1, x0, y0, periodic_x, periodic_y)
+	elif x1 > x0:
+		i0 = bin_index(x0, x_values) + 1
+		i1 = bin_index(x1, x_values)
+		i_crossings = np.arange(i0, i1 + 1)
+		x_crossings = x_values[i_crossings]
+		y_crossings = interp(x_crossings, x0, x1, y0, y1)
+		j_crossings = bin_index(y_crossings, y_edges)
+		return i_crossings, j_crossings
+	else:
+		return np.empty((0,), dtype=int), np.empty((0,), dtype=int)
 
 
 def expand_bool_array(arr: NDArray[bool]) -> NDArray[bool]:
@@ -241,8 +231,9 @@ def expand_bool_array(arr: NDArray[bool]) -> NDArray[bool]:
 	return out
 
 
-def rotated_coordinates(ф_ref: NDArray[float], λ_ref: NDArray[float],
-                        ф1: NDArray[float], λ1: NDArray[float]) -> tuple[NDArray[float], NDArray[float]]:
+def rotated_coordinates(ф_ref: float | NDArray[float], λ_ref: float | NDArray[float],
+                        ф1: float | NDArray[float], λ1: float | NDArray[float]
+                        ) -> tuple[NDArray[float], NDArray[float]]:
 	""" return the polar distance and longitude relative to an oblique reference pole """
 	x_rotate = np.sin(ф_ref)*np.cos(ф1)*np.cos(λ1 - λ_ref) - np.cos(ф_ref)*np.sin(ф1)
 	y_rotate = np.cos(ф1)*np.sin(λ1 - λ_ref)
@@ -331,8 +322,8 @@ def build_mesh(name: str, resolution: int):
 	# for each section
 	for h, section in enumerate(sections):
 		# get the main bitmaps of merit from its border
-		share_cells |= section.shared(ф, λ)
-		include_cells = section.inside(ф, λ)
+		share_cells |= cells_shared_by(section, ф, λ)
+		include_cells = cells_inside_of(section, ф, λ)
 
 		# add in any straits that happen to be split across it's edge
 		ф_border, λ_border = resolve_path(section.cut_border[:, 0], section.cut_border[:, 1], STRAIT_RADIUS)
@@ -359,7 +350,7 @@ def build_mesh(name: str, resolution: int):
 		include_nodes[h, :, :] = expand_bool_array(include_cells)
 
 		# and create an oblique stereographic projection just for it
-		ф_center, λ_center = section.choose_center()
+		ф_center, λ_center = center_of(section)
 		p_transform, λ_transform = rotated_coordinates(
 			ф_center, λ_center, ф[:, np.newaxis], λ[np.newaxis, :])
 		r, θ = np.tan(p_transform/2), λ_transform
