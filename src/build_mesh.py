@@ -45,7 +45,7 @@ class Section:
 		self.glue_tripoint = glue_tripoint
 		self.glue_border = construct_path_through(self.cut_border[-1, :],
 		                                          self.glue_tripoint,
-		                                self.cut_border[0, :])
+		                                          self.cut_border[0, :])
 
 		self.border = np.concatenate([self.cut_border[:-1, :], self.glue_border])
 
@@ -403,8 +403,8 @@ def build_mesh(name: str, resolution: int):
 		ф_border, λ_border = resolve_path(section.cut_border[:, 0], section.cut_border[:, 1],
 		                                  STRAIT_RADIUS)
 		for ф_strait, λ_strait in STRAITS:
-			border_near_strait =\
-				(abs(ф_border - ф_strait) < STRAIT_RADIUS/2) &\
+			border_near_strait = \
+				(abs(ф_border - ф_strait) < STRAIT_RADIUS/2) & \
 				(abs(wrap_angle(λ_border - λ_strait)) < STRAIT_RADIUS/2/cos(radians(ф_strait)))
 			if np.any(border_near_strait):
 				ф_grid = bin_centers(ф)[:, np.newaxis]
@@ -431,10 +431,15 @@ def build_mesh(name: str, resolution: int):
 
 		# plot it
 		plt.figure(f"{name.capitalize()} mesh, section {h}")
-		plt.pcolormesh(λ, ф, np.where(include_cells, np.where(share_cells, 2, 1), 0))
+		plt.imshow(np.where(include_cells, np.where(share_cells, 2, 1), 0),
+		           extent=(-180, 180, -90, 90), origin="lower", vmin=-1)
 		plt.plot(section.border[:, 1], section.border[:, 0], "k")
 		plt.scatter(section.cut_border[[0, -1], 1], section.cut_border[[0, -1], 0], c="k", s=20)
 		plt.scatter(*np.degrees(center_of(section))[::-1], c="k", s=50)
+		for фi in ф:
+			plt.axhline(фi, color="k", linewidth=".6")
+		for λj in λ:
+			plt.axvline(λj, color="k", linewidth=".6")
 
 	share_nodes = expand_bool_array(share_cells)
 
