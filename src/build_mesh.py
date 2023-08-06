@@ -16,6 +16,9 @@ from numpy.typing import NDArray
 
 from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, interp
 
+# the amount of space around each Section's valid region where the mesh should be defined
+MARGIN = 1.0
+
 # locations of various straits that should be shown continuously
 STRAITS = [(66.5, -169.0), # Bering
            (9.1, -79.7), # Panama canal
@@ -87,7 +90,7 @@ def construct_path_through(start: NDArray[float], middle: NDArray[float], end: N
 		return np.array(path)
 
 
-def cells_inside_of(section: Section, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:  # TODO: finite radius
+def cells_inside_of(section: Section, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:
 	""" find the locus of tiles binned by x and y that are inside the Section. count
 	    tiles that intersect the boundary as in.
 	    :param section: the Section whose border forms the region of interest
@@ -96,11 +99,11 @@ def cells_inside_of(section: Section, x_edges: NDArray[float], y_edges: NDArray[
 	    :return: a boolean grid of True for in and False for out
 	"""
 	# it's the union of cells touched by the border and cells with centers inside the border
-	return cells_touched_by(x_edges, y_edges, section.border) | \
+	return cells_touched_by(x_edges, y_edges, section.border, radius=MARGIN) | \
 	       inside_region(bin_centers(x_edges), bin_centers(y_edges), section.border, period=360)
 
 
-def cells_shared_by(section: Section, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:  # TODO: finite radius
+def cells_shared_by(section: Section, x_edges: NDArray[float], y_edges: NDArray[float]) -> NDArray[bool]:
 	""" find the locus of tiles binned by x_edges and λ that span a glue-border
 	    between this Section and another
 	    :param section: the Section whose border forms the region of interest
@@ -109,7 +112,7 @@ def cells_shared_by(section: Section, x_edges: NDArray[float], y_edges: NDArray[
 	    :return: a boolean grid of True for shared and False for not shared
 	"""
 	# it's all cells touched by the glue border excluding any that are also touched by the cut border
-	return cells_touched_by(x_edges, y_edges, section.glue_border) & \
+	return cells_touched_by(x_edges, y_edges, section.glue_border, radius=MARGIN) & \
 	       ~cells_touched_by(x_edges, y_edges, section.cut_border)
 
 
@@ -137,28 +140,40 @@ def center_of(section: Section) -> tuple[float, float]:
 
 
 def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
-                     path: NDArray[float]) -> NDArray[bool]:
+                     path: NDArray[float], radius=0.) -> NDArray[bool]:
 	""" find and mark each tile binned by x_edges and y_edges that intersects this polygon path.
-	    tangency doesn't count.
+	    tangency doesn't count.  assume the y domain is periodic but the x domain is not.
         :param x_edges: the bin edges for axis 0
         :param y_edges: the bin edges for axis 1
         :param path: a n×2 array of ordered x and y coordinates
+        :param radius: if nonzero, we will act like the path has thickness 2*radius
         :return: a boolean grid of True for in and False for out
 	"""
 	touched = np.full((x_edges.size - 1, y_edges.size - 1), False)
+	# look at each segment of the path
 	for i in range(path.shape[0] - 1):
 		x0, y0 = path[i, :]
 		x1, y1 = path[i + 1, :]
+		# find the places where it crosses vertical cell edges
 		if x0 != x1:
-			i_crossings, j_crossings = grid_intersections_with(
-				x_edges, y_edges, x0, y0, x1, y1, False, True)
-			touched[i_crossings, j_crossings] = True
-			touched[i_crossings - 1, j_crossings] = True
+			for dy in [-radius, radius]:
+				i_crossings, j_crossings = grid_intersections_with(
+					x_edges, y_edges, x0, y0 + dy, x1, y1 + dy, False, True)
+				# mark the cells adjacent to each crossing
+				touched[i_crossings, j_crossings] = True
+				touched[i_crossings - 1, j_crossings] = True
+		# find the places where it crosses horizontal cell edges
 		if y0 != y1:
-			j_crossings, i_crossings = grid_intersections_with(
-				y_edges, x_edges, y0, x0, y1, x1, True, False)
-			touched[i_crossings, j_crossings] = True
-			touched[i_crossings, j_crossings - 1] = True
+			for dx in [-radius, radius]:
+				j_crossings, i_crossings = grid_intersections_with(
+					y_edges, x_edges, y0, x0 + dx, y1, x1 + dx, True, False)
+				# watch out for out-of-bounds crossings if there's a nonzero radius
+				valid = (i_crossings >= 0) & (i_crossings < x_edges.size - 1)
+				i_crossings, j_crossings = i_crossings[valid], j_crossings[valid]
+				# mark the cells adjacent to each crossing
+				touched[i_crossings, j_crossings] = True
+				touched[i_crossings, j_crossings - 1] = True
+
 	return touched
 
 
@@ -203,6 +218,7 @@ def grid_intersections_with(x_values: NDArray[float], y_edges: NDArray[float],
 	elif x1 < x0:
 		return grid_intersections_with(x_values, y_edges, x1, y1, x0, y0, periodic_x, periodic_y)
 	elif x1 > x0:
+		# if everything is set up like we expect...
 		i_first = bin_index(x0, x_values) + 1
 		i_last = bin_index(x1, x_values, right=True)
 		i_crossings = np.arange(i_first, i_last + 1)
