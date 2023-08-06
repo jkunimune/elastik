@@ -232,12 +232,15 @@ def grid_intersections_with(x_values: NDArray[float], y_edges: NDArray[float],
 
 def trim_to_grid(path: NDArray[float], x_edges: NDArray[float], y_edges: NDArray[float]
                  ) -> NDArray[float]:
-	""" copy and modify a palygon path that ends on a cell edge that it never crosses.
+	""" copy and modify a palygon path so that it ends on a cell edge that it never crosses.
 	    :param path: the polygon path, which must be longer than a cell length
 	    :param x_edges: the bin edges for axis 0
 	    :param y_edges: the bin edges for axis 1
 	    :return: a new Section that we can use instead of the given one
 	"""
+	# if it already ends on a cell edge, just leave it
+	if path[-1, 0] in x_edges or path[-1, 1] in y_edges:  # having this check avoids a lot of issues later on
+		return path  # there's a possibility for false positives, but this function needn't be that robust
 	# find the cell in which the path will end
 	i = bin_index(path[:, 0], x_edges, right=True)
 	j = bin_index(path[:, 1], y_edges, right=True)
