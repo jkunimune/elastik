@@ -223,8 +223,8 @@ def trim_to_grid(path: NDArray[float], x_edges: NDArray[float], y_edges: NDArray
 	    :return: a new Section that we can use instead of the given one
 	"""
 	# find the cell in which the path will end
-	i = bin_index(path[:, 0], x_edges)
-	j = bin_index(path[:, 1], y_edges)
+	i = bin_index(path[:, 0], x_edges, right=True)
+	j = bin_index(path[:, 1], y_edges, right=True)
 	i_final, j_final = i[-1], j[-1]
 	# and the point at which it first enters that cell
 	k_final = np.nonzero((i == i_final) & (j == j_final))[0][0]  # TODO: sometimes it is tangent to the final cell
