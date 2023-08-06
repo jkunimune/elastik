@@ -147,7 +147,7 @@ def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
 	"""
 	touched = np.full((x_edges.size - 1, y_edges.size - 1), False)
 	for i in range(path.shape[0] - 1):
-		x0, y0 = path[i, :]  # add a tiny amount so there's less roundoff instability
+		x0, y0 = path[i, :]
 		x1, y1 = path[i + 1, :]
 		if x0 != x1:
 			i_crossings, j_crossings = grid_intersections_with(
@@ -303,7 +303,7 @@ def rotated_coordinates(ф_ref: float | NDArray[float], λ_ref: float | NDArray[
 	x_rotate = np.sin(ф_ref)*np.cos(ф1)*np.cos(λ1 - λ_ref) - np.cos(ф_ref)*np.sin(ф1)
 	y_rotate = np.cos(ф1)*np.sin(λ1 - λ_ref)
 	z_rotate = np.cos(ф_ref)*np.cos(ф1)*np.cos(λ1 - λ_ref) + np.sin(ф_ref)*np.sin(ф1)
-	p_rotate = pi/2 - np.arctan(z_rotate/np.hypot(x_rotate, y_rotate))
+	p_rotate = pi/2 - np.arctan2(z_rotate, np.hypot(x_rotate, y_rotate))
 	λ_rotate = np.arctan2(y_rotate, x_rotate)
 	return p_rotate, λ_rotate
 
@@ -435,7 +435,7 @@ def build_mesh(name: str, resolution: int):
 		           extent=(-180, 180, -90, 90), origin="lower", vmin=-1)
 		plt.plot(section.border[:, 1], section.border[:, 0], "k")
 		plt.scatter(section.cut_border[[0, -1], 1], section.cut_border[[0, -1], 0], c="k", s=20)
-		plt.scatter(*np.degrees(center_of(section))[::-1], c="k", s=50)
+		plt.scatter(*np.degrees(center_of(section))[::-1], c="k", s=50, marker="x")
 		for фi in ф:
 			plt.axhline(фi, color="k", linewidth=".6")
 		for λj in λ:
