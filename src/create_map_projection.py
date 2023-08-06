@@ -28,7 +28,7 @@ from optimize import minimize_with_bounds
 from sparse import SparseNDArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, interp, \
 	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor, inside_polygon, \
-	search_out_from
+	search_out_from, make_path_go_around_pole
 
 logging.basicConfig(
 	level=logging.INFO,
@@ -55,7 +55,7 @@ h5_фλ_tuple = [("latitude", float), ("longitude", float)]
 
 def create_map_projection(configuration_file: str):
 	""" create a map projection
-	    :param configuration_file: "oceans" | "continents" | "countries"
+	    :param configuration_file: one of "oceans", "continents", or "countries"
 	"""
 	configure = load_options(configuration_file)
 	logging.info(f"loaded options from {configuration_file}")
@@ -264,6 +264,11 @@ def create_map_projection(configuration_file: str):
 	# fit the result into a landscape rectangle
 	mesh.nodes = rotate_and_shift(mesh.nodes, *fit_in_rectangle(border))
 	border = rotate_and_shift(border, *fit_in_rectangle(border))
+
+	# apply some simplification to the unprojected border now that we're done projecting them
+	for h in range(mesh.num_sections):
+		mesh.section_borders[h] = simplify_path(
+			make_path_go_around_pole(mesh.section_borders[h]), cyclic=True)
 
 	# and finally, save the projection
 	logging.info("saving results...")
@@ -751,7 +756,7 @@ def load_mesh(filename: str) -> Mesh:
 	    file, in that order.
 	"""
 	with h5py.File(f"../spec/mesh_{filename}.h5", "r") as file:
-		ф = np.radians(file["section0/latitude"])
+		ф = np.radians(file["section0/latitude"])  # TODO: keep everything in degrees
 		λ = np.radians(file["section0/longitude"])
 		num_sections = file.attrs["num_sections"]
 		nodes = np.empty((num_sections, ф.size, λ.size, 2))

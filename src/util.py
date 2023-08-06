@@ -4,7 +4,7 @@ util.py
 
 some handy utility functions that are used in multiple places
 """
-from math import hypot, pi, cos, sin, inf, copysign
+from math import hypot, pi, cos, sin, inf, copysign, nan
 from typing import Sequence, TYPE_CHECKING, Union, Iterable
 
 import numpy as np
@@ -248,9 +248,10 @@ def simplify_path(path: Union[NDArray[float], "SparseNDArray"], cyclic=False
 		if np.array_equal(path[index[i], ...],
 		                  path[index[i + 1], ...]):
 			index = np.concatenate([index[:i], index[i + 1:]])
-	while cyclic and np.array_equal(path[index[0], ...],
-	                                path[index[-1], ...]):
-		index = index[:-1]
+	if cyclic:
+		while np.array_equal(path[index[0], ...],
+		                     path[index[-1], ...]):
+			index = index[:-1]
 
 	# then check for retraced segments
 	for i in range(index.size - 3, -1, -1):
@@ -258,17 +259,23 @@ def simplify_path(path: Union[NDArray[float], "SparseNDArray"], cyclic=False
 			if np.array_equal(path[index[i], ...],
 			                  path[index[i + 2], ...]):
 				index = np.concatenate([index[:i], index[i + 2:]])
-	while cyclic and np.array_equal(path[index[1], ...],
-	                                path[index[-1], ...]):
-		index = index[1:-1]
+	if cyclic:
+		while np.array_equal(path[index[1], ...],
+		                     path[index[-1], ...]):
+			index = index[1:-1]
 
 	# finally try to simplify over-resolved strait lines
 	for i in range(index.size - 3, -1, -1):
-		r0 = path[index[i], ...]
-		r1 = path[index[i + 1], ...]
-		r2 = path[index[i + 2], ...]
-		if np.array_equal(normalize(np.subtract(r2, r1)), normalize(np.subtract(r1, r0))):
+		dr0 = normalize(np.subtract(path[index[i + 1], ...], path[index[i], ...]))
+		dr1 = normalize(np.subtract(path[index[i + 2], ...], path[index[i + 1], ...]))
+		if np.array_equal(dr0, dr1) or np.array_equal(dr0, -dr1):
 			index = np.concatenate([index[:i + 1], index[i + 2:]])
+	if cyclic:
+		for i in [-1, -2]:
+			dr0 = normalize(np.subtract(path[index[i + 1], ...], path[index[i], ...]))
+			dr1 = normalize(np.subtract(path[index[i + 2], ...], path[index[i + 1], ...]))
+			if np.array_equal(dr0, dr1) or np.array_equal(dr0, -dr1):
+				index = index[1:] if i == -1 else index[:-1]
 
 	return path[index, ...]
 
@@ -285,6 +292,30 @@ def refine_path(path: list[tuple[float, float]] | NDArray[float], resolution: fl
 				path = np.concatenate([path[:i], [((min(x0, x1) + max(x0, x1))/2, (min(y0, y1) + max(y0, y1))/2)], path[i:]])
 				i -= 1
 		i += 1
+	return path
+
+
+def make_path_go_around_pole(path: list[tuple[float, float]] | NDArray[float]) -> NDArray[float]:
+	""" add points to a path (in radians) on a globe such that it goes around the edges of
+	    the domain rather than simply wrapping from -180° to 180° or vice versa.
+	"""
+	# first, identify the points where it crosses the antimeridian
+	crossings = {}  # keys the index of the segment to +1 for the north pole and -1 for the south
+	for i in range(1, path.shape[0]):
+		if abs(path[i, 1] - path[i - 1, 1]) == 2*pi:
+			crossings[i] = 1 if path[i, 1] < path[i - 1, 1] else -1
+	# if there are exactly two, set them up so they don't overlap
+	if len(crossings) == 2:
+		north_cross_index = max(crossings.keys(), key=lambda i: path[i, 0])
+		south_cross_index = min(crossings.keys(), key=lambda i: path[i, 0])
+		crossings[north_cross_index] = 1
+		crossings[south_cross_index] = -1
+	# then go replace each crossing
+	for i, sign in reversed(sorted(crossings.items())):
+		path = np.concatenate([path[:i],
+		                       [[sign*pi/2, path[i - 1, 1]]],
+		                       [[sign*pi/2, path[i, 1]]],
+		                       path[i:]])
 	return path
 
 
@@ -326,12 +357,13 @@ def inside_region(ф: Numeric, λ: Numeric, region: NDArray[float], period=360) 
 		out_shape = ф.shape
 	# first we need to characterize the region so that we can classify points at untuched longitudes
 	δλ_border = region[1:, 1] - region[:-1, 1]
-	ф_border = region[1:, 0]
+	δλ_border[abs(δλ_border) > period/2] = nan
+	ф_border = (region[1:, 0] + region[:-1, 0])/2
 	if np.array_equal(region[0, :], region[-1, :]):
-		inside_out = δλ_border[np.argmax(region[:-1, 0] + region[1:, 0])] > 0 # for closed regions we have this nice trick
+		inside_out = δλ_border[np.nanargmax(ф_border)] > 0 # for closed regions we have this nice trick
 	else:
 		endpoints_down = np.mean(ф_border) > (ф_border[0] + ф_border[-1])/2
-		goes_east = np.sum(δλ_border, where=abs(δλ_border) <= period/2) > 0
+		goes_east = np.nansum(δλ_border) > 0
 		inside_out = endpoints_down == goes_east # for open regions we need this heuristic
 
 	# then we can bild up a precise bool mapping
