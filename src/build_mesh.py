@@ -227,19 +227,46 @@ def trim_to_grid(path: NDArray[float], x_edges: NDArray[float], y_edges: NDArray
 	j = bin_index(path[:, 1], y_edges, right=True)
 	i_final, j_final = i[-1], j[-1]
 	# and the point at which it first enters that cell
-	k_final = np.nonzero((i == i_final) & (j == j_final))[0][0]  # TODO: sometimes it is tangent to the final cell
+	k_final = np.nonzero((i == i_final) & (j == j_final))[0][0]
 
 	# find the point between vertices at which to make the cut
-	k_cut = None
-	for coordinates, cell_edges in [(path[:, 0], x_edges[i_final:i_final + 2]), (path[:, 1], y_edges[j_final:j_final + 2])]:
-		for edge in cell_edges:
-			k = interp(edge, coordinates[k_final - 1], coordinates[k_final], k_final - 1, k_final)
-			if k >= k_final - 1 and k <= k_final and (k_cut is None or k > k_cut):
-				k_cut = k
-	# and calculate the exact location at which the cut was made
-	endpoint = interp(k_cut, k_final - 1, k_final, path[k_final - 1], path[k_final])
+	endpoint = line_square_intersection(path[k_final - 1, 0], path[k_final - 1, 1],
+	                                    path[k_final, 0], path[k_final, 1],
+	                                    x_edges[i_final], x_edges[i_final + 1],
+	                                    y_edges[j_final], y_edges[j_final + 1])
+	return np.concatenate([path[:k_final], [endpoint]])
 
-	return np.concatenate([path[:ceil(k_cut)], [endpoint]])
+
+def line_square_intersection(x_out: float, y_out: float, x_in: float, y_in: float,
+                             x_min: float, x_max: float, y_min: float, y_max: float,
+                             num_recursions=0) -> tuple[float, float]:
+	""" calculate the point at which a line segment enters a rectangle. this function assumes
+	    that (x_out, y_out) is outside of the rectangle and (x_in, y_in) is inside it.
+	"""
+	if num_recursions >= 4:
+		raise ValueError("infinite recursion detected")
+
+	# first orient ourselves so that it might be entering from the right (definitely not the left)
+	if x_out < x_min:
+		x, y = line_square_intersection(-x_out, -y_out, -x_in, -y_in,
+		                                -x_max, -x_min, -y_max, -y_min,
+		                                num_recursions + 1)
+		return -x, -y
+
+	# calculate the point at which it crosses x_max
+	k = interp(x_max, x_out, x_in, 0, 1)
+	if k >= 0 and k <= 1:
+		x_intersect = x_max
+		y_intersect = interp(k, 0, 1, y_out, y_in)
+		# check if that's the point where it entered the square
+		if y_intersect >= y_min and y_intersect <= y_max:
+			return x_intersect, y_intersect
+
+	# if that didn't work, reorient so we're looking at y instead of x
+	y_intersect, x_intersect = line_square_intersection(y_out, x_out, y_in, x_in,
+	                                                    y_min, y_max, x_min, x_max,
+	                                                    num_recursions + 1)
+	return x_intersect, y_intersect
 
 
 def expand_bool_array(arr: NDArray[bool]) -> NDArray[bool]:
