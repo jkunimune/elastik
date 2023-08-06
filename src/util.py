@@ -302,7 +302,7 @@ def make_path_go_around_pole(path: list[tuple[float, float]] | NDArray[float]) -
 	# first, identify the points where it crosses the antimeridian
 	crossings = {}  # keys the index of the segment to +1 for the north pole and -1 for the south
 	for i in range(1, path.shape[0]):
-		if abs(path[i, 1] - path[i - 1, 1]) == 2*pi:
+		if abs(path[i, 1] - path[i - 1, 1]) == 360:
 			crossings[i] = 1 if path[i, 1] < path[i - 1, 1] else -1
 	# if there are exactly two, set them up so they don't overlap
 	if len(crossings) == 2:
@@ -313,8 +313,8 @@ def make_path_go_around_pole(path: list[tuple[float, float]] | NDArray[float]) -
 	# then go replace each crossing
 	for i, sign in reversed(sorted(crossings.items())):
 		path = np.concatenate([path[:i],
-		                       [[sign*pi/2, path[i - 1, 1]]],
-		                       [[sign*pi/2, path[i, 1]]],
+		                       [[sign*90, path[i - 1, 1]]],
+		                       [[sign*90, path[i, 1]]],
 		                       path[i:]])
 	return path
 

@@ -418,9 +418,9 @@ def build_mesh(name: str, resolution: int):
 	    :param resolution: how many cells per 90°
 	"""
 	# start by defining a grid of cells
-	ф = np.linspace(-90, 90, 2*resolution + 1)
+	ф = np.round(np.linspace(-90, 90, 2*resolution + 1), 12)
 	num_ф = ф.size - 1
-	λ = np.linspace(-180, 180, 4*resolution + 1)
+	λ = np.round(np.linspace(-180, 180, 4*resolution + 1), 12)
 	num_λ = λ.size - 1
 
 	# load the interruptions

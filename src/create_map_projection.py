@@ -12,7 +12,7 @@ import logging
 import re
 import sys
 import threading
-from math import inf, pi, log2, nan, floor, isfinite, degrees, isnan, sqrt
+from math import inf, pi, log2, nan, floor, isfinite, isnan, sqrt, radians, cos
 from typing import Iterable, Sequence, Union
 
 import h5py
@@ -42,8 +42,8 @@ logging.basicConfig(
 
 
 MIN_WEIGHT = .03 # the ratio of the whitespace weight to the subject weight
-CONSTRAINT_RESOLUTION = 2e-2 # the fineness of the border polygons used for applying constraints (rad)
-BORDER_PROJECTION_RESOLUTION = 5e-3 # the fineness of the borders before they get projected and saved (rad)
+CONSTRAINT_RESOLUTION = 1.0 # the fineness of the border polygons used for applying constraints (°)
+BORDER_PROJECTION_RESOLUTION = 0.3 # the fineness of the borders before they get projected and saved (°)
 BORDER_OUTPUT_RESOLUTION = 5 # the fineness of the projected borders as saved (km)
 RASTER_RESOLUTION = 20 # the number of pixels across the inverse raster
 
@@ -68,13 +68,16 @@ def create_map_projection(configuration_file: str):
 	width, height = (float(value) for value in configure["size"].split(","))
 	logging.info(f"set the maximum map size to {width}×{height} km")
 
-	# assume the coordinates are more or less evenly spaced
-	dΦ = EARTH.a*(1 - EARTH.e2)*(1 - EARTH.e2*np.sin(mesh.ф)**2)**(3/2)*(mesh.ф[1] - mesh.ф[0])
-	dΛ = EARTH.a*(1 + (1 - EARTH.e2)*np.tan(mesh.ф)**2)**(-1/2)*(mesh.λ[1] - mesh.λ[0])
-
 	# reformat the nodes into a list without gaps or duplicates
 	node_indices, node_positions = enumerate_nodes(mesh.nodes)
 	index_mesh = Mesh(mesh.section_borders, mesh.ф, mesh.λ, node_indices)
+
+	# calculate the true-scale dimensions of each cell
+	dΦ = EARTH.a*radians(mesh.ф[1] - mesh.ф[0])
+	dΛ = EARTH.a*radians(mesh.λ[1] - mesh.λ[0])
+	# including corrections for an ellipsoidal earth
+	dΦ = dΦ*(1 - EARTH.e2)*(1 - EARTH.e2*np.sin(np.radians(mesh.ф))**2)**(3/2)
+	dΛ = dΛ*(1 + (1 - EARTH.e2)*np.tan(np.radians(mesh.ф))**2)**(-1/2)
 
 	# and then do the same thing for cell corners
 	cell_definitions, [cell_shape_weights, cell_scale_weights] = enumerate_cells(
@@ -365,7 +368,7 @@ def enumerate_cells(node_indices: NDArray[int], values: list[NDArray[float] | li
 	# finally, calculate their areas and stuff
 	A_1 = dΦ[cell_node1_is]*dΛ[cell_node1_is]
 	A_2 = dΦ[cell_node2_is]*dΛ[cell_node2_is]
-	cell_areas = (3*A_1 + A_2)/16/(4*np.pi*EARTH.R**2)
+	cell_areas = (3*A_1 + A_2)/16/(4*pi*EARTH.R**2)
 
 	cell_weights = []
 	for values in cell_values:
@@ -418,7 +421,8 @@ def mesh_skeleton(lookup_table: Mesh, factor: int) -> tuple[Tensor, Tensor]:
 		important_i = np.arange(lookup_table.nodes.shape[1])
 	for h in range(lookup_table.nodes.shape[0]):
 		for i in range(lookup_table.nodes.shape[1]):
-			num_λ = max(4, round((lookup_table.nodes.shape[2] - 1)*np.cos(lookup_table.ф[i])/factor))
+			cosф = cos(radians(lookup_table.ф[i]))
+			num_λ = max(4, round((lookup_table.nodes.shape[2] - 1)/factor*cosф))
 			if num_λ <= lookup_table.nodes.shape[2]/1.5:
 				important_λ = np.linspace(0, 360, num_λ, endpoint=False)
 				important_j = np.round(important_λ*(lookup_table.nodes.shape[2] - 1)/360)
@@ -620,8 +624,8 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 	((left, bottom), (right, top)) = get_bounding_box(mesh.nodes)
 	x_raster = np.linspace(left, right, RASTER_RESOLUTION + 1)
 	y_raster = np.linspace(bottom, top, RASTER_RESOLUTION + 1)
-	inverse_raster = np.degrees(inverse_project(
-		np.transpose(np.meshgrid(x_raster, y_raster, indexing="ij"), (1, 2, 0)), mesh))
+	inverse_raster = inverse_project(
+		np.transpose(np.meshgrid(x_raster, y_raster, indexing="ij"), (1, 2, 0)), mesh)
 
 	# do the self-explanatory HDF5 file
 	for language_code, lang in languages.items():
@@ -649,8 +653,8 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 				group.attrs[lang["name"]] = lang[section_names[h]]
 				group.create_dataset(lang["border"],
 				                     shape=(mesh.section_borders[h].shape[0],), dtype=h5_фλ_tuple)
-				group[lang["border"]][lang["latitude"]] = np.degrees(mesh.section_borders[h][:, 0])
-				group[lang["border"]][lang["longitude"]] = np.degrees(mesh.section_borders[h][:, 1])
+				group[lang["border"]][lang["latitude"]] = mesh.section_borders[h][:, 0]
+				group[lang["border"]][lang["longitude"]] = mesh.section_borders[h][:, 1]
 				group[lang["border"]].attrs[lang["units"]] = "°"
 				((left_h, bottom_h), (right_h, top_h)) = get_bounding_box(mesh.nodes[h, :, :, :])
 				group.create_dataset(lang["bounding box"], shape=(2,), dtype=h5_xy_tuple)
@@ -659,10 +663,10 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 				group[lang["bounding box"]].attrs[lang["units"]] = "km"
 
 				subgroup = group.create_group(lang["projected points"])
-				subgroup[lang["latitude"]] = np.degrees(mesh.ф)
+				subgroup[lang["latitude"]] = mesh.ф
 				subgroup[lang["latitude"]].attrs[lang["units"]] = "°"
 				subgroup[lang["latitude"]].make_scale()
-				subgroup[lang["longitude"]] = np.degrees(mesh.λ)
+				subgroup[lang["longitude"]] = mesh.λ
 				subgroup[lang["longitude"]].make_scale()
 				subgroup[lang["longitude"]].attrs[lang["units"]] = "°"
 				subgroup.create_dataset(lang["points"],
@@ -695,8 +699,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 			text += lang["section header"].format(h)
 			text += lang["section border header"].format(mesh.section_borders[h].shape[0]) # the number of section border vertices
 			for i in range(mesh.section_borders[h].shape[0]):
-				text += f"{degrees(mesh.section_borders[h][i, 0]):6.1f},"\
-				        f"{degrees(mesh.section_borders[h][i, 1]):6.1f}\n" # the section border vertices (°)
+				text += f"{mesh.section_borders[h][i, 0]:6.1f},{mesh.section_borders[h][i, 1]:6.1f}\n" # the section border vertices (°)
 			text += lang["section points header"].format(*mesh.nodes[h].shape) # the shape of the section mesh_indices
 			for i in range(mesh.nodes.shape[1]):
 				for j in range(mesh.nodes.shape[2]):
@@ -747,7 +750,7 @@ def load_coastline_data(reduction=2) -> list[NDArray[float]]:
 	with shapefile.Reader(f"../resources/shapefiles/ne_110m_coastline.zip") as shape_f:
 		for shape in shape_f.shapes():
 			if len(shape.points) > 3*reduction:
-				coastlines.append(np.radians(shape.points)[::reduction, ::-1])
+				coastlines.append(np.array(shape.points)[::reduction, ::-1])
 	return coastlines
 
 
@@ -756,14 +759,14 @@ def load_mesh(filename: str) -> Mesh:
 	    file, in that order.
 	"""
 	with h5py.File(f"../spec/mesh_{filename}.h5", "r") as file:
-		ф = np.radians(file["section0/latitude"])  # TODO: keep everything in degrees
-		λ = np.radians(file["section0/longitude"])
+		ф = file["section0/latitude"][:]
+		λ = file["section0/longitude"][:]
 		num_sections = file.attrs["num_sections"]
 		nodes = np.empty((num_sections, ф.size, λ.size, 2))
 		section_borders = []
 		for h in range(num_sections):
-			nodes[h, :, :, :] = file[f"section{h}/projection"]
-			section_borders.append(np.radians(file[f"section{h}/border"][:, :]))
+			nodes[h, :, :, :] = file[f"section{h}/projection"][:, :, :]
+			section_borders.append(file[f"section{h}/border"][:, :])
 	return Mesh(section_borders, ф, λ, nodes)
 
 
@@ -774,7 +777,7 @@ def project(points: list[tuple[float, float]] | NDArray[float], mesh: Mesh,
 	    to produce an array of points.  you can either specify a section_index, in which case all points will be
 	    projected to a single section (and points outide of that section’s bounds will be projected as NaN), or not
 	    specify it, in which case all points will be projected to the one section for which they’re inside its borders.
-	    :param points: an m×...×n×2 array of the spherical coordinates of the points to project (radians)
+	    :param points: an m×...×n×2 array of the spherical coordinates of the points to project (degrees)
 	    :param mesh: the mesh onto which to project the points
 	    :param section_index: the index of the section to use for all points
 	"""
@@ -816,7 +819,7 @@ def project(points: list[tuple[float, float]] | NDArray[float], mesh: Mesh,
 		h = section_index
 		if h is None:
 			for trial_h, border in enumerate(mesh.section_borders): # on the correct section
-				if inside_region(*point, border, period=2*pi):
+				if inside_region(*point, border, period=360):
 					h = trial_h
 					break
 		result.append(smooth_interpolate(point, (mesh.ф, mesh.λ), mesh.nodes[h, ...],
@@ -834,7 +837,7 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 	    representing the result as the resulting latitudes and longitudes
 	    :param points: the m×...×n×2 array of planar coordinates of the points to project (km)
 	    :param mesh: the mesh on which to find the given points
-	    :return: the m×...×n×2 array of spherical coordinates corresponding to the input points (radians)
+	    :return: the m×...×n×2 array of spherical coordinates corresponding to the input points (degrees)
 	"""
 	hs = range(mesh.num_sections)
 
@@ -1031,7 +1034,7 @@ def gradient(Y: NDArray[float], x: NDArray[float], where: NDArray[bool], axis: i
 def project_section_borders(mesh: Mesh, resolution: float) -> Union[NDArray[float], SparseNDArray]:
 	""" take the section borders, concatenate them, project them, and trim off the shared edges
 	    :param mesh: the mesh containing the sections and their borders
-	    :param resolution: the maximum segment length in the unprojected borders (rad)
+	    :param resolution: the maximum segment length in the unprojected borders (°)
 	"""
 	borders = []
 	# take the border of each section
@@ -1039,9 +1042,9 @@ def project_section_borders(mesh: Mesh, resolution: float) -> Union[NDArray[floa
 		# rotate the path so it starts and ends at a shared point
 		border = np.concatenate([border[-2:], border[1:-1]])
 		# and then remove points that move along a pole
-		border = border[dilate(abs(border[:, 0]) != pi/2, 1)]
+		border = border[dilate(abs(border[:, 0]) != 90, 1)]
 		# finally, refine it before projecting
-		borders.append(project(refine_path(border, resolution, period=2*pi),
+		borders.append(project(refine_path(border, resolution, period=360),
 		                       mesh, section_index=h))
 	# combine the section borders into one path
 	if type(borders[0]) is np.ndarray:
@@ -1092,13 +1095,13 @@ class Mesh:
 	def __init__(self, section_borders: list[NDArray[float]],
 	             ф: NDArray[float], λ: NDArray[float], nodes: NDArray[float] | NDArray[int]):
 		""" a record containing the arrays that define an arbitrary map projection
-		    :param ф: the m latitudes at which the nodes are defined (radians)
-		    :param λ: the n longitudes at which the nodes are defined (radians)
+		    :param ф: the m latitudes at which the nodes are defined (degrees)
+		    :param λ: the n longitudes at which the nodes are defined (degrees)
 		    :param nodes: either a) an l×m×n×2 array of x and y coordinates for each section, from which the
 		                            coordinates of the projected points will be determined (km), or
 	                             b) a l×m×n array of node indices for each section, indicating that the result
 	                                should be a matrix that you can multiply by the node positions later.
-		    :param section_borders: the l paths defining each section given as o×2 arrays (radians)
+		    :param section_borders: the l paths defining each section given as o×2 arrays (degrees)
 		"""
 		assert nodes.shape[:3] == (len(section_borders), ф.size, λ.size)
 		self.section_borders = section_borders
@@ -1110,7 +1113,7 @@ class Mesh:
 
 if __name__ == "__main__":
 	create_map_projection("continents")
-	create_map_projection("oceans")
-	create_map_projection("countries")
+	# create_map_projection("oceans")
+	# create_map_projection("countries")
 
 	plt.show()
