@@ -164,10 +164,6 @@ def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float
 				x_center, y_center = copysign(y_center, angle), copysign(x_center, -angle)
 				angle = angle - copysign(pi/2, angle)
 			best_transform = -angle, (-x_center, -y_center)
-	if best_transform is None:
-		print(polygon)
-		print(hull)
-		raise ValueError("whatt?????")
 	return best_transform
 
 def rotate_and_shift(points: NDArray[float], rotation: float, shift: NDArray[float]) -> NDArray[float]:
@@ -200,9 +196,6 @@ def convex_hull(points: NDArray[float]) -> NDArray[float]:
 		# then, if the end is no longer convex, backtrace
 		while len(hull) >= 3 and not convex(*hull[-3:]):
 			hull.pop(-2)
-	if len(hull) < 3:
-		print(points)
-		raise ValueError("huh???")
 	return np.array(hull)
 
 def decimate_path(path: list[tuple[float, float]] | NDArray[float], resolution: float,
