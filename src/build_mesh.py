@@ -173,6 +173,11 @@ def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
 				# mark the cells adjacent to each crossing
 				touched[i_crossings, j_crossings] = True
 				touched[i_crossings, j_crossings - 1] = True
+	# also mark cells that contain vertices, as these won't always have crossings around them
+	on_edge = np.isin(path[:, 0], x_edges) | np.isin(path[:, 1], y_edges)
+	i = bin_index(path[:, 0], x_edges)
+	j = bin_index(path[:, 1], y_edges)
+	touched[i[~on_edge], j[~on_edge]] = True
 
 	return touched
 
