@@ -417,6 +417,7 @@ def is_counterclockwise(path: path.Path) -> bool:
 	for i in range(len(path)):
 		area += path.vertices[i - 1, 1]*path.vertices[i, 0] - \
 		        path.vertices[i - 1, 0]*path.vertices[i, 1]
+	return area > 0
 
 
 if __name__ == "__main__":
