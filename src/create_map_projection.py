@@ -1040,7 +1040,7 @@ def project_section_borders(mesh: Mesh, resolution: float) -> Union[NDArray[floa
 	# take the border of each section
 	for h, border in enumerate(mesh.section_borders):
 		# rotate the path so it starts and ends at a shared point
-		border = np.concatenate([border[-2:], border[1:-1]])
+		border = np.concatenate([border[-3:], border[1:-2]])
 		# and then remove points that move along a pole
 		border = border[dilate(abs(border[:, 0]) != 90, 1)]
 		# finally, refine it before projecting
