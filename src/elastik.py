@@ -58,7 +58,7 @@ def create_example_elastik_maps():
 	create_map(name="biomes",
 	           projection="elastic-earth-I",
 	           background_style=dict(
-		           facecolor="#0b2c9e",
+		           facecolor="#0f1d8e",
 	           ),
 	           border_style=dict(
 		           edgecolor="none",
@@ -68,12 +68,12 @@ def create_example_elastik_maps():
 			           edgecolor="facecolor",
 			           linewidth=0.1,
 			           facecolor=[
-				           "#244b04",  # 1: tropical moist broadleaf forest
-				           "#3b5511",  # 2: tropical dry broadleaf forest
-				           "#215b24",  # 3: tropical conifer forest
+				           "#2d540e",  # 1: tropical moist broadleaf forest
+				           "#425c18",  # 2: tropical dry broadleaf forest
+				           "#29622b",  # 3: tropical conifer forest
 				           "#487e35",  # 4: temperate broadleaf forest
-				           "#215b24",  # 5: temperate conifer forest
-				           "#145329",  # 6: polar conifer forest (taiga)
+				           "#29622b",  # 5: temperate conifer forest
+				           "#1d5b30",  # 6: polar conifer forest (taiga)
 				           "#6b7b30",  # 7: tropical grassland
 				           "#87904f",  # 8: temperate grassland
 				           "#7c9045",  # 9: flooded grassland
@@ -81,13 +81,13 @@ def create_example_elastik_maps():
 				           "#ffffff",  # 11: polar grassland (tundra)
 				           "#9ba96b",  # 12: mediterranean forest
 				           "#fbeaae",  # 13: desert
-				           "#2e651d",  # 14: mangrove
+				           "#336a22",  # 14: mangrove
 				           "#ffffff",  # 99: rock and ice
 			           ],
 		           )),
 		           ("ne_10m_lakes", dict(
 			           edgecolor="none",
-			           facecolor="#0b2c9e",
+			           facecolor="#0f1d8e",
 		           ))
 	           ])
 	create_map(name="water",
