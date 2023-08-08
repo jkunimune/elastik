@@ -7,12 +7,13 @@ everything you need to load the mesh files and project data onto them.
 """
 from __future__ import annotations
 
-from math import nan, inf
+from math import nan
 from typing import Any, Optional
 
 import h5py
 import numpy as np
 import shapefile
+import shapely
 from matplotlib import pyplot as plt
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
@@ -222,7 +223,7 @@ def create_map(name: str, projection: str,
 	ax.axis("off")
 	fig.savefig(f"../examples/{name}.png", dpi=300,
 	            bbox_inches="tight", pad_inches=0)
-	print(f"saved the {name} projection!")
+	print(f"saved the {name} map!")
 
 
 def project(features: list[ΦΛFeature], projection: list[Section]) -> list[XYFeature]:
@@ -241,7 +242,7 @@ def project(features: list[ΦΛFeature], projection: list[Section]) -> list[XYFe
 				in_this_section = section.contains(line)
 				projected_line[in_this_section] = section.get_planar_coordinates(line[in_this_section])
 			# check that each point was projected by at least one section
-			assert not np.any(np.isnan(projected_line["x"])), line[np.isnan(projected_line["x"])]
+			assert not np.any(np.isnan(projected_line["x"]))
 			projected_lines.append(projected_line)
 		projected_features.append((category, width, projected_lines))
 	print("done!")
@@ -387,13 +388,14 @@ class Section:
 			(ф_nodes, λ_nodes), xy_nodes["x"])
 		self.y_projector = interpolate.RegularGridInterpolator(
 			(ф_nodes, λ_nodes), xy_nodes["y"])
-		self.border = border
+		self.region = shapely.Polygon(
+			np.stack([border["longitude"], border["latitude"]], axis=-1)) # type: ignore
 
 
 	def get_planar_coordinates(self, points: NDArray[ΦΛPoint]
 	                           ) -> NDArray[XYPoint]:
 		""" take a point on the sphere and smoothly interpolate it to x and y """
-		result = np.empty(points.shape, dtype=XYPoint)
+		result = np.empty(points.size, dtype=XYPoint)
 		result["x"] = self.x_projector((points["latitude"], points["longitude"]))
 		result["y"] = self.y_projector((points["latitude"], points["longitude"]))
 		return result
@@ -401,25 +403,14 @@ class Section:
 
 	def contains(self, points: NDArray[ΦΛPoint]) -> NDArray[bool]:
 		""" whether the given point is within this Section’s boundary """
-		nearest_segment = np.full(points.shape, inf)
-		ф, λ = points["latitude"], points["longitude"]
-		inside = np.full(np.shape(ф), False)
-		for i in range(1, self.border.shape[0]):
-			ф0, λ0 = self.border[i - 1]
-			ф1, λ1 = self.border[i]
-			if λ1 == λ0:
-				continue
-			elif abs(λ1 - λ0) <= 180:
-				straddles = (λ0 <= λ) != (λ1 <= λ)
+		contained = np.empty(points.size, dtype=bool)
+		for i in range(points.size):
+			point = shapely.Point(points["longitude"][i], points["latitude"][i])
+			if shapely.is_ccw(self.region.boundary):
+				contained[i] = self.region.intersects(point)
 			else:
-				assert abs(λ0) == 180 and λ1 == -λ0 and ф0 == ф1
-				straddles = abs(λ) == 180
-				λ0, λ1 = λ1, λ0
-			фX = (λ - λ0)/(λ1 - λ0)*(ф1 - ф0) + ф0
-			distance = np.where(straddles, abs(фX - ф), inf)
-			inside = np.where(distance < nearest_segment, (λ1 > λ0) != (фX > ф), inside)
-			nearest_segment = np.minimum(nearest_segment, distance)
-		return inside
+				contained[i] = not self.region.contains(point)
+		return contained
 
 
 if __name__ == "__main__":
