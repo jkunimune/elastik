@@ -388,5 +388,7 @@ class Path:
 
 if __name__ == "__main__":
 	calculate_drainage_divides(
-		endpoints=[(-29.47, 29.27), (-49.02, -73.50), (-36.46, 148.26)]
-	)
+		endpoints=[(-29.47,  29.27),  #
+		           (-49.02, -73.50),  # Volcán Lautaro (Chile)
+		           (-36.46, 148.26),  # Mt. Kosciuszko (Australia)
+		           ])

@@ -19,6 +19,9 @@ from matplotlib.path import Path
 from numpy.typing import NDArray
 from scipy import interpolate
 
+
+# TYPE DEFINITIONS
+
 Style = dict[str, Any]
 XYPoint = np.dtype([("x", float), ("y", float)])
 XYLine = NDArray[XYPoint]
@@ -28,8 +31,12 @@ XYFeature = tuple[int, float, list[XYLine]]
 ΦΛFeature = tuple[int, float, list[ΦΛLine]]
 
 
+# GLOBAL CONSTANTS
+
 SNIPPING_LENGTH = 1000
 
+
+# FUNCTIONS RELATING TO GRAPHICS AND DATA
 
 def create_example_elastik_maps():
 	create_map(name="political",
@@ -225,29 +232,6 @@ def create_map(name: str, projection: str,
 	print(f"saved the {name} map!")
 
 
-def project(features: list[ΦΛFeature], projection: list[Section]) -> list[XYFeature]:
-	""" apply the given Elastik projection, defined by a list of sections, to the given series of
-	    latitudes and longitudes.
-	"""
-	projected_features: list[XYFeature] = []
-	for j, (category, width, lines) in enumerate(features):
-		print(f"projecting feature {j: 3d}/{len(features): 3d} ({sum(len(line) for line in lines)} points)")
-		projected_lines: list[XYLine] = []
-		for line in lines:
-			projected_line = np.empty(line.size, dtype=XYPoint)
-			projected_line[:] = (nan, nan)
-			# for each line, project it into whichever section that can accommodate it
-			for section in projection:
-				in_this_section = section.contains(line)
-				projected_line[in_this_section] = section.get_planar_coordinates(line[in_this_section])
-			# check that each point was projected by at least one section
-			assert not np.any(np.isnan(projected_line["x"]))
-			projected_lines.append(projected_line)
-		projected_features.append((category, width, projected_lines))
-	print("done!")
-	return projected_features
-
-
 def cut_lines_that_cross_interruptions(features: list[XYFeature], closed: bool) -> list[XYFeature]:
 	""" if you naively project lines on a map projection that are not pre-cut at the interruptions,
 	    you’ll get a lot of extraneous lines crisscrossing the map.  this function deals with that
@@ -322,23 +306,6 @@ def cut_lines_that_cross_interruptions(features: list[XYFeature], closed: bool) 
 	return new_features
 
 
-def load_elastik_projection(name: str) -> tuple[list[Section], XYLine]:
-	""" load the hdf5 file that defines an elastik projection
-	    :param name: one of "elastic-earth-I", "elastic-earth-II", or "elastic-earth-III"
-	    :return: the list of sections that comprise this projection, and the map’s full projected outer shape
-	"""
-	with h5py.File(f"../projection/{name}.h5", "r") as file:
-		sections = []
-		for h in range(file.attrs["number of sections"]):
-			sections.append(Section(file[f"section {h}/projected points/latitude"][:],
-			                        file[f"section {h}/projected points/longitude"][:],
-			                        file[f"section {h}/projected points/points"][:, :],
-			                        file[f"section {h}/border"][:],
-			                        ))
-		border = file["projected border"][:]
-	return sections, border
-
-
 def load_geographic_data(filename: str) -> tuple[list[ΦΛFeature], bool]:
 	""" load a bunch of polylines from a shapefile
 	    :param filename: the name of the shapefile zip file
@@ -371,6 +338,48 @@ def load_geographic_data(filename: str) -> tuple[list[ΦΛFeature], bool]:
 				lines.append(line)
 			features.append((category, width, lines))
 	return features, closed
+
+
+# FUNCTIONS RELATED TO THE ELASTIC EARTH PROJECTIONS
+
+def project(features: list[ΦΛFeature], projection: list[Section]) -> list[XYFeature]:
+	""" apply the given Elastik projection, defined by a list of sections, to the given series of
+	    latitudes and longitudes.
+	"""
+	projected_features: list[XYFeature] = []
+	for j, (category, width, lines) in enumerate(features):
+		print(f"projecting feature {j: 3d}/{len(features): 3d} ({sum(len(line) for line in lines)} points)")
+		projected_lines: list[XYLine] = []
+		for line in lines:
+			projected_line = np.empty(line.size, dtype=XYPoint)
+			projected_line[:] = (nan, nan)
+			# for each line, project it into whichever section that can accommodate it
+			for section in projection:
+				in_this_section = section.contains(line)
+				projected_line[in_this_section] = section.get_planar_coordinates(line[in_this_section])
+			# check that each point was projected by at least one section
+			assert not np.any(np.isnan(projected_line["x"]))
+			projected_lines.append(projected_line)
+		projected_features.append((category, width, projected_lines))
+	print("done!")
+	return projected_features
+
+
+def load_elastik_projection(name: str) -> tuple[list[Section], XYLine]:
+	""" load the hdf5 file that defines an elastik projection
+	    :param name: one of "elastic-earth-I", "elastic-earth-II", or "elastic-earth-III"
+	    :return: the list of sections that comprise this projection, and the map’s full projected outer shape
+	"""
+	with h5py.File(f"../projection/{name}.h5", "r") as file:
+		sections = []
+		for h in range(file.attrs["number of sections"]):
+			sections.append(Section(file[f"section {h}/projected points/latitude"][:],
+			                        file[f"section {h}/projected points/longitude"][:],
+			                        file[f"section {h}/projected points/points"][:, :],
+			                        file[f"section {h}/border"][:],
+			                        ))
+		border = file["projected border"][:]
+	return sections, border
 
 
 class Section:

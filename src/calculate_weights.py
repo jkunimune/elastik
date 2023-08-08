@@ -15,13 +15,17 @@ from numpy.typing import NDArray
 
 from util import bin_centers, to_cartesian, inside_region
 
-# latitude of southernmost settlement
+# minimum scale at which to resolve coasts (°)
+PRECISION = 0.5
+# radius around important regions that should be weighted (°)
+COAST_WIDTH = 10.
+# latitude of southernmost settlement (°)
 ANTARCTIC_CUTOFF = -56.
-# latitude of northernmost settlement
+# latitude of northernmost settlement (°)
 ARCTIC_CUTOFF = 78.
-# coordinates of sahara, australian, and canadian desert ellipses
+# coordinates of sahara, australian, and canadian desert ellipses (°)
 DESERT_ELLIPSES = [(23, 8, 7, 20), (-24, 132, 7, 15), (90, -90, 35, 50)]
-# coordinates of small, remote, uninhabited islands
+# coordinates of small, remote, uninhabited islands (°)
 EXCLUDED_ISLANDS = [(-6, 72), # chagos islands
                     (-54, 3), # bouvet island
                     (-40, -9), # gough island
@@ -142,14 +146,14 @@ def find_land_mask(ф_grid: NDArray[float], λ_grid: NDArray[float], exclude_ant
 	                False, crossings%2 == 1)
 
 
-def calculate_weights(coast_width: float, precision: float):
+def calculate_weights():
 	# define the grid
 	ф_edges = bin_centers(np.linspace(-90, 90, 188)) # (these are intentionally weerd numbers to reduce roundoff issues)
 	λ_edges = bin_centers(np.linspace(-180, 180, 375))
 	ф, λ = bin_centers(ф_edges), bin_centers(λ_edges)
 
 	# load the coast data
-	coast_vertices = load_coast_vertices(precision)
+	coast_vertices = load_coast_vertices(PRECISION)
 
 	# iterate thru the four weight files we want to generate
 	for crop_antarctica in [False, True]:
@@ -175,7 +179,7 @@ def calculate_weights(coast_width: float, precision: float):
 
 				# combine everything
 				mask = global_mask & in_section
-				importance = np.where(mask, 1, np.maximum(0, 1 - coast_distance/coast_width)**2)
+				importance = np.where(mask, 1, np.maximum(0, 1 - coast_distance/COAST_WIDTH)**2)
 
 				# save and plot
 				tifffile.imwrite(filename, importance)
@@ -187,5 +191,5 @@ def calculate_weights(coast_width: float, precision: float):
 
 
 if __name__ == "__main__":
-	calculate_weights(coast_width=10, precision=0.5)
+	calculate_weights()
 	plt.show()
