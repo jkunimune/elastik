@@ -13,8 +13,7 @@ from typing import Any, Optional
 import h5py
 import numpy as np
 import shapefile
-import shapely
-from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt, path
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
 from numpy.typing import NDArray
@@ -388,8 +387,9 @@ class Section:
 			(ф_nodes, λ_nodes), xy_nodes["x"])
 		self.y_projector = interpolate.RegularGridInterpolator(
 			(ф_nodes, λ_nodes), xy_nodes["y"])
-		self.region = shapely.Polygon(
-			np.stack([border["longitude"], border["latitude"]], axis=-1)) # type: ignore
+		self.border = path.Path(
+			np.stack([border["latitude"], border["longitude"]], axis=-1)) # type: ignore
+		self.border_is_counterclockwise = is_counterclockwise(self.border)
 
 
 	def get_planar_coordinates(self, points: NDArray[ΦΛPoint]
@@ -403,14 +403,20 @@ class Section:
 
 	def contains(self, points: NDArray[ΦΛPoint]) -> NDArray[bool]:
 		""" whether the given point is within this Section’s boundary """
-		contained = np.empty(points.size, dtype=bool)
-		for i in range(points.size):
-			point = shapely.Point(points["longitude"][i], points["latitude"][i])
-			if shapely.is_ccw(self.region.boundary):
-				contained[i] = self.region.intersects(point)
-			else:
-				contained[i] = not self.region.contains(point)
-		return contained
+		points = np.stack([points["latitude"], points["longitude"]], axis=-1)
+		# make sure you check the border orientation, because Matplotlib won't
+		if self.border_is_counterclockwise:  # use the radius parameter to ensure points on the boundary are counted
+			return self.border.contains_points(points, radius=-1e-9) # type: ignore
+		else:
+			return ~self.border.contains_points(points, radius=1e-9) # type: ignore
+
+
+def is_counterclockwise(path: path.Path) -> bool:
+	""" determines whether the polygon is oriented in the normal direction """
+	area = 0
+	for i in range(len(path)):
+		area += path.vertices[i - 1, 1]*path.vertices[i, 0] - \
+		        path.vertices[i - 1, 0]*path.vertices[i, 1]
 
 
 if __name__ == "__main__":
