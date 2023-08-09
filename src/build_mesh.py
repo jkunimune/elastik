@@ -16,6 +16,8 @@ from numpy.typing import NDArray
 
 from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, interp
 
+# the number of cells between the equator and each pole
+RESOLUTION = 25
 # the amount of space around each Section's valid region where the mesh should be defined
 MARGIN = 1.0
 
@@ -417,15 +419,14 @@ def save_mesh(filename: str, ф: NDArray[float], λ: NDArray[float],
 			file.create_dataset(f"section{h}/border", data=sections[h].border)
 
 
-def build_mesh(name: str, resolution: int):
+def build_mesh(name: str):
 	""" bild a mesh
 	    :param name: "basic" | "oceans" | "mountains"
-	    :param resolution: how many cells per 90°
 	"""
 	# start by defining a grid of cells
-	ф = np.round(np.linspace(-90, 90, 2*resolution + 1), 10)
+	ф = np.round(np.linspace(-90, 90, 2*RESOLUTION + 1), 10)
 	num_ф = ф.size - 1
-	λ = np.round(np.linspace(-180, 180, 4*resolution + 1), 10)
+	λ = np.round(np.linspace(-180, 180, 4*RESOLUTION + 1), 10)
 	num_λ = λ.size - 1
 
 	# load the interruptions
@@ -519,7 +520,7 @@ def build_mesh(name: str, resolution: int):
 
 
 if __name__ == "__main__":
-	build_mesh("basic", 25)
-	build_mesh("oceans", 25)
-	build_mesh("mountains", 25)
+	build_mesh("basic")
+	build_mesh("oceans")
+	build_mesh("mountains")
 	plt.show()

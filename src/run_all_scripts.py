@@ -15,10 +15,10 @@ from elastik import create_example_elastik_maps
 
 if __name__ == "__main__":
 	print(time.strftime("%Y-%m-%d %H:%M:%S"))
-	calculate_weights(10, 0.5)
+	calculate_weights()
 	plt.close("all")
 	for mesh in ["basic", "oceans", "mountains"]:
-		build_mesh(mesh, 25)
+		build_mesh(mesh)
 	plt.close("all")
 	for projection in ["continents", "oceans", "countries"]:
 		create_map_projection(projection)
