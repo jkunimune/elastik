@@ -13,7 +13,7 @@ import re
 import sys
 import threading
 from math import inf, pi, log2, nan, floor, isfinite, isnan, sqrt, radians, cos
-from typing import Iterable, Sequence, Union
+from typing import Iterable, Sequence, Union, Optional
 
 import h5py
 import numpy as np
@@ -222,21 +222,20 @@ def create_map_projection(configuration_file: str):
 			success = True
 		calculation = threading.Thread(target=calculate)
 		calculation.start()
-		while True:
+		while calculation.is_alive():
 			while thread_lock: pass
 			thread_lock = True
-			done = not calculation.is_alive()
 			show_projection(current_state, current_positions,
-			                latest_step, values, grads, done,
+			                latest_step, values, grads,
 			                index_mesh, dΦ, dΛ,
 			                cell_definitions, cell_scale_weights,
 			                coastlines, border_matrix, width, height,
-			                map_axes, hist_axes, valu_axes, diff_axes)
+			                map_axes, hist_axes, valu_axes, diff_axes,
+			                final=False)
 			thread_lock = False
 			main_fig.canvas.draw()
 			small_fig.canvas.draw()
 			plt.pause(2)
-			if done: break
 		if not success:
 			small_fig.canvas.manager.set_window_title("Error!")
 			plt.show()
@@ -248,18 +247,12 @@ def create_map_projection(configuration_file: str):
 	logging.info("end fitting process.")
 	small_fig.canvas.manager.set_window_title("Saving...")
 
-	# save the final version of the plot
-	map_axes.axis("off")
-	main_fig.savefig(f"../examples/mesh-{configure['number']}.svg",
-	                 bbox_inches="tight", pad_inches=0)
-	main_fig.savefig(f"../examples/mesh-{configure['number']}.png", dpi=300,
-	                 bbox_inches="tight", pad_inches=0)
-
 	# apply the optimized vector back to the mesh
-	node_positions_with_nan = np.concatenate([node_positions, [[nan, nan]]])
-	mesh = Mesh(mesh.section_borders, mesh.ф, mesh.λ, node_positions_with_nan[index_mesh.nodes, :])
+	nodes = np.where(index_mesh.nodes[:, :, :, np.newaxis] != -1,
+	                 node_positions[index_mesh.nodes, :], nan)
+	mesh = Mesh(mesh.section_borders, mesh.ф, mesh.λ, nodes)
 
-	# do a final decimated version of the projected border (and realline it so it's still centerd)
+	# do a final decimated version of the projected border (and re-alline it so it's still centerd)
 	logging.info("projecting section borders...")
 	border = project_section_borders(mesh, BORDER_PROJECTION_RESOLUTION)
 	border = decimate_path(border, resolution=BORDER_OUTPUT_RESOLUTION)
@@ -267,6 +260,24 @@ def create_map_projection(configuration_file: str):
 	# fit the result into a landscape rectangle
 	mesh.nodes = rotate_and_shift(mesh.nodes, *fit_in_rectangle(border))
 	border = rotate_and_shift(border, *fit_in_rectangle(border))
+
+	# shrink it slitely if it's still out of bounds
+	for k in range(map_size.size):
+		if isfinite(map_size[k]):
+			mesh.nodes[:, k] *= map_size[k]/np.ptp(border[:, k])
+			border[:, k] *= map_size[k]/np.ptp(border[:, k])
+
+	# plot and save the final version of the mesh
+	show_projection(None, node_positions, None, values, grads,
+	                mesh, dΦ, dΛ,
+	                cell_definitions, cell_scale_weights,
+	                coastlines, border, width, height,
+	                map_axes, hist_axes, valu_axes, diff_axes,
+	                final=True)
+	main_fig.savefig(f"../examples/mesh-{configure['number']}.svg",
+	                 bbox_inches="tight", pad_inches=0)
+	main_fig.savefig(f"../examples/mesh-{configure['number']}.png", dpi=300,
+	                 bbox_inches="tight", pad_inches=0)
 
 	# apply some simplification to the unprojected border now that we're done projecting them
 	for h in range(mesh.num_sections):
@@ -528,21 +539,28 @@ def compute_principal_strains(positions: NDArray[float],
 	return trace + antitrace, trace - antitrace
 
 
-def show_projection(fit_positions: NDArray[float], all_positions: NDArray[float], velocity: NDArray[float],
-                    values: list[float], grads: list[float], final: bool,
-                    mesh_indices: Mesh, dΦ: NDArray[float], dΛ: NDArray[float],
+def show_projection(free_positions: Optional[NDArray[float]], all_positions: Optional[NDArray[float]],
+                    velocity: Optional[NDArray[float]],
+                    values: list[float], grads: list[float],
+                    mesh: Mesh, dΦ: NDArray[float], dΛ: NDArray[float],
                     cell_definitions: NDArray[int], cell_weights: NDArray[float],
                     coastlines: list[np.array], border: NDArray[float] | SparseNDArray,
                     map_width: float, map_hite: float,
                     map_axes: plt.Axes, hist_axes: plt.Axes,
-                    valu_axes: plt.Axes, diff_axes: plt.Axes) -> None:
+                    valu_axes: plt.Axes, diff_axes: plt.Axes,
+                    final: bool) -> None:
 	""" display the current state of the optimization process, including a preliminary map, a
 	    distortion histogram, and a convergence as a function of time plot
 	"""
+	# convert the state vector into real space if needed
+	if mesh.nodes.ndim == 3:
+		mesh = Mesh(mesh.section_borders, mesh.ф, mesh.λ,
+		            np.where(mesh.nodes[:, :, :, np.newaxis] != -1,
+		                     all_positions[mesh.nodes, :], nan))
+	if border.shape[1] > 2:
+		border = border @ all_positions
+
 	map_axes.clear()
-	mesh = Mesh(mesh_indices.section_borders, mesh_indices.ф, mesh_indices.λ,
-	            np.where(mesh_indices.nodes[:, :, :, np.newaxis] != -1,
-	                     all_positions[mesh_indices.nodes, :], nan))
 	for h in range(mesh.num_sections):
 		# plot the underlying mesh_indices for each section
 		map_axes.plot(mesh.nodes[h, :, :, 0], mesh.nodes[h, :, :, 1], "#bbb", linewidth=.3, zorder=1)
@@ -555,25 +573,26 @@ def show_projection(fit_positions: NDArray[float], all_positions: NDArray[float]
 			map_axes.plot(projected_line[:, 0], projected_line[:, 1], "#000", linewidth=.8, zorder=2)
 
 	# plot the outline of the mesh_indices
-	border_points = border @ all_positions
-	map_axes.fill(border_points[:, 0], border_points[:, 1],
+	map_axes.fill(border[:, 0], border[:, 1],
 	              facecolor="none", edgecolor="#000", linewidth=1.3, zorder=2)
 	# plot the bounding rectangle if there is one
-	if not final:
+	if final:
+		map_axes.axis("off")
+	else:
 		map_axes.plot(np.multiply([-1, 1, 1, -1, -1], map_width/2),
 		              np.multiply([-1, -1, 1, 1, -1], map_hite/2), "#000", linewidth=.3, zorder=2)
 
 	if not final and velocity is not None:
 		# indicate the speed of each node
-		map_axes.scatter(fit_positions[:, 0], fit_positions[:, 1], s=5,
+		map_axes.scatter(free_positions[:, 0], free_positions[:, 1], s=5,
 		                 c=-np.linalg.norm(velocity, axis=1),
 		                 vmax=0, cmap=CUSTOM_CMAP["speed"], zorder=0)
 
 	a, b = compute_principal_strains(all_positions, cell_definitions, dΦ, dΛ)
 
 	# mark any nodes with nonpositive principal strains
-	worst_cells = np.nonzero((a <= 0) | (b <= 0))[0]
-	for cell in worst_cells:
+	bad_cells = np.nonzero((a <= 0) | (b <= 0))[0]
+	for cell in bad_cells:
 		h, i, j, east, west, north, south = cell_definitions[cell, :]
 		map_axes.plot(all_positions[[east, west], 0], all_positions[[east, west], 1], "#f50", linewidth=.8)
 		map_axes.plot(all_positions[[north, south], 0], all_positions[[north, south], 1], "#f50", linewidth=.8)
@@ -621,11 +640,12 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 		languages = json.load(f)
 
 	# start by calculating some things
-	((left, bottom), (right, top)) = get_bounding_box(mesh.nodes)
-	x_raster = np.linspace(left, right, RASTER_RESOLUTION + 1)
-	y_raster = np.linspace(bottom, top, RASTER_RESOLUTION + 1)
+	((mesh_left, mesh_bottom), (mesh_right, mesh_top)) = get_bounding_box(mesh.nodes)
+	x_raster = np.linspace(mesh_left, mesh_right, RASTER_RESOLUTION + 1)
+	y_raster = np.linspace(mesh_bottom, mesh_top, RASTER_RESOLUTION + 1)
 	inverse_raster = inverse_project(
 		np.transpose(np.meshgrid(x_raster, y_raster, indexing="ij"), (1, 2, 0)), mesh)
+	((map_left, map_bottom), (map_right, map_top)) = get_bounding_box(projected_border)
 
 	# do the self-explanatory HDF5 file
 	for language_code, lang in languages.items():
@@ -643,8 +663,8 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 			file[lang["projected border"]][lang["x"]] = projected_border[:, 0]
 			file[lang["projected border"]][lang["y"]] = projected_border[:, 1]
 			file.create_dataset(lang["bounding box"], shape=(2,), dtype=h5_xy_tuple)
-			file[lang["bounding box"]][lang["x"]] = [left, right]
-			file[lang["bounding box"]][lang["y"]] = [bottom, top]
+			file[lang["bounding box"]][lang["x"]] = [map_left, map_right]
+			file[lang["bounding box"]][lang["y"]] = [map_bottom, map_top]
 			file[lang["bounding box"]].attrs[lang["units"]] = "km"
 			file[lang["sections"]] = [lang["section #"].format(h) for h in range(mesh.num_sections)]
 
@@ -656,10 +676,11 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 				group[lang["border"]][lang["latitude"]] = mesh.section_borders[h][:, 0]
 				group[lang["border"]][lang["longitude"]] = mesh.section_borders[h][:, 1]
 				group[lang["border"]].attrs[lang["units"]] = "°"
-				((left_h, bottom_h), (right_h, top_h)) = get_bounding_box(mesh.nodes[h, :, :, :])
+				((section_left, section_bottom), (section_right, section_top)) = \
+					get_bounding_box(mesh.nodes[h, :, :, :])
 				group.create_dataset(lang["bounding box"], shape=(2,), dtype=h5_xy_tuple)
-				group[lang["bounding box"]][lang["x"]] = [max(left, left_h), min(right, right_h)]
-				group[lang["bounding box"]][lang["y"]] = [max(bottom, bottom_h), min(top, top_h)]
+				group[lang["bounding box"]][lang["x"]] = [max(map_left, section_left), min(map_right, section_right)]
+				group[lang["bounding box"]][lang["y"]] = [max(map_bottom, section_bottom), min(map_top, section_top)]
 				group[lang["bounding box"]].attrs[lang["units"]] = "km"
 
 				subgroup = group.create_group(lang["projected points"])
@@ -708,7 +729,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 						text += ", "
 				text += "\n"
 			text += lang["section inverse header"].format(*inverse_raster[h].shape) # the shape of the sample raster
-			text += f"{x_raster[0]:9.2f},{x_raster[-1]:9.2f}, {y_raster[0]:9.2f},{y_raster[-1]:9.2f}\n" # the bounding box of the sample raster
+			text += f"{mesh_left:9.2f},{mesh_bottom:9.2f}, {mesh_right:9.2f},{mesh_top:9.2f}\n" # the bounding box of the sample raster
 			for j in range(inverse_raster.shape[2]):
 				for i in range(inverse_raster.shape[1]):
 					text += f"{inverse_raster[h, i, j, 0]:6.1f},{inverse_raster[h, i, j, 1]:6.1f}" # the sample raster (°)
