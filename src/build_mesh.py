@@ -118,25 +118,24 @@ def cells_shared_by(section: Section, x_edges: NDArray[float], y_edges: NDArray[
 	       ~cells_touched_by(x_edges, y_edges, section.cut_border)
 
 
-def center_of(section: Section) -> tuple[float, float]:
+def center_of(border: NDArray[float]) -> tuple[float, float]:
 	""" calculate the point that should go at the center of the stereographic
 	    projection that minimizes the maximum distortion of this region of the globe
-	    :param section: the Section being stereographically projected
+	    :param border: the border of the Section being projected (radians)
 	    :return: the latitude and longitude of the ideal center (radians)
 	"""
 	ф_sample = np.linspace(-pi/2, pi/2, 25)
 	λ_sample = np.linspace(-pi, pi, 48, endpoint=False)
-	inside = inside_region(ф_sample, λ_sample, np.radians(section.border), period=2*pi)
-	max_distortion = np.where(inside, inf, 0)
-	for points, importance in [(np.radians(section.border), 1), (np.radians(section.glue_border), 2)]: # TODO: do we really need this for-loop?
-		distance, _ = rotated_coordinates(
-			ф_sample[:, np.newaxis, np.newaxis],
-			λ_sample[np.newaxis, :, np.newaxis],
-			points[np.newaxis, np.newaxis, :, 0],
-			points[np.newaxis, np.newaxis, :, 1])
-		distortion = importance/np.sin(distance/2)**2
-		max_distortion = np.maximum(max_distortion, np.max(distortion, axis=2))
-	best_i, best_j = np.unravel_index(np.argmin(max_distortion), max_distortion.shape)
+	inside = inside_region(ф_sample, λ_sample, border, period=2*pi)
+	min_accuracy = np.where(inside, 0, inf)
+	distance, _ = rotated_coordinates(
+		ф_sample[:, np.newaxis, np.newaxis],
+		λ_sample[np.newaxis, :, np.newaxis],
+		border[np.newaxis, np.newaxis, :, 0],
+		border[np.newaxis, np.newaxis, :, 1])
+	accuracy = np.sin(distance/2)**2
+	min_accuracy = np.minimum(min_accuracy, np.min(accuracy, axis=2))
+	best_i, best_j = np.unravel_index(np.argmax(min_accuracy), min_accuracy.shape)
 	ф_anti, λ_anti = ф_sample[best_i], λ_sample[best_j]
 	return -ф_anti, wrap_angle(λ_anti + pi, period=2*pi)
 
@@ -322,7 +321,7 @@ def oblique_stereographic_project(ф: NDArray[float], λ: NDArray[float],
     """
 	ф, λ = np.radians(ф), np.radians(λ)
 	ф_gluepoint, λ_gluepoint = np.radians(section.glue_tripoint)  # convert everything to radians
-	ф_center, λ_center = center_of(section)
+	ф_center, λ_center = center_of(np.radians(section.border))
 	p_transform, λ_transform = rotated_coordinates(
 		ф_center, λ_center, ф, λ)
 	r, θ = np.tan(p_transform/2), λ_transform
@@ -487,7 +486,7 @@ def build_mesh(name: str):
 		           extent=(-180, 180, -90, 90), origin="lower", vmin=-1)
 		plt.plot(section.border[:, 1], section.border[:, 0], "k")
 		plt.scatter(section.cut_border[[0, -1], 1], section.cut_border[[0, -1], 0], c="k", s=20)
-		plt.scatter(*np.degrees(center_of(section))[::-1], c="k", s=50, marker="x")
+		plt.scatter(*np.degrees(center_of(np.radians(section.border)))[::-1], c="k", s=50, marker="x")
 		for фi in ф:
 			plt.axhline(фi, color="k", linewidth=".6")
 		for λj in λ:
