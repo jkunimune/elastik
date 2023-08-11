@@ -7,7 +7,7 @@ everything you need to load the mesh files and project data onto them.
 """
 from __future__ import annotations
 
-from math import nan
+from math import nan, sqrt
 from typing import Any, Optional
 
 import h5py
@@ -180,9 +180,9 @@ def create_map(name: str, projection: str,
 	    :param border_style: the Style for the line drawn around the complete map area
 	    :param data: a list of elements to include in the map
 	"""
-	sections, border = load_elastik_projection(projection)
+	sections, border, aspect_ratio = load_elastik_projection(projection)
 
-	fig = plt.figure(name)
+	fig = plt.figure(name, figsize=(6*sqrt(aspect_ratio), 6/sqrt(aspect_ratio)))
 	ax = fig.subplots()
 
 	ax.fill(border["x"], border["y"], edgecolor="none", **background_style)
@@ -365,7 +365,7 @@ def project(features: list[ΦΛFeature], projection: list[Section]) -> list[XYFe
 	return projected_features
 
 
-def load_elastik_projection(name: str) -> tuple[list[Section], XYLine]:
+def load_elastik_projection(name: str) -> tuple[list[Section], XYLine, float]:
 	""" load the hdf5 file that defines an elastik projection
 	    :param name: one of "elastic-earth-I", "elastic-earth-II", or "elastic-earth-III"
 	    :return: the list of sections that comprise this projection, and the map’s full projected outer shape
@@ -379,7 +379,9 @@ def load_elastik_projection(name: str) -> tuple[list[Section], XYLine]:
 			                        file[f"section {h}/border"][:],
 			                        ))
 		border = file["projected border"][:]
-	return sections, border
+		aspect_ratio = (file["bounding box"]["x"][1] - file["bounding box"]["x"][0])/ \
+		               (file["bounding box"]["y"][1] - file["bounding box"]["y"][0])
+	return sections, border, aspect_ratio
 
 
 class Section:
