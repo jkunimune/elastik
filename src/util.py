@@ -359,12 +359,7 @@ def inside_region(ф: Numeric, λ: Numeric, region: NDArray[float], period=360) 
 	δλ_border = region[1:, 1] - region[:-1, 1]
 	δλ_border[abs(δλ_border) > period/2] = nan
 	ф_border = (region[1:, 0] + region[:-1, 0])/2
-	if np.array_equal(region[0, :], region[-1, :]):
-		inside_out = δλ_border[np.nanargmax(ф_border)] > 0 # for closed regions we have this nice trick
-	else:
-		endpoints_down = np.mean(ф_border) > (ф_border[0] + ф_border[-1])/2
-		goes_east = np.nansum(δλ_border) > 0
-		inside_out = endpoints_down == goes_east # for open regions we need this heuristic
+	inside_out = δλ_border[np.nanargmax(ф_border)] > 0 # for closed regions we have this nice trick
 
 	# then we can bild up a precise bool mapping
 	inside = np.full(out_shape, inside_out)

@@ -101,20 +101,37 @@ def calculate_coast_distance(ф: NDArray[float], λ: NDArray[float], coast: list
 
 def load_cut_file(filename: str) -> list[NDArray[float]]:
 	""" load the borders of the sections for a given map projection """
+	# load the contents of the file
 	cut_data = np.loadtxt(filename)
+	# parse it into a glue tripoint an several cuts
+	glue_tripoint = cut_data[0, :]
 	section_indices = np.nonzero(np.all(cut_data == cut_data[1, :], axis=1))[0]
 	section_indices = np.concatenate([section_indices, [None]])
 	cuts = []
 	for h in range(len(section_indices) - 1):
 		cuts.append(cut_data[section_indices[h]:section_indices[h + 1]])
+	# form each section from two adjacent cuts
 	sections = []
 	for h in range(len(section_indices) - 1):
-		sections.append(np.concatenate([
-			[cuts[h - 1][-1, :]],
+		section = np.concatenate([
 			cuts[h - 1][::-1],
 			cuts[h],
-			[cuts[h][-1, :]],
-		]))
+		])
+		# include the part that's not a cut (the path thru the glue tripoint)
+		if abs(glue_tripoint[0]) == 90:
+			section = np.concatenate([section, [
+				[glue_tripoint[0], section[-1, 1]],
+				[glue_tripoint[0], section[0, 1]],
+			]])
+		else:
+			section = np.concatenate([section, [
+				[section[-1, 0], glue_tripoint[1]],
+				glue_tripoint,
+				[section[0, 0], glue_tripoint[1]]
+			]])
+		# don't forget to close it
+		section = np.concatenate([section, [section[0, :]]])
+		sections.append(section)
 	return sections
 
 
