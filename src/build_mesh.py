@@ -126,18 +126,17 @@ def center_of(border: NDArray[float]) -> tuple[float, float]:
 	"""
 	ф_sample = np.linspace(-pi/2, pi/2, 25)
 	λ_sample = np.linspace(-pi, pi, 48, endpoint=False)
-	inside = inside_region(ф_sample, λ_sample, border, period=2*pi)
-	min_accuracy = np.where(inside, 0, inf)
+	opposes_inside = inside_region(
+		-ф_sample, wrap_angle(λ_sample + pi, period=2*pi), border, period=2*pi)
+	max_distance = np.where(opposes_inside, inf, 0)
 	distance, _ = rotated_coordinates(
 		ф_sample[:, np.newaxis, np.newaxis],
 		λ_sample[np.newaxis, :, np.newaxis],
 		border[np.newaxis, np.newaxis, :, 0],
 		border[np.newaxis, np.newaxis, :, 1])
-	accuracy = np.sin(distance/2)**2
-	min_accuracy = np.minimum(min_accuracy, np.min(accuracy, axis=2))
-	best_i, best_j = np.unravel_index(np.argmax(min_accuracy), min_accuracy.shape)
-	ф_anti, λ_anti = ф_sample[best_i], λ_sample[best_j]
-	return -ф_anti, wrap_angle(λ_anti + pi, period=2*pi)
+	max_distance = np.maximum(max_distance, np.max(distance, axis=2))
+	best_i, best_j = np.unravel_index(np.argmin(max_distance), max_distance.shape)
+	return ф_sample[best_i], λ_sample[best_j]
 
 
 def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
