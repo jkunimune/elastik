@@ -36,8 +36,7 @@
     "descript1": "a map projection that shows landmasses splayed out with accurate shapes and sizes, but divides and distorts the oceans",
     "descript2": "a map projection that shows oceans and rivers unbroken with accurate shapes and sizes, but divides and distorts inland areas",
     "descript3": "a map projection that shows landmasses with accurate shapes and shrinks the oceans",
-    "descript4": "this is the example map projection used in the explanatory materials. it is not intended for general use.",
-    "numerals": ["", "I", "II", "III", "IV"]
+    "numerals": ["", "I", "II", "III"]
   },
   "es": {
     "name": "nombre",
@@ -76,8 +75,7 @@
     "descript1": "proyección cartográfica que muestra los continentes en manera extendida con áreas y formas correctas, pero parte y distorsiona las mares",
     "descript2": "proyección cartográfica que muestra los mares y ríos en manera ininterrumpidos con áreas y formas correctas, pero parte y distorsiona las áreas interiores",
     "descript3": "proyección cartográfica que muestra los continentes con formas correctas, y reduce las mares",
-    "descript4": "este proyección es el ejemplo en los medios de explicación. no está deseado para los efectos generales.",
-    "numerals": ["", "I", "II", "III", "IV"]
+    "numerals": ["", "I", "II", "III"]
   },
   "ja": {
     "name": "名前",
@@ -156,7 +154,6 @@
     "descript1": "karteprojetion ki xou la dainese a sahi e anparce rite, ama parce e flexe la bahai",
     "descript2": "karteprojetion ki xou la bahai e rivo a sahi e anparce rite, ama parce e flexe la dainese",
     "descript3": "karteprojetion ki xou la dainese a sahi e anparce rite, e xiufa la bahai",
-    "descript4": "ye es xulemate su misal karteprojetion. no xudu uze ye a putong gol.",
-    "numerals": ["", "1", "2", "3", "4"]
+    "numerals": ["", "1", "2", "3"]
   }
 }

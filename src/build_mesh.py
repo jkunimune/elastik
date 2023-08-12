@@ -115,7 +115,7 @@ def cells_shared_by(section: Section, x_edges: NDArray[float], y_edges: NDArray[
 	"""
 	# it's all cells touched by the glue border excluding any that are also touched by the cut border
 	return cells_touched_by(x_edges, y_edges, section.glue_border, radius=MARGIN) & \
-	       ~cells_touched_by(x_edges, y_edges, section.cut_border)
+	       ~cells_touched_by(x_edges, y_edges, section.cut_border)  # TODO exclude cells near the endpoints
 
 
 def center_of(border: NDArray[float]) -> tuple[float, float]:
@@ -140,7 +140,7 @@ def center_of(border: NDArray[float]) -> tuple[float, float]:
 
 
 def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
-                     path: NDArray[float], radius=0.) -> NDArray[bool]:
+                     path: NDArray[float], radius=0.) -> NDArray[bool]:  # TODO make radius work diagonally
 	""" find and mark each tile binned by x_edges and y_edges that intersects this polygon path.
 	    tangency doesn't count.  assume the y domain is periodic but the x domain is not.
         :param x_edges: the bin edges for axis 0
@@ -465,13 +465,15 @@ def build_mesh(name: str, resolution=RESOLUTION):
 					(abs(wrap_angle(λ_grid - λ_strait)) < STRAIT_RADIUS/cos(radians(ф_strait)))
 				include_cells[cell_near_strait] = True
 
-		# force it to include the whole polar region when it touches the polar region
-		for i_pole in [0, -1]:
-			if np.any(include_cells[i_pole, :]):
-				include_cells[i_pole, :] = True
-			# and share the whole pole when some of the pole is shared
-			if np.any(share_cells[i_pole, :]):
-				share_cells[i_pole, :] = True
+		# as long as resolution is high enuff to add border cells freely
+		if resolution > 6:
+			for i_pole in [0, -1]:
+				# force it to include the whole polar region when it touches the polar region
+				if np.any(include_cells[i_pole, :]):
+					include_cells[i_pole, :] = True
+				# and share the whole pole when some of the pole is shared
+				if np.any(share_cells[i_pole, :]):
+					share_cells[i_pole, :] = True
 
 		include_nodes[h, :, :] = expand_bool_array(include_cells)
 
@@ -499,10 +501,14 @@ def build_mesh(name: str, resolution=RESOLUTION):
 	nodes[include_nodes & share_nodes, :] = mean_nodes[include_nodes & share_nodes, :]
 	# and assert the identity of the poles and antimeridian
 	node_exists = np.all(np.isfinite(nodes), axis=3)
-	for h in range(nodes.shape[0]):
-		for i_pole in [0, -1]:
+	for i_pole in [0, -1]:
+		if np.any(share_nodes[i_pole, :]):
+			h_divisions = [[h for h in range(nodes.shape[0])]]
+		else:
+			h_divisions = [[h] for h in range(nodes.shape[0])]
+		for h in h_divisions:
 			if np.any(np.isfinite(nodes[h, i_pole])):
-				nodes[h, i_pole, :, :] = np.nanmean(nodes[h, i_pole, :, :], axis=0)
+				nodes[h, i_pole, :, :] = np.nanmean(nodes[h, i_pole, :, :], axis=(0, 1))
 	nodes[:, :, -1, :] = nodes[:, :, 0, :]
 	nodes[~node_exists, :] = nan  # but make sure nan nodes stay nan
 
@@ -522,5 +528,4 @@ if __name__ == "__main__":
 	build_mesh("basic")
 	build_mesh("oceans")
 	build_mesh("mountains")
-	build_mesh("example", resolution=5)
 	plt.show()
