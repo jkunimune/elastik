@@ -419,7 +419,8 @@ def save_mesh(filename: str, ф: NDArray[float], λ: NDArray[float],
 
 def build_mesh(name: str, resolution=RESOLUTION):
 	""" bild a mesh
-	    :param name: "basic" | "oceans" | "mountains"
+	    :param name: one of "basic", "oceans", or "mountains"
+	    :param resolution: the number of cells between the equator and each pole
 	"""
 	# start by defining a grid of cells
 	ф = np.round(np.linspace(-90, 90, 2*resolution + 1), 10)
