@@ -417,14 +417,14 @@ def save_mesh(filename: str, ф: NDArray[float], λ: NDArray[float],
 			file.create_dataset(f"section{h}/border", data=sections[h].border)
 
 
-def build_mesh(name: str):
+def build_mesh(name: str, resolution=RESOLUTION):
 	""" bild a mesh
 	    :param name: "basic" | "oceans" | "mountains"
 	"""
 	# start by defining a grid of cells
-	ф = np.round(np.linspace(-90, 90, 2*RESOLUTION + 1), 10)
+	ф = np.round(np.linspace(-90, 90, 2*resolution + 1), 10)
 	num_ф = ф.size - 1
-	λ = np.round(np.linspace(-180, 180, 4*RESOLUTION + 1), 10)
+	λ = np.round(np.linspace(-180, 180, 4*resolution + 1), 10)
 	num_λ = λ.size - 1
 
 	# load the interruptions
@@ -521,4 +521,5 @@ if __name__ == "__main__":
 	build_mesh("basic")
 	build_mesh("oceans")
 	build_mesh("mountains")
+	build_mesh("example", resolution=5)
 	plt.show()

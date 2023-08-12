@@ -1,0 +1,6 @@
+number: 4
+cuts: example
+shape_weights: land_sinATA
+scale_weights: land_sinATA
+size: 38000,15000
+section_names: west,south,east

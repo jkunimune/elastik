@@ -177,7 +177,7 @@ def calculate_weights():
 		# load the land data with or without antarctica
 		land = find_land_mask(ф, λ, crop_antarctica)
 
-		for cut_file, value_land in [("basic", True), ("oceans", True), ("mountains", False)]:
+		for cut_file, value_land in [("basic", True), ("oceans", True), ("mountains", False), ("example", True)]:
 			# load the cut file
 			sections = load_cut_file(f"../spec/cuts_{cut_file}.txt")
 
