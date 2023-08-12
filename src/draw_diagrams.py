@@ -10,6 +10,7 @@ import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.ticker import MultipleLocator
 from scipy.interpolate import RegularGridInterpolator
 
 from build_mesh import build_mesh
@@ -20,18 +21,18 @@ def draw_diagrams():
 	plt.rcParams.update({'font.size': 12})
 
 	elastic_earth = load_mesh("elastic-earth-I")
+	elastic_earth.nodes /= 1e3  # scale down to a realistic map size and change km to cm
 	rectangular = equirectangular_like(elastic_earth)
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, num="all sections", figsize=(7, 4))
-	ax_left.set_xlabel("Longitude (°)")
-	ax_left.set_ylabel("Latitude (°)")
 	draw_section(ax_left, rectangular, 0, nodes=True, edges=True, border=False, graticule=True, coastlines=True)
-	ax_right.set_xlabel("x (km)")
-	ax_right.set_ylabel("y (km)", rotation=-90)
+	ax_left.set_xlabel("Longitude")
+	ax_left.set_ylabel("Latitude", labelpad=-1)
+	set_ticks(ax_left, spacing=30, fmt="{x:.0f}°")
 	draw_section(ax_right, elastic_earth, 0, nodes=True, edges=True, border=False, graticule=True, coastlines=True)
-	ax_right.yaxis.tick_right()
-	ax_right.yaxis.set_label_position("right")
-	# TODO: manually set ticks
+	ax_right.set_xlabel("x (at 1:100M scale)")
+	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
+	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
 	plt.tight_layout()
 	plt.savefig("../examples/explanation-1.png", dpi=150)
 
@@ -42,10 +43,10 @@ def draw_section(ax: Axes, mesh: Mesh, h: int,
                  nodes: bool, edges: bool, border: bool,
                  graticule: bool, coastlines: bool) -> None:
 	if nodes:
-		ax.scatter(mesh.nodes[h, :, :, 0], mesh.nodes[h, :, :, 1], color="k", s=25, zorder=20)
+		ax.scatter(mesh.nodes[h, :, :, 0], mesh.nodes[h, :, :, 1], color="k", s=20, zorder=20)
 	if edges:
-		ax.plot(mesh.nodes[h, :, :, 0], mesh.nodes[h, :, :, 1], color="k", linewidth=1.5, zorder=20)
-		ax.plot(mesh.nodes[h, :, :, 0].T, mesh.nodes[h, :, :, 1].T, color="k", linewidth=1.5, zorder=20)
+		ax.plot(mesh.nodes[h, :, :, 0], mesh.nodes[h, :, :, 1], color="k", linewidth=1.2, zorder=20)
+		ax.plot(mesh.nodes[h, :, :, 0].T, mesh.nodes[h, :, :, 1].T, color="k", linewidth=1.2, zorder=20)
 	if coastlines:
 		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[h, :, :, :],
 		                                  bounds_error=False, fill_value=nan)
@@ -54,6 +55,15 @@ def draw_section(ax: Axes, mesh: Mesh, h: int,
 			projected_line = project(line)
 			ax.plot(projected_line[:, 0], projected_line[:, 1], "#596d74", linewidth=0.8, zorder=10)
 	ax.axis("equal")
+
+
+def set_ticks(ax: Axes, spacing: float, fmt: str, y_ticks_on_right=False) -> None:
+	for axis in [ax.xaxis, ax.yaxis]:
+		axis.set_major_locator(MultipleLocator(spacing))
+		axis.set_major_formatter(fmt)
+	if y_ticks_on_right:
+		ax.yaxis.tick_right()
+		ax.yaxis.set_label_position("right")
 
 
 def load_mesh(filename) -> Mesh:
