@@ -14,7 +14,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
-from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, interp
+from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, interp, offset_from_angle
 
 # the number of cells between the equator and each pole
 RESOLUTION = 25
@@ -115,7 +115,8 @@ def cells_shared_by(section: Section, x_edges: NDArray[float], y_edges: NDArray[
 	"""
 	# it's all cells touched by the glue border excluding any that are also touched by the cut border
 	return cells_touched_by(x_edges, y_edges, section.glue_border, radius=MARGIN) & \
-	       ~cells_touched_by(x_edges, y_edges, section.cut_border)  # TODO exclude cells near the endpoints
+	       ~cells_touched_by(x_edges, y_edges, section.cut_border) & \
+	       ~cells_approached_by(x_edges, y_edges, section.cut_border)
 
 
 def center_of(border: NDArray[float]) -> tuple[float, float]:
@@ -140,20 +141,20 @@ def center_of(border: NDArray[float]) -> tuple[float, float]:
 
 
 def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
-                     path: NDArray[float], radius=0.) -> NDArray[bool]:  # TODO make radius work diagonally
+                     path: NDArray[float], radius=0.) -> NDArray[bool]:
 	""" find and mark each tile binned by x_edges and y_edges that intersects this polygon path.
 	    tangency doesn't count.  assume the y domain is periodic but the x domain is not.
         :param x_edges: the bin edges for axis 0
         :param y_edges: the bin edges for axis 1
         :param path: a n×2 array of ordered x and y coordinates
         :param radius: if nonzero, we will act like the path has thickness 2*radius
-        :return: a boolean grid of True for in and False for out
+        :return: a boolean grid with each touched cell marked True
 	"""
 	touched = np.full((x_edges.size - 1, y_edges.size - 1), False)
 	# look at each segment of the path
-	for i in range(path.shape[0] - 1):
-		x0, y0 = path[i, :]
-		x1, y1 = path[i + 1, :]
+	for l in range(path.shape[0] - 1):
+		x0, y0 = path[l, :]
+		x1, y1 = path[l + 1, :]
 		# find the places where it crosses vertical cell edges
 		if x0 != x1:
 			for dy in [-radius, radius]:
@@ -179,7 +180,47 @@ def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
 	j = bin_index(path[:, 1], y_edges)
 	touched[i[~on_edge], j[~on_edge]] = True
 
+	if radius > 0:
+		# finally, check for diagonal radius things that would otherwise be missed
+		for l in range(path.shape[0] - 2):
+			x, y = offset_from_angle(*path[l:l + 3], radius)  # type: ignore
+			i, j = bin_index(x, x_edges), bin_index(y, y_edges)
+			if i >= 0 and i < x_edges.size - 1:
+				touched[i, j] = True
+		if np.array_equal(path[0], path[-1]):
+			x, y = offset_from_angle(path[-2], path[0], path[1], radius)
+			i, j = bin_index(x, x_edges), bin_index(y, y_edges)
+			if i >= 0 and i < x_edges.size - 1:
+				touched[i, j] = True
+
 	return touched
+
+
+def cells_approached_by(x_edges: NDArray[float], y_edges: NDArray[float],
+                        path: NDArray[float]) -> NDArray[bool]:
+	""" find and mark each tile binned by x_edges and y_edges that is to the side of one of the
+	    ends of the path but behind the endpoint, and within a cell length.  it's kind of
+	    hard to explain, sorry.
+		:param x_edges: the bin edges for axis 0
+		:param y_edges: the bin edges for axis 1
+		:param path: a n×2 array of ordered x and y coordinates
+		:return: a boolean grid with each approached cell marked True
+	"""
+	radius = x_edges[1] - x_edges[0]
+	approached = np.full((x_edges.size - 1, y_edges.size - 1), False)
+	for end_point, penultimate_point in [(path[0], path[1]), (path[-1], path[-2])]:
+		for offset in [-radius, radius]:
+			if end_point[0] in x_edges:
+				i = bin_index(end_point[0], x_edges,
+				              right=penultimate_point[0] < end_point[0])
+				j = bin_index(end_point[1] + offset, y_edges)
+				approached[i, j] = True
+			if end_point[1] in y_edges:
+				j = bin_index(end_point[1], y_edges,
+				              right=penultimate_point[1] < end_point[1])
+				i = bin_index(end_point[0] + offset, x_edges)
+				approached[i, j] = True
+	return approached
 
 
 def grid_intersections_with(x_values: NDArray[float], y_edges: NDArray[float],

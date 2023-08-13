@@ -58,7 +58,7 @@ def bin_centers(bin_edges: NDArray[float]) -> NDArray[float]:
 
 def bin_index(x: float | NDArray[float], bin_edges: NDArray[float], right=False) -> int | NDArray[int]:
 	""" I dislike the way numpy defines this function
-	"""
+	"""  # TODO: right side makes no sense
 	return np.where(x < bin_edges[-1], np.digitize(x, bin_edges, right=right) - 1, bin_edges.size - 2)
 
 def index_grid(shape: Sequence[int]) -> Sequence[NDArray[int]]:
@@ -71,7 +71,26 @@ def normalize(vector: NDArray[float]) -> NDArray[float]:
 	if np.all(np.equal(vector, 0)):
 		return vector
 	else:
-		return np.divide(vector, abs(vector[np.argmax(np.abs(vector))]))
+		return np.divide(vector, np.max(np.abs(vector)))
+
+def vector_normalize(vector: NDArray[float]) -> NDArray[float]:
+	""" normalize a vector such that its magnitude is one """
+	if np.all(np.equal(vector, 0)):
+		return vector
+	else:
+		return np.divide(vector, np.linalg.norm(vector))
+
+def offset_from_angle(a: NDArray[float], b: NDArray[float], c: NDArray[float],
+                      offset: float) -> NDArray[float]:
+	""" find a point that is diagonally offset from an angle, in the direction it points """
+	bend_direction = vector_normalize(c - b) - \
+	                 vector_normalize(b - a)
+	if hypot(*bend_direction) > 1e-4:
+		bend_direction = vector_normalize(bend_direction)
+	else:
+		travel_direction = vector_normalize(c - b)
+		bend_direction = np.array([-travel_direction[1], travel_direction[0]])
+	return b - offset*bend_direction
 
 def wrap_angle(x: Numeric, period=360) -> Numeric:
 	""" wrap an angular value into the range [-period/2, period/2) """
