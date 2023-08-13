@@ -729,15 +729,15 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 				for j in range(mesh.nodes.shape[2]):
 					text += f"{mesh.nodes[h, i, j, 0]:9.2f},{mesh.nodes[h, i, j, 1]:9.2f}" # the section mesh_indices points (km)
 					if j != mesh.nodes.shape[2] - 1:
-						text += ", "
+						text += ","
 				text += "\n"
 			text += lang["section inverse header"].format(*inverse_raster[h].shape) # the shape of the sample raster
-			text += f"{mesh_left:9.2f},{mesh_bottom:9.2f}, {mesh_right:9.2f},{mesh_top:9.2f}\n" # the bounding box of the sample raster
+			text += f"{mesh_left:9.2f},{mesh_bottom:9.2f},{mesh_right:9.2f},{mesh_top:9.2f}\n" # the bounding box of the sample raster
 			for j in range(inverse_raster.shape[2]):
 				for i in range(inverse_raster.shape[1]):
 					text += f"{inverse_raster[h, i, j, 0]:6.1f},{inverse_raster[h, i, j, 1]:6.1f}" # the sample raster (°)
 					if i != inverse_raster.shape[1] - 1:
-						text += ", "
+						text += ","
 				text += "\n"
 		text += lang["border header"].format(projected_border.shape[0]) # the number of map edge vertices
 		for i in range(projected_border.shape[0]):
