@@ -256,6 +256,7 @@ def create_map_projection(configuration_file: str):
 	logging.info("projecting section borders...")
 	border = project_section_borders(mesh, BORDER_PROJECTION_RESOLUTION)
 	border = decimate_path(border, resolution=BORDER_OUTPUT_RESOLUTION)
+	boredr = np.concatenate([border, [border[0]]])  # and make it explicitly closed
 
 	# fit the result into a landscape rectangle
 	mesh.nodes = rotate_and_shift(mesh.nodes, *fit_in_rectangle(border))
@@ -283,6 +284,8 @@ def create_map_projection(configuration_file: str):
 	for h in range(mesh.num_sections):
 		mesh.section_borders[h] = simplify_path(
 			make_path_go_around_pole(mesh.section_borders[h]), cyclic=True)
+		mesh.section_borders[h] = np.concatenate([
+			mesh.section_borders[h], [mesh.section_borders[h][-1]]]) # and duplicate the endpoint for clarity
 
 	# and finally, save the projection
 	logging.info("saving results...")
