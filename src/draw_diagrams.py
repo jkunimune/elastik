@@ -34,7 +34,7 @@ def draw_diagrams():
 	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
 	plt.tight_layout()
-	plt.savefig("../examples/explanation-1.png", dpi=150)
+	plt.savefig("../resources/diagram-1.png", dpi=150)
 
 	plt.show()
 
