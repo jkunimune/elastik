@@ -180,12 +180,12 @@ def create_map(name: str, projection: str,
 	    :param border_style: the Style for the line drawn around the complete map area
 	    :param data: a list of elements to include in the map
 	"""
-	sections, border, aspect_ratio = load_elastik_projection(projection)
+	sections, boundary, aspect_ratio = load_elastik_projection(projection)
 
 	fig = plt.figure(name, figsize=(6*sqrt(aspect_ratio), 6/sqrt(aspect_ratio)))
 	ax = fig.subplots()
 
-	ax.fill(border["x"], border["y"], edgecolor="none", **background_style)
+	ax.fill(boundary["x"], boundary["y"], edgecolor="none", **background_style)
 
 	for i, (data_name, style) in enumerate(data):
 		print(f"adding {data_name} to the map...")
@@ -222,7 +222,7 @@ def create_map(name: str, projection: str,
 				for line in lines:
 					ax.plot(line["x"], line["y"], zorder=zorder, **feature_specific_style)
 
-	ax.fill(border["x"], border["y"], facecolor="none", **border_style)
+	ax.fill(boundary["x"], boundary["y"], facecolor="none", **border_style)
 
 	ax.axis("equal")
 	ax.margins(.01)
@@ -376,12 +376,12 @@ def load_elastik_projection(name: str) -> tuple[list[Section], XYLine, float]:
 			sections.append(Section(file[f"section {h}/projected points/latitude"][:],
 			                        file[f"section {h}/projected points/longitude"][:],
 			                        file[f"section {h}/projected points/points"][:, :],
-			                        file[f"section {h}/border"][:],
+			                        file[f"section {h}/boundary"][:],
 			                        ))
-		border = file["projected border"][:]
+		boundary = file["projected boundary"][:]
 		aspect_ratio = (file["bounding box"]["x"][1] - file["bounding box"]["x"][0])/ \
 		               (file["bounding box"]["y"][1] - file["bounding box"]["y"][0])
-	return sections, border, aspect_ratio
+	return sections, boundary, aspect_ratio
 
 
 class Section:

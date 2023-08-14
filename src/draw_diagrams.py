@@ -72,13 +72,13 @@ def load_mesh(filename) -> Mesh:
 		λ = file["section 0/projected points/longitude"][:]
 		num_sections = file["sections"].size
 		nodes = np.empty((num_sections, ф.size, λ.size, 2))
-		section_borders = []
+		section_boundaries = []
 		for h, section in enumerate(file["sections"]):
 			section = section.decode()
 			nodes[h, :, :, 0] = file[f"{section}/projected points/points"][:, :]["x"]
 			nodes[h, :, :, 1] = file[f"{section}/projected points/points"][:, :]["y"]
-			section_borders.append(file[f"{section}/border"][:])
-	return Mesh(section_borders, ф, λ, nodes)
+			section_boundaries.append(file[f"{section}/boundary"][:])
+	return Mesh(section_boundaries, ф, λ, nodes)
 
 
 def equirectangular_like(mesh: Mesh) -> Mesh:
@@ -87,7 +87,7 @@ def equirectangular_like(mesh: Mesh) -> Mesh:
 	nodes[:, :, :, 0] = Λ
 	nodes[:, :, :, 1] = Φ
 	nodes[np.isnan(mesh.nodes)] = nan
-	return Mesh(mesh.section_borders, mesh.ф, mesh.λ, nodes)
+	return Mesh(mesh.section_boundaries, mesh.ф, mesh.λ, nodes)
 
 
 
