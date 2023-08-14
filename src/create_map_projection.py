@@ -288,7 +288,7 @@ def create_map_projection(configuration_file: str):
 		mesh.section_boundaries[h] = simplify_path(
 			make_path_go_around_pole(mesh.section_boundaries[h]), cyclic=True)
 		mesh.section_boundaries[h] = np.concatenate([
-			mesh.section_boundaries[h], [mesh.section_boundaries[h][-1]]]) # and duplicate the endpoint for clarity
+			mesh.section_boundaries[h], [mesh.section_boundaries[h][0]]]) # and explicitly close it for clarity
 
 	# and finally, save the projection
 	logging.info("saving results...")
