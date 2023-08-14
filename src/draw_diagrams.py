@@ -72,14 +72,26 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int,
                  nodes: bool, border: bool, shading: bool,
                  graticule: bool, coastlines: bool) -> None:
 	if nodes:
-		ax.scatter(mesh.nodes[section_index, :, :, 0], mesh.nodes[section_index, :, :, 1], color="k", s=20, zorder=20)
+		ax.scatter(mesh.nodes[section_index, :, :, 0], mesh.nodes[section_index, :, :, 1],
+		           color="#596d74", s=10, zorder=10)
+	if graticule:
+		for nodes in [mesh.nodes[section_index], mesh.nodes[section_index].transpose((1, 0, 2))]:
+			for weit in np.linspace(0, 1, 3, endpoint=False):
+				j = np.arange(nodes.shape[1])
+				if weit != 0:
+					weited_nodes = weit*nodes[:, j - 1, :] + (1 - weit)*nodes[:, j, :]
+				else:
+					weited_nodes = nodes[:, j, :]
+				ax.plot(weited_nodes[:, :, 0], weited_nodes[:, :, 1],
+				        color="#596d74", linewidth=0.8, zorder=10)
 	if coastlines:
 		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[section_index, :, :, :],
 		                                  bounds_error=False, fill_value=nan)
 		coastlines = load_coastline_data(reduction=1)
 		for line in coastlines:
 			projected_line = project(line)
-			ax.plot(projected_line[:, 0], projected_line[:, 1], "#596d74", linewidth=0.8, zorder=10)
+			ax.plot(projected_line[:, 0], projected_line[:, 1],
+			        "k", linewidth=1.2, zorder=20)
 	ax.axis("equal")
 
 
