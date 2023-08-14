@@ -15,6 +15,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 from build_mesh import build_mesh
 from create_map_projection import create_map_projection, Mesh, load_coastline_data
+from util import refine_path
 
 
 def draw_diagrams():
@@ -44,7 +45,7 @@ def draw_diagrams():
 	plt.savefig("../resources/diagram-2.png", dpi=150)
 
 	fig, ax = plt.subplots(1, 1, figsize=(7, 4))
-	for index, color in enumerate(["#183157", "#2D4726", "#803D44"]):
+	for index, color in enumerate(["#001D47", "#0C2C03", "#5F1021"]):
 		draw_section(ax, mesh, index, color,
 		             nodes=True, boundary=False, shading=True, graticule=True, coastlines=True)
 	ax_right.set_xlabel("x (at 1:100M scale)")
@@ -59,7 +60,7 @@ def draw_diagrams():
 	plt.savefig("../resources/diagram-4.png", dpi=150)
 
 	fig, ax = plt.subplots(1, 1, figsize=(7, 4))
-	for index, color in enumerate(["#183157", "#2D4726", "#803D44"]):
+	for index, color in enumerate(["#001D47", "#0C2C03", "#5F1021"]):
 		draw_section(ax, mesh, index, color,
 		             nodes=True, boundary=True, shading=True, graticule=True, coastlines=True)
 	ax_right.set_xlabel("x (at 1:100M scale)")
@@ -113,6 +114,13 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
 			projected_line = project(line)
 			ax.plot(projected_line[:, 0], projected_line[:, 1],
 			        color, linewidth=1.0, zorder=20)
+	if boundary:
+		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[section_index, :, :, :],
+		                                  bounds_error=False, fill_value=nan)
+		projected_boundary = project(refine_path(
+			mesh.section_boundaries[section_index], resolution=1))
+		ax.plot(projected_boundary[:, 0], projected_boundary[:, 1],
+		        color, linewidth=2.0, zorder=30)
 	ax.axis("equal")
 
 
@@ -136,7 +144,9 @@ def load_mesh(filename) -> Mesh:
 			section = section.decode()
 			nodes[h, :, :, 0] = file[f"{section}/projected points/points"][:, :]["x"]
 			nodes[h, :, :, 1] = file[f"{section}/projected points/points"][:, :]["y"]
-			section_boundaries.append(file[f"{section}/boundary"][:])
+			boundary = file[f"{section}/boundary"][:]
+			boundary = np.stack([boundary["latitude"], boundary["longitude"]], axis=-1)
+			section_boundaries.append(boundary)
 	return Mesh(section_boundaries, ф, λ, nodes)
 
 
