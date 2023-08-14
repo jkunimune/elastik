@@ -29,38 +29,59 @@ def draw_diagrams():
 	# then draw the diagrams using that new coarse projection
 	mesh = load_mesh("elastic-earth-I")
 	mesh.nodes /= 1e3  # scale down to a realistic map size and change km to cm
+	section_index = 0
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
 	plot_projection_domains(
-		ax_left, ax_right, mesh, 0,
-		nodes=True, border=False, shading=False, graticule=False, coastlines=False)
+		ax_left, ax_right, mesh, section_index, color="k",
+		nodes=True, boundary=False, shading=False, graticule=False, coastlines=False)
 	plt.savefig("../resources/diagram-1.png", dpi=150)
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
 	plot_projection_domains(
-		ax_left, ax_right, mesh, 0,
-		nodes=True, border=False, shading=True, graticule=True, coastlines=True)
+		ax_left, ax_right, mesh, section_index, color="k",
+		nodes=True, boundary=False, shading=True, graticule=True, coastlines=True)
 	plt.savefig("../resources/diagram-2.png", dpi=150)
+
+	fig, ax = plt.subplots(1, 1, figsize=(7, 4))
+	for index, color in enumerate(["#183157", "#2D4726", "#803D44"]):
+		draw_section(ax, mesh, index, color,
+		             nodes=True, boundary=False, shading=True, graticule=True, coastlines=True)
+	ax_right.set_xlabel("x (at 1:100M scale)")
+	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
+	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
+	plt.savefig("../resources/diagram-3.png", dpi=150)
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
 	plot_projection_domains(
-		ax_left, ax_right, mesh, 0,
-		nodes=True, border=True, shading=True, graticule=True, coastlines=True)
+		ax_left, ax_right, mesh, section_index, color="k",
+		nodes=True, boundary=True, shading=True, graticule=True, coastlines=True)
 	plt.savefig("../resources/diagram-4.png", dpi=150)
+
+	fig, ax = plt.subplots(1, 1, figsize=(7, 4))
+	for index, color in enumerate(["#183157", "#2D4726", "#803D44"]):
+		draw_section(ax, mesh, index, color,
+		             nodes=True, boundary=True, shading=True, graticule=True, coastlines=True)
+	ax_right.set_xlabel("x (at 1:100M scale)")
+	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
+	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
+	plt.savefig("../resources/diagram-5.png", dpi=150)
 
 	plt.show()
 
 
 def plot_projection_domains(ax_left: Axes, ax_right: Axes,
-                            elastic_earth_mesh: Mesh, section_index: int,
-                            nodes: bool, border: bool, shading: bool,
+                            elastic_earth_mesh: Mesh, section_index: int, color: str,
+                            nodes: bool, boundary: bool, shading: bool,
                             graticule: bool, coastlines: bool) -> None:
 	equirectangular_mesh = equirectangular_like(elastic_earth_mesh)
-	draw_section(ax_left, equirectangular_mesh, section_index, nodes, border, shading, graticule, coastlines)
+	draw_section(ax_left, equirectangular_mesh, section_index, color,
+	             nodes, boundary, shading, graticule, coastlines)
 	ax_left.set_xlabel("Longitude")
 	ax_left.set_ylabel("Latitude", labelpad=-1)
 	set_ticks(ax_left, spacing=30, fmt="{x:.0f}°")
-	draw_section(ax_right, elastic_earth_mesh, section_index, nodes, border, shading, graticule, coastlines)
+	draw_section(ax_right, elastic_earth_mesh, section_index, color,
+	             nodes, boundary, shading, graticule, coastlines)
 	ax_right.set_xlabel("x (at 1:100M scale)")
 	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
@@ -68,12 +89,12 @@ def plot_projection_domains(ax_left: Axes, ax_right: Axes,
 
 
 
-def draw_section(ax: Axes, mesh: Mesh, section_index: int,
-                 nodes: bool, border: bool, shading: bool,
+def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
+                 nodes: bool, boundary: bool, shading: bool,
                  graticule: bool, coastlines: bool) -> None:
 	if nodes:
 		ax.scatter(mesh.nodes[section_index, :, :, 0], mesh.nodes[section_index, :, :, 1],
-		           color="#596d74", s=10, zorder=10)
+		           color=color, s=10, zorder=10)
 	if graticule:
 		for nodes in [mesh.nodes[section_index], mesh.nodes[section_index].transpose((1, 0, 2))]:
 			for weit in np.linspace(0, 1, 3, endpoint=False):
@@ -83,7 +104,7 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int,
 				else:
 					weited_nodes = nodes[:, j, :]
 				ax.plot(weited_nodes[:, :, 0], weited_nodes[:, :, 1],
-				        color="#596d74", linewidth=0.8, zorder=10)
+				        color=color, linewidth=0.5, zorder=10)
 	if coastlines:
 		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[section_index, :, :, :],
 		                                  bounds_error=False, fill_value=nan)
@@ -91,7 +112,7 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int,
 		for line in coastlines:
 			projected_line = project(line)
 			ax.plot(projected_line[:, 0], projected_line[:, 1],
-			        "k", linewidth=1.2, zorder=20)
+			        color, linewidth=1.0, zorder=20)
 	ax.axis("equal")
 
 
