@@ -10,12 +10,14 @@ import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.collections import PatchCollection
+from matplotlib.patches import Polygon
 from matplotlib.ticker import MultipleLocator
 from scipy.interpolate import RegularGridInterpolator
 
 from build_mesh import build_mesh
 from create_map_projection import create_map_projection, Mesh, load_coastline_data
-from util import refine_path
+from util import refine_path, find_boundaries
 
 
 def draw_diagrams():
@@ -34,13 +36,13 @@ def draw_diagrams():
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
 	plot_projection_domains(
-		ax_left, ax_right, mesh, section_index, color="k",
+		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=False, shading=False, graticule=False, coastlines=False)
 	plt.savefig("../resources/diagram-1.png", dpi=150)
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
 	plot_projection_domains(
-		ax_left, ax_right, mesh, section_index, color="k",
+		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=False, shading=True, graticule=True, coastlines=True)
 	plt.savefig("../resources/diagram-2.png", dpi=150)
 
@@ -51,11 +53,13 @@ def draw_diagrams():
 	ax_right.set_xlabel("x (at 1:100M scale)")
 	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
+	plt.axis("off")
+	plt.tight_layout()
 	plt.savefig("../resources/diagram-3.png", dpi=150)
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
 	plot_projection_domains(
-		ax_left, ax_right, mesh, section_index, color="k",
+		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=True, shading=True, graticule=True, coastlines=True)
 	plt.savefig("../resources/diagram-4.png", dpi=150)
 
@@ -66,6 +70,8 @@ def draw_diagrams():
 	ax_right.set_xlabel("x (at 1:100M scale)")
 	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
+	plt.axis("off")
+	plt.tight_layout()
 	plt.savefig("../resources/diagram-5.png", dpi=150)
 
 	plt.show()
@@ -89,13 +95,40 @@ def plot_projection_domains(ax_left: Axes, ax_right: Axes,
 	plt.tight_layout()
 
 
-
 def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
                  nodes: bool, boundary: bool, shading: bool,
                  graticule: bool, coastlines: bool) -> None:
+	if boundary:
+		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[section_index, :, :, :],
+		                                  bounds_error=False, fill_value=nan)
+		projected_boundary = project(refine_path(
+			mesh.section_boundaries[section_index], resolution=1))
+		boundary_polygon = Polygon(projected_boundary, closed=True)
+		boundary_polygons = [boundary_polygon]
+	else:
+		boundaries = find_boundaries(
+			np.all(np.isfinite(mesh.nodes[section_index]), axis=-1))
+		boundary_polygons = []
+		for i_boundary, j_boundary in boundaries:
+			boundary_polygon = Polygon(mesh.nodes[section_index, i_boundary, j_boundary, :])
+			boundary_polygons.append(boundary_polygon)
+	patch_collection = PatchCollection(boundary_polygons)
+	ax.add_collection(patch_collection)
+	if boundary:
+		patch_collection.set_edgecolor("#000000")
+		patch_collection.set_linewidth(2.0)
+	else:
+		patch_collection.set_edgecolor("none")
+	if shading:
+		patch_collection.set_facecolor(color + "17")
+	else:
+		patch_collection.set_facecolor("none")
+	patch_collection.set_zorder(40)
+
 	if nodes:
 		ax.scatter(mesh.nodes[section_index, :, :, 0], mesh.nodes[section_index, :, :, 1],
 		           color=color, s=10, zorder=10)
+
 	if graticule:
 		for nodes in [mesh.nodes[section_index], mesh.nodes[section_index].transpose((1, 0, 2))]:
 			for weit in np.linspace(0, 1, 3, endpoint=False):
@@ -105,7 +138,8 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
 				else:
 					weited_nodes = nodes[:, j, :]
 				ax.plot(weited_nodes[:, :, 0], weited_nodes[:, :, 1],
-				        color=color, linewidth=0.5, zorder=10)
+				        color=color, linewidth=0.5, zorder=10)  # TODO: mask to projected_boundary
+
 	if coastlines:
 		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[section_index, :, :, :],
 		                                  bounds_error=False, fill_value=nan)
@@ -113,14 +147,8 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
 		for line in coastlines:
 			projected_line = project(line)
 			ax.plot(projected_line[:, 0], projected_line[:, 1],
-			        color, linewidth=1.0, zorder=20)
-	if boundary:
-		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[section_index, :, :, :],
-		                                  bounds_error=False, fill_value=nan)
-		projected_boundary = project(refine_path(
-			mesh.section_boundaries[section_index], resolution=1))
-		ax.plot(projected_boundary[:, 0], projected_boundary[:, 1],
-		        color, linewidth=2.0, zorder=30)
+			        color, linewidth=1.0, zorder=20)  # TODO: mask to projected_boundary
+
 	ax.axis("equal")
 
 
@@ -133,7 +161,7 @@ def set_ticks(ax: Axes, spacing: float, fmt: str, y_ticks_on_right=False) -> Non
 		ax.yaxis.set_label_position("right")
 
 
-def load_mesh(filename) -> Mesh:
+def load_mesh(filename: str) -> Mesh:
 	with h5py.File(f"../projection/{filename}.h5", "r") as file:
 		ф = file["section 0/projected points/latitude"][:]
 		λ = file["section 0/projected points/longitude"][:]

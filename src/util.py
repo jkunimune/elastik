@@ -121,6 +121,59 @@ def dilate(x: NDArray[bool], distance: int) -> NDArray[bool]:
 	return x
 
 
+def find_boundaries(in_region: NDArray[bool]) -> list[tuple[NDArray[int], NDArray[int]]]:
+	""" given a boolean array representing a region in 2D space, find the paths that separate
+	    that region from the rest of the domain.
+	    :param in_region: an array of True for in the region and False for out of it
+	    :return: a list of paths expressed as indices. each path will comprise only vertices in
+	             the region adjacent to points not in the region, and will comprise only vertical
+	             or horizontal steps.
+	"""
+	in_region_expanded = np.empty((in_region.shape[0] + 1, in_region.shape[1] + 1))
+	in_region_expanded[:-1, :-1] = in_region
+	in_region_expanded[:, -1] = False
+	in_region_expanded[-1, :] = False
+	visited = np.full(in_region.shape, False)
+
+	boundaries = []
+	for i0 in range(in_region.shape[0]):
+		for j0 in range(in_region.shape[1]):
+			if in_region_expanded[i0, j0] and in_region_expanded[i0, j0 + 1] and \
+					not in_region_expanded[i0, j0 - 1] and not visited[i0, j0]:
+				boundary = []
+				i_in, j_in = (i0, j0)
+				i_out, j_out = (i0, j0 - 1)
+				while True:
+					if j_out < j_in:  # region is above us
+						i_left, j_left = i_in + 1, j_in
+						i_rite, j_rite = i_out + 1, j_out
+					elif j_out > j_in:  # region is below us
+						i_left, j_left = i_in - 1, j_in
+						i_rite, j_rite = i_out - 1, j_out
+					elif i_out < i_in:  # region is right of us
+						i_left, j_left = i_in, j_in - 1
+						i_rite, j_rite = i_out, j_out - 1
+					else:  # region is left of us
+						i_left, j_left = i_in, j_in + 1
+						i_rite, j_rite = i_out, j_out + 1
+					if in_region_expanded[i_rite, j_rite]:  # turning right
+						i_in, j_in = i_rite, j_rite
+						boundary.append((i_left, j_left))
+						boundary.append((i_in, j_in))
+					elif not in_region_expanded[i_left, j_left]:  # turning left
+						i_out, j_out = i_left, j_left
+					else:  # continuing straight
+						i_in, j_in = i_left, j_left
+						i_out, j_out = i_rite, j_rite
+						boundary.append((i_in, j_in))
+					visited[i_in, j_in] = True
+					if (i_in, j_in) == (i0, j0) and (i_out, j_out) == (i0, j0 - 1):  # we've loopd around
+						break
+				boundary = np.array(boundary)
+				boundaries.append((boundary[:, 0], boundary[:, 1]))
+	return boundaries
+
+
 def search_out_from(i0: int, j0: int, shape: tuple[int, int], max_distance: int) -> Iterable[tuple[int, int]]:
 	""" yield a list of index pairs in the given shape orderd such that iterating thru the list spirals
 	    outward from i0,j0.  it will be treated periodically on axis 1 (so j=0 is next to j=n-1) """
