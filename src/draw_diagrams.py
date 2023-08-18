@@ -10,7 +10,6 @@ import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
-from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon
 from matplotlib.ticker import MultipleLocator
 from scipy.interpolate import RegularGridInterpolator
@@ -49,7 +48,7 @@ def draw_diagrams():
 	fig, ax = plt.subplots(1, 1, figsize=(7, 4))
 	for index, color in enumerate(["#001D47", "#0C2C03", "#5F1021"]):
 		draw_section(ax, mesh, index, color,
-		             nodes=True, boundary=False, shading=True, graticule=True, coastlines=True)
+		             nodes=True, boundary=False, shading=True, graticule=False, coastlines=True)
 	ax_right.set_xlabel("x (at 1:100M scale)")
 	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
@@ -66,7 +65,7 @@ def draw_diagrams():
 	fig, ax = plt.subplots(1, 1, figsize=(7, 4))
 	for index, color in enumerate(["#001D47", "#0C2C03", "#5F1021"]):
 		draw_section(ax, mesh, index, color,
-		             nodes=True, boundary=True, shading=True, graticule=True, coastlines=True)
+		             nodes=True, boundary=True, shading=True, graticule=False, coastlines=True)
 	ax_right.set_xlabel("x (at 1:100M scale)")
 	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
@@ -113,18 +112,18 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
 		for i_boundary, j_boundary in boundaries:
 			boundary_polygon = Polygon(mesh.nodes[section_index, i_boundary, j_boundary, :])
 			boundary_polygons.append(boundary_polygon)
-	patch_collection = PatchCollection(boundary_polygons)
-	ax.add_collection(patch_collection)
-	if boundary:
-		patch_collection.set_edgecolor("#000000")
-		patch_collection.set_linewidth(2.0)
-	else:
-		patch_collection.set_edgecolor("none")
-	if shading:
-		patch_collection.set_facecolor(color + "17")
-	else:
-		patch_collection.set_facecolor("none")
-	patch_collection.set_zorder(40)
+	for boundary_polygon in boundary_polygons:
+		ax.add_patch(boundary_polygon)
+		if boundary:
+			boundary_polygon.set_edgecolor("#000000")
+			boundary_polygon.set_linewidth(2.0)
+		else:
+			boundary_polygon.set_edgecolor("none")
+		if shading:
+			boundary_polygon.set_facecolor(color + "17")
+		else:
+			boundary_polygon.set_facecolor("none")
+		boundary_polygon.set_zorder(40)
 
 	if nodes:
 		ax.scatter(mesh.nodes[section_index, :, :, 0], mesh.nodes[section_index, :, :, 1],
@@ -138,17 +137,23 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
 					weited_nodes = weit*nodes[:, j - 1, :] + (1 - weit)*nodes[:, j, :]
 				else:
 					weited_nodes = nodes[:, j, :]
-				ax.plot(weited_nodes[:, :, 0], weited_nodes[:, :, 1],
-				        color=color, linewidth=0.5, zorder=10)  # TODO: mask to projected_boundary
+				lines = ax.plot(weited_nodes[:, :, 0], weited_nodes[:, :, 1],
+				                color=color, linewidth=0.5, zorder=10)
+				if boundary:
+					for coastline in lines:
+						coastline.set_clip_path(boundary_polygons[0])
 
 	if coastlines:
 		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[section_index, :, :, :],
 		                                  bounds_error=False, fill_value=None)
 		coastlines = load_coastline_data(reduction=1)
-		for line in coastlines:
-			projected_line = project(line)
-			ax.plot(projected_line[:, 0], projected_line[:, 1],
-			        color, linewidth=1.0, zorder=20)  # TODO: mask to projected_boundary
+		for coastline in coastlines:
+			projected_coastline = project(coastline)
+			lines = ax.plot(projected_coastline[:, 0], projected_coastline[:, 1],
+			                color, linewidth=1.0, zorder=20)
+			if boundary:
+				for line in lines:
+					line.set_clip_path(boundary_polygons[0])
 
 	ax.axis("equal")
 
