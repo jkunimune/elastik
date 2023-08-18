@@ -100,9 +100,10 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
                  graticule: bool, coastlines: bool) -> None:
 	if boundary:
 		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[section_index, :, :, :],
-		                                  bounds_error=False, fill_value=nan)
+		                                  bounds_error=False, fill_value=None)
 		projected_boundary = project(refine_path(
 			mesh.section_boundaries[section_index], resolution=1))
+		projected_boundary = projected_boundary[~np.any(np.isnan(projected_boundary), axis=1), :]  # the boundary can go thru undefined regions, so just cut that stuff out
 		boundary_polygon = Polygon(projected_boundary, closed=True)
 		boundary_polygons = [boundary_polygon]
 	else:
@@ -142,7 +143,7 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
 
 	if coastlines:
 		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[section_index, :, :, :],
-		                                  bounds_error=False, fill_value=nan)
+		                                  bounds_error=False, fill_value=None)
 		coastlines = load_coastline_data(reduction=1)
 		for line in coastlines:
 			projected_line = project(line)
