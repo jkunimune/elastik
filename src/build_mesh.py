@@ -491,6 +491,22 @@ def build_mesh(name: str, resolution=RESOLUTION):
 		share_cells |= cells_shared_by(section, ф, λ)
 		include_cells = cells_inside_of(section, ф, λ)
 
+		# as long as resolution is high enuff to add border cells freely
+		if resolution > 6:
+			for i_pole in [0, -1]:
+				# force it to include the whole antimeridian if it touches the antimeridian
+				if np.any(include_cells[1:-1, 0]) or np.any(include_cells[1:-1, -1]):
+					# unless it touches both poles, in which case that's not necessary
+					if not np.any(include_cells[0, :]) or not np.any(include_cells[-1, :]):
+						include_cells[:, 0] = True
+						include_cells[:, -1] = True
+				# force it to include the whole polar region when it touches the polar region
+				if np.any(include_cells[i_pole, :]):
+					include_cells[i_pole, :] = True
+				# and share the whole pole when some of the pole is shared
+				if np.any(share_cells[i_pole, :]):
+					share_cells[i_pole, :] = True
+
 		# add in any straits that happen to be split across it's edge
 		ф_border, λ_border = resolve_path(section.cut_border[:, 0], section.cut_border[:, 1],
 		                                  STRAIT_RADIUS)
@@ -505,16 +521,6 @@ def build_mesh(name: str, resolution=RESOLUTION):
 					(abs(ф_grid - ф_strait) < STRAIT_RADIUS) & \
 					(abs(wrap_angle(λ_grid - λ_strait)) < STRAIT_RADIUS/cos(radians(ф_strait)))
 				include_cells[cell_near_strait] = True
-
-		# as long as resolution is high enuff to add border cells freely
-		if resolution > 6:
-			for i_pole in [0, -1]:
-				# force it to include the whole polar region when it touches the polar region
-				if np.any(include_cells[i_pole, :]):
-					include_cells[i_pole, :] = True
-				# and share the whole pole when some of the pole is shared
-				if np.any(share_cells[i_pole, :]):
-					share_cells[i_pole, :] = True
 
 		include_nodes[h, :, :] = expand_bool_array(include_cells)
 
