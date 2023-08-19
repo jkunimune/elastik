@@ -80,7 +80,7 @@ def calculate_drainage_divides(endpoints: list[tuple[float, float]]):
 	paths = [np.array([[-90, 0]])] + paths
 
 	# save and plot them
-	np.savetxt("../spec/cuts_mountains.txt", np.concatenate(paths), fmt="%.1f")  # type: ignore
+	np.savetxt("../resources/cuts_mountains.txt", np.concatenate(paths), fmt="%.1f")  # type: ignore
 	plt.figure()
 	plot_map(z_map, (λ_map[0] - .5/RESOLUTION, λ_map[-1] + .5/RESOLUTION,
 	                 ф_map[0] - .5/RESOLUTION, ф_map[-1] + .5/RESOLUTION))

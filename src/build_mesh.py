@@ -7,6 +7,7 @@ projection mesh that can be further optimized.
 angles are in degrees, except in the functions dealing with projection.
 indexing is z[i,j] = z(ф[i], λ[j])
 """
+import os
 from math import cos, hypot, ceil, sin, nan, tan, inf, copysign, pi, radians, degrees
 
 import h5py
@@ -463,6 +464,8 @@ def build_mesh(name: str, resolution=RESOLUTION):
 	    :param name: one of "basic", "oceans", or "mountains"
 	    :param resolution: the number of cells between the equator and each pole
 	"""
+	os.makedirs("../resources/meshes", exist_ok=True)
+
 	# start by defining a grid of cells
 	ф = np.round(np.linspace(-90, 90, 2*resolution + 1), 10)
 	num_ф = ф.size - 1
@@ -470,7 +473,7 @@ def build_mesh(name: str, resolution=RESOLUTION):
 	num_λ = λ.size - 1
 
 	# load the interruptions
-	glue_tripoint, interruptions = load_interruptions(f"../spec/cuts_{name}.txt")
+	glue_tripoint, interruptions = load_interruptions(f"../resources/cuts_{name}.txt")
 	# adjust the interruptions to fit with the cell grid
 	for h in range(len(interruptions)):
 		interruptions[h] = trim_to_grid(interruptions[h], ф, λ)
@@ -568,7 +571,7 @@ def build_mesh(name: str, resolution=RESOLUTION):
 	plt.axis("equal")
 
 	# save it to HDF5
-	save_mesh(f"../spec/mesh_{name}.h5", ф, λ, nodes, sections)
+	save_mesh(f"../resources/meshes/{name}.h5", ф, λ, nodes, sections)
 
 
 if __name__ == "__main__":

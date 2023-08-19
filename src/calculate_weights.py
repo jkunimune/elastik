@@ -5,6 +5,7 @@ calculate_weights.py
 generate simple maps of importance as a function of location, to use when optimizing map
 projections
 """
+import os
 from math import nan, isnan, hypot, radians
 
 import numpy as np
@@ -164,6 +165,8 @@ def find_land_mask(ф_grid: NDArray[float], λ_grid: NDArray[float], exclude_ant
 
 
 def calculate_weights():
+	os.makedirs("../resources/weights", exist_ok=True)
+
 	# define the grid
 	ф_edges = bin_centers(np.linspace(-90, 90, 188)) # (these are intentionally weerd numbers to reduce roundoff issues)
 	λ_edges = bin_centers(np.linspace(-180, 180, 375))
@@ -179,13 +182,13 @@ def calculate_weights():
 
 		for cut_file, value_land in [("basic", True), ("oceans", True), ("mountains", False)]:
 			# load the cut file
-			sections = load_cut_file(f"../spec/cuts_{cut_file}.txt")
+			sections = load_cut_file(f"../resources/cuts_{cut_file}.txt")
 
 			# get the set of points that are uniformly important
 			global_mask = land if value_land else ~land
 
 			for h, section in enumerate(sections):
-				filename = f"../spec/pixels_{cut_file}_{h}{'_land' if value_land else '_sea'}{'_sinATA' if crop_antarctica else ''}.tif"
+				filename = f"../resources/weights/{cut_file}_{h}{'_land' if value_land else '_sea'}{'_sinATA' if crop_antarctica else ''}.tif"
 				print(filename)
 
 				# get the distance of each point from the nearest contained coast

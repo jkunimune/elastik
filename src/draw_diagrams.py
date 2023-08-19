@@ -4,6 +4,7 @@ draw_diagrams.py
 generate some explanatory images to help readers understand how
 to use these map projections
 """
+import os
 from math import nan
 
 import h5py
@@ -21,6 +22,7 @@ from util import refine_path, find_boundaries
 
 def draw_diagrams():
 	plt.rcParams.update({'font.size': 12})
+	os.makedirs("../resources/images", exist_ok=True)
 
 	# first compute the Elastic Earth I projection with lower resolution
 	if load_mesh("elastic-earth-I").nodes.shape[1] > 10:
@@ -37,13 +39,13 @@ def draw_diagrams():
 	plot_projection_domains(
 		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=False, shading=False, graticule=False, coastlines=False)
-	plt.savefig("../resources/diagram-1.png", dpi=150)
+	plt.savefig("../resources/images/diagram-1.png", dpi=150)
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
 	plot_projection_domains(
 		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=False, shading=True, graticule=True, coastlines=True)
-	plt.savefig("../resources/diagram-2.png", dpi=150)
+	plt.savefig("../resources/images/diagram-2.png", dpi=150)
 
 	fig, ax = plt.subplots(1, 1, figsize=(7, 4))
 	for index, color in enumerate(["#001D47", "#0C2C03", "#5F1021"]):
@@ -54,13 +56,13 @@ def draw_diagrams():
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
 	plt.axis("off")
 	plt.tight_layout()
-	plt.savefig("../resources/diagram-3.png", dpi=150)
+	plt.savefig("../resources/images/diagram-3.png", dpi=150)
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
 	plot_projection_domains(
 		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=True, shading=True, graticule=True, coastlines=True)
-	plt.savefig("../resources/diagram-4.png", dpi=150)
+	plt.savefig("../resources/images/diagram-4.png", dpi=150)
 
 	fig, ax = plt.subplots(1, 1, figsize=(7, 4))
 	for index, color in enumerate(["#001D47", "#0C2C03", "#5F1021"]):
@@ -71,7 +73,7 @@ def draw_diagrams():
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
 	plt.axis("off")
 	plt.tight_layout()
-	plt.savefig("../resources/diagram-5.png", dpi=150)
+	plt.savefig("../resources/images/diagram-5.png", dpi=150)
 
 	plt.show()
 

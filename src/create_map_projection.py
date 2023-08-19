@@ -754,7 +754,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 def load_options(filename: str) -> dict[str, str]:
 	""" load a simple colon-separated text file """
 	options = dict()
-	with open(f"../spec/options_{filename}.txt", "r", encoding="utf-8") as file:
+	with open(f"../resources/options_{filename}.txt", "r", encoding="utf-8") as file:
 		for line in file.readlines():
 			key, value = line.split(":")
 			options[key.strip()] = value.strip()
@@ -768,7 +768,7 @@ def load_pixel_values(filename: str, cut_set: str, num_sections: int) -> list[ND
 	else:
 		values = []
 		for h in range(num_sections):
-			values.append(tifffile.imread(f"../spec/pixels_{cut_set}_{h}_{filename}.tif"))
+			values.append(tifffile.imread(f"../resources/weights/{cut_set}_{h}_{filename}.tif"))
 		return values
 
 
@@ -785,7 +785,7 @@ def load_mesh(filename: str) -> Mesh:
 	""" load the ф values, λ values, node locations, and section boundaries from a HDF5
 	    file, in that order.
 	"""
-	with h5py.File(f"../spec/mesh_{filename}.h5", "r") as file:
+	with h5py.File(f"../resources/meshes/{filename}.h5", "r") as file:
 		ф = file["section0/latitude"][:]
 		λ = file["section0/longitude"][:]
 		num_sections = file.attrs["num_sections"]
