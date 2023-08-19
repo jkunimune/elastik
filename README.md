@@ -22,9 +22,10 @@
  This section explains how to do that.
  I've coded up two demonstrations for those who learn best by example:
  [a Python implementation](src/elastik.py)
- that uses the HDF files and bilinear interpolation in Python, and
+ that uses the HDF files and bilinear interpolation, and
  [a Java implementation](https://github.com/jkunimune/Map-Projections/blob/master/src/maps/Elastik.java)
- that uses the plain text files and Hermite spline interpolation in Java.
+ that uses the plain text files and Hermite spline interpolation.
+ The Java implementation also implements the inverse-projection using Levenberg-Marquardt iteration.
 
 ### Map projection structure
 
@@ -92,12 +93,12 @@
  - The bounding x and y values of the map projection
  - The list of section names
  - A group for each section including
-  - The latitudes at which the projection is defined
-  - The longitudes at which the projection is defined
-  - The table of x and y coordinates corresponding to the given latitudes and longitudes (with undefined coordinates set to *NaN*)
-  - The boundary on the globe
-  - The table of latitudes and longitudes corresponding to the given x and y
-  - The minimum and maximum x and y coordinates
+   - The latitudes at which the projection is defined
+   - The longitudes at which the projection is defined
+   - The table of x and y coordinates corresponding to the given latitudes and longitudes (with undefined values set to *NaN*)
+   - The boundary on the globe
+   - The table of latitudes and longitudes corresponding to the given x and y
+   - The minimum and maximum x and y coordinates
 
  The twoth format is plain text.
  Plain text files can be opened with a variety of programs (Notepad is the default on Windows),
@@ -110,19 +111,22 @@
  Each Elastic Earth plain text file contains the following information, in this order:
  - The number of sections
  - A header for each section followed by
-  - The boundary on the globe. Each row is a latitude and the corresponding longitude, in degrees.
-  - The table of x and y values corresponding to certain latitudes and longitudes.
-    The latitudes and longitudes are not explicitly given;
-    the latitudes are evenly spaced between -90° and 90° (inclusive),
-    and the longitudes are evenly spaced between -180° and 180° (inclusive).
-    Each row corresponds to one latitude, and each column to one longitude.
-  - The bounding x and y values of the section's inverse raster
-  - The table of latitudes and longitudes corresponding to certain x and y values.
-    The x and y values are not explicitly given;
-    they are evenly spaced between the given bounding values.
-    Each row corresponds to one x value and each column to one y value.
+   - The boundary on the globe. Each row is a latitude and the corresponding longitude, in degrees.
+   - The table of x and y values corresponding to certain latitudes and longitudes.
+     The latitudes and longitudes are not explicitly given;
+     the latitudes are evenly spaced between -90° and 90° (inclusive),
+     and the longitudes are evenly spaced between -180° and 180° (inclusive).
+     Each row corresponds to one latitude, and each pair of columns to one longitude.
+     Each pair of adjacent values is an x value followed by the corresponding y value, in kilometers.
+     Undefined values are set to *NaN*.
+   - The bounding x and y values of the section's inverse raster
+   - The table of latitudes and longitudes corresponding to certain x and y values.
+     The x and y values are not explicitly given;
+     they are evenly spaced between the given bounding values.
+     Each row corresponds to one x value and each pair of columns to one y value. TODO: is this true?
+     Each pair of adjacent values is a latitude followed by the corresponding longitude, in degrees.
  - The projected boundary of the map projection.
-   Each row is an x value followed by a corresponding y value, in kilometers.
+   Each row is an x value followed by the corresponding y value, in kilometers.
 
 ## Using the code
 
