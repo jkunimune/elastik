@@ -180,6 +180,7 @@ def create_map(name: str, projection: str,
 	    :param border_style: the Style for the line drawn around the complete map area
 	    :param data: a list of elements to include in the map
 	"""
+	print(f"creating the {name} map.")
 	sections, boundary, aspect_ratio = load_elastik_projection(projection)
 
 	fig = plt.figure(name, figsize=(6*sqrt(aspect_ratio), 6/sqrt(aspect_ratio)))
@@ -361,7 +362,7 @@ def project(features: list[ΦΛFeature], projection: list[Section]) -> list[XYFe
 			assert not np.any(np.isnan(projected_line["x"]))
 			projected_lines.append(projected_line)
 		projected_features.append((category, width, projected_lines))
-	print("done!")
+	print(f"projected {len(projected_features)} features!")
 	return projected_features
 
 
