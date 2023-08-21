@@ -25,52 +25,54 @@ def draw_diagrams():
 	os.makedirs("../resources/images", exist_ok=True)
 
 	# first compute the Elastic Earth I projection with lower resolution
-	if load_mesh("elastic-earth-I").nodes.shape[1] > 10:
-		build_mesh("oceans", resolution=4)
-		create_map_projection("continents")
+	if not os.path.isfile("projection/elastic-earth-I.h5"):
+		build_mesh("example", resolution=4)
+		create_map_projection("example")
 		plt.close("all")
 
 	# then draw the diagrams using that new coarse projection
-	mesh = load_mesh("elastic-earth-I")
+	mesh = load_mesh("elastic-earth-IV")
 	mesh.nodes /= 1e3  # scale down to a realistic map size and change km to cm
 	section_index = 0
 
-	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
+	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7.0, 3.8))
 	plot_projection_domains(
 		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=False, shading=False, graticule=False, coastlines=False)
 	plt.savefig("../resources/images/diagram-1.png", dpi=150)
 
-	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
+	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7.0, 3.8))
 	plot_projection_domains(
 		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=False, shading=True, graticule=True, coastlines=True)
 	plt.savefig("../resources/images/diagram-2.png", dpi=150)
 
-	fig, ax = plt.subplots(1, 1, figsize=(7, 4))
+	fig, ax = plt.subplots(1, 1, figsize=(6.0, 4.5))
 	for index, color in enumerate(["#001D47", "#0C2C03", "#5F1021"]):
 		draw_section(ax, mesh, index, color,
 		             nodes=True, boundary=False, shading=True, graticule=False, coastlines=True)
 	ax_right.set_xlabel("x (at 1:100M scale)")
 	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
+	plt.margins(.01)
 	plt.axis("off")
 	plt.tight_layout()
 	plt.savefig("../resources/images/diagram-3.png", dpi=150)
 
-	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7, 4))
+	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7.0, 3.8))
 	plot_projection_domains(
 		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=True, shading=True, graticule=True, coastlines=True)
 	plt.savefig("../resources/images/diagram-4.png", dpi=150)
 
-	fig, ax = plt.subplots(1, 1, figsize=(7, 4))
+	fig, ax = plt.subplots(1, 1, figsize=(6.0, 4.5))
 	for index, color in enumerate(["#001D47", "#0C2C03", "#5F1021"]):
 		draw_section(ax, mesh, index, color,
 		             nodes=True, boundary=True, shading=True, graticule=False, coastlines=True)
 	ax_right.set_xlabel("x (at 1:100M scale)")
 	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
+	plt.margins(.01)
 	plt.axis("off")
 	plt.tight_layout()
 	plt.savefig("../resources/images/diagram-5.png", dpi=150)

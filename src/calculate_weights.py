@@ -6,7 +6,7 @@ generate simple maps of importance as a function of location, to use when optimi
 projections
 """
 import os
-from math import nan, isnan, hypot, radians
+from math import nan, isnan, hypot, radians, copysign
 
 import numpy as np
 import shapefile
@@ -120,10 +120,18 @@ def load_cut_file(filename: str) -> list[NDArray[float]]:
 		])
 		# include the part that's not a cut (the path thru the glue tripoint)
 		if abs(glue_tripoint[0]) == 90:
-			section = np.concatenate([section, [
-				[glue_tripoint[0], section[-1, 1]],
-				[glue_tripoint[0], section[0, 1]],
-			]])
+			if (section[0, 1] - section[-1, 1])*copysign(1, glue_tripoint[0]) < 0:
+				section = np.concatenate([section, [
+					[glue_tripoint[0], section[-1, 1]],
+					[glue_tripoint[0], section[0, 1]],
+				]])
+			else:
+				section = np.concatenate([section, [
+					[glue_tripoint[0], section[-1, 1]],
+					[glue_tripoint[0], copysign(180, -glue_tripoint[0])],
+					[glue_tripoint[0], copysign(180, glue_tripoint[0])],
+					[glue_tripoint[0], section[0, 1]],
+				]])
 		else:
 			section = np.concatenate([section, [
 				[section[-1, 0], glue_tripoint[1]],
@@ -180,7 +188,10 @@ def calculate_weights():
 		# load the land data with or without antarctica
 		land = find_land_mask(ф, λ, crop_antarctica)
 
-		for cut_file, value_land in [("basic", True), ("oceans", True), ("mountains", False)]:
+		for cut_file, value_land in [("basic", True), ("oceans", True), ("mountains", False), ("example", True)]:
+			if crop_antarctica and not value_land:
+				continue  # but you can skip the one that values oceans *and* antarctica; that doesn't make sense
+
 			# load the cut file
 			sections = load_cut_file(f"../resources/cuts_{cut_file}.txt")
 

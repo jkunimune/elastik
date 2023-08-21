@@ -429,9 +429,9 @@ def inside_region(ф: Numeric, λ: Numeric, region: NDArray[float], period=360) 
 		out_shape = ф.shape
 	# first we need to characterize the region so that we can classify points at untuched longitudes
 	δλ_border = region[1:, 1] - region[:-1, 1]
-	δλ_border[abs(δλ_border) > period/2] = nan
+	δλ_border[abs(δλ_border) == period] *= -1
 	ф_border = (region[1:, 0] + region[:-1, 0])/2
-	inside_out = δλ_border[np.nanargmax(ф_border)] > 0 # for closed regions we have this nice trick
+	inside_out = δλ_border[np.argmax(ф_border)] > 0 # for closed regions we have this nice trick
 
 	# then we can bild up a precise bool mapping
 	inside = np.full(out_shape, inside_out)

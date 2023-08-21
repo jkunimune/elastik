@@ -1,0 +1,6 @@
+number: 4
+cuts: example
+shape_weights: land
+scale_weights: land
+size: inf,inf
+section_names: Africa,Australia,America
