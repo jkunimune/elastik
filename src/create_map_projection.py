@@ -746,7 +746,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 		for i in range(projected_boundary.shape[0]):
 			text += f"{projected_boundary[i, 0]:9.2f},{projected_boundary[i, 1]:9.2f}\n" # the map edge vertices (km)
 
-		with open(f"../projection/{subdirectory}{lang['elastic-earth']}-{numeral}.csv",
+		with open(f"../projection/{subdirectory}{lang['elastic-earth']}-{numeral}.txt",
 		          "w", encoding="utf-8") as file:
 			file.write(re.sub(fr"\bnan\b", "NaN", text))  # change spelling of "nan" for Java compatibility
 
