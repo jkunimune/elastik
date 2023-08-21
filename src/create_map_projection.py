@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sys
 import threading
@@ -30,6 +31,7 @@ from util import dilate, EARTH, index_grid, Scalar, inside_region, interp, \
 	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor, inside_polygon, \
 	search_out_from, make_path_go_around_pole
 
+os.makedirs("../projection/", exist_ok=True)
 logging.basicConfig(
 	level=logging.INFO,
 	format="%(asctime)s | %(levelname)s | %(message)s",
@@ -660,6 +662,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 		h5_xy_tuple = [(lang["x"], float), (lang["y"], float)]
 		h5_фλ_tuple = [(lang["latitude"], float), (lang["longitude"], float)]
 
+		os.makedirs(f"../projection/{subdirectory}", exist_ok=True)
 		with h5py.File(f"../projection/{subdirectory}{lang['elastic-earth']}-{numeral}.h5", "w") as file:
 			file.attrs[lang["name"]] = lang["elastic earth #"].format(numeral)
 			file.attrs[lang["descript"]] = lang[f"descript{number}"]
