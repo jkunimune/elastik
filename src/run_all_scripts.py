@@ -17,8 +17,8 @@ if __name__ == "__main__":
 	print(time.strftime("%Y-%m-%d %H:%M:%S"))
 	calculate_weights()
 	plt.close("all")
-	for mesh in ["basic", "oceans", "mountains"]:
-		build_mesh(mesh)
+	for mesh, resolution in [("basic", 24), ("oceans", 10), ("mountains", 18)]:
+		build_mesh(mesh, resolution)
 	plt.close("all")
 	for projection in ["continents", "oceans", "countries"]:
 		create_map_projection(projection)

@@ -17,8 +17,6 @@ from numpy.typing import NDArray
 
 from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, interp, offset_from_angle
 
-# the number of cells between the equator and each pole
-RESOLUTION = 25
 # the amount of space around each Section's valid region where the mesh should be defined
 MARGIN = 1.0
 
@@ -33,7 +31,7 @@ STRAITS = [(66.5, -169.0), # Bering
            (-60, -65), # Drake
            ]
 # the distance around a strait that should be duplicated for clarity
-STRAIT_RADIUS = degrees(1500/EARTH.R)
+STRAIT_RADIUS = degrees(1200/EARTH.R)
 
 
 class Section:
@@ -459,7 +457,7 @@ def save_mesh(filename: str, ф: NDArray[float], λ: NDArray[float],
 			file.create_dataset(f"section{h}/border", data=sections[h].border)
 
 
-def build_mesh(name: str, resolution=RESOLUTION):
+def build_mesh(name: str, resolution: int):
 	""" bild a mesh
 	    :param name: one of "basic", "oceans", or "mountains"
 	    :param resolution: the number of cells between the equator and each pole
@@ -575,7 +573,7 @@ def build_mesh(name: str, resolution=RESOLUTION):
 
 
 if __name__ == "__main__":
-	build_mesh("basic")
-	build_mesh("oceans")
-	build_mesh("mountains")
+	build_mesh("basic", resolution=24)
+	build_mesh("oceans", resolution=10)
+	build_mesh("mountains", resolution=18)
 	plt.show()
