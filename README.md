@@ -11,9 +11,9 @@
  If you're interested in using the code to create new map projections like Elastic Earth,
  see [§Using the code](#Using the code) below that.
 
-![Elastic Earth I projection with mesh](examples/mesh-1.svg "Elastic Earth I projection with mesh")
-![Elastic Earth II projection with mesh](examples/mesh-2.svg "Elastic Earth II projection with mesh")
-![Elastic Earth III projection with mesh](examples/mesh-3.svg "Elastic Earth III projection with mesh")
+ ![Elastic Earth I projection with mesh](examples/mesh-1.svg "Elastic Earth I projection with mesh")
+ ![Elastic Earth II projection with mesh](examples/mesh-2.svg "Elastic Earth II projection with mesh")
+ ![Elastic Earth III projection with mesh](examples/mesh-3.svg "Elastic Earth III projection with mesh")
 
 ## Using the projections
 
@@ -37,6 +37,8 @@
  Note that the points do not completely cover the sphere.
  That's because most latitudes and longitudes are outside of the region this section covers.
 
+ ![A section's point array in two coordinate systems](resources/images/diagram-1.png)
+
  Projecting points within a section is a question of taking latitudes and longitudes not explicitly listed in the table of points,
  and determining the appropriate x and y values based on nearby points that *are* explicitly listed.
  This problem is generally known as 2D interpolation.
@@ -47,11 +49,15 @@
  Figure 2 below shows the same section as before with geographic data interpolated onto it.
  The shaded region represents the area where interpolation is possible.
 
+ ![A section with geographic data interpolated on it in two coordinate systems](resources/images/diagram-2.png)
+
  To map the whole globe, we simply combine all of the sections.
  Figure 3 below shows three sections fitting together to form a complete map.
 
+ ![A complete map made of three sections fit together](resources/images/diagram-3.png)
+
  The astute viewer may note that there is significant overlap between them.
- In addition, some geographic features, such as X, are present on multiple sections in different places.
+ In addition, some geographic features, such as Cape Horn, are present on multiple sections in different places.
  Some maps may intentionally use this redundancy.
  For example, it's somewhat common in conventional maps to show the Chukchi peninsula on both
  the left side of the map (where it falls within the international dateline) and
@@ -64,10 +70,14 @@
  so every point on the globe is contained by exactly one (except points exactly on the edge).
  Figure 4 below shows the example section from before with its boundary drawn.
 
+ ![A section with its boundary shown in two coordinate systems](resources/images/diagram-4.png)
+
  Thus, to remove the repeated regions, simply check each point before projecting it
  to determine which section contains it,
  and interpolate its x and y using only that section.
  Figure 5 below shows the result of clipping the sections in this way.
+
+ ![A complete map made of three sections clipped by their boundaries](resources/images/diagram-2.png)
 
  Inverting the map projections is possible but computationally challenging.
  This is a fundamental limitation of mesh-based projection.
@@ -137,7 +147,7 @@
  - `create_map_projection.py` generates a map projection based on pregenerated weights and meshes
  - `calculate_weights.py` generates greyscale images that can be used as weights for new map projections (requires coastline data; see below)
  - `build_mesh.py` generates an unoptimized mesh specifying the rough configuration of a new map projection based on a manually specified or pregenerated cut file.
- - `find_drainage_divides.py` generates a cut file based on the borders between watersheds (requires elevation data; see below)
+ - `find_drainage_divides.py` generates a cut file based on the boundaries between watersheds (requires elevation data; see below)
  - `run_all_scripts.py` executes `build_mesh.py`, `calculate_weights.py`, and `create_map_projections.py` in that order on all of their possible inputs
 
  I've tried to include all dependencies so that PyPI installs and data files are the only things you need to add.
