@@ -3,4 +3,4 @@ cuts: mountains
 shape_weights: sea
 scale_weights: sea
 size: inf,inf
-section_names: Atlantic,Pacific,Indian
+section_names: Indian,Atlantic,Pacific

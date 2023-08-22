@@ -62,8 +62,8 @@ def calculate_drainage_divides(endpoints: list[tuple[float, float]]):
 
 	# adjust the first path to make it go to the tripoint like the others
 	split_index = index_of_2d(tripoint, paths[0][:, 0], paths[0][:, 1])
-	paths.append(paths[0][:split_index - 1:-1, :])
-	paths[0] = paths[0][:split_index + 1, :]
+	paths.insert(0, paths[0][:split_index - 1:-1, :])
+	paths[1] = paths[1][:split_index + 1, :]
 	# then flip everything so that they all go away from the tripoint
 	for i in range(len(paths)):
 		paths[i] = paths[i][::-1, :]

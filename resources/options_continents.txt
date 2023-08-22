@@ -3,4 +3,4 @@ cuts: oceans
 shape_weights: land
 scale_weights: land
 size: inf,inf
-section_names: Africa,Australia,America
+section_names: America,Africa,Australia
