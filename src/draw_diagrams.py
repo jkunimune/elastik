@@ -25,7 +25,7 @@ def draw_diagrams():
 	os.makedirs("../resources/images", exist_ok=True)
 
 	# first compute the Elastic Earth I projection with lower resolution
-	if not os.path.isfile("projection/elastic-earth-I.h5"):
+	if not os.path.isfile("../projection/elastic-earth-IV.h5"):
 		build_mesh("example", resolution=4)
 		create_map_projection("example")
 		plt.close("all")
@@ -39,13 +39,13 @@ def draw_diagrams():
 	plot_projection_domains(
 		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=False, shading=False, graticule=False, coastlines=False)
-	plt.savefig("../resources/images/diagram-1.png", dpi=150)
+	plt.savefig("../resources/images/diagram-1.png", dpi=80)
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7.0, 3.8))
 	plot_projection_domains(
 		ax_left, ax_right, mesh, section_index, color="#000000",
 		nodes=True, boundary=False, shading=True, graticule=True, coastlines=True)
-	plt.savefig("../resources/images/diagram-2.png", dpi=150)
+	plt.savefig("../resources/images/diagram-2.png", dpi=80)
 
 	fig, ax = plt.subplots(1, 1, figsize=(6.0, 4.5))
 	for index, color in enumerate(["#001D47", "#0C2C03", "#5F1021"]):
@@ -57,13 +57,13 @@ def draw_diagrams():
 	plt.margins(.01)
 	plt.axis("off")
 	plt.tight_layout()
-	plt.savefig("../resources/images/diagram-3.png", dpi=150)
+	plt.savefig("../resources/images/diagram-3.png", dpi=80)
 
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7.0, 3.8))
 	plot_projection_domains(
 		ax_left, ax_right, mesh, section_index, color="#000000",
-		nodes=True, boundary=True, shading=True, graticule=True, coastlines=True)
-	plt.savefig("../resources/images/diagram-4.png", dpi=150)
+		nodes=True, boundary=True, shading=True, graticule=False, coastlines=True)
+	plt.savefig("../resources/images/diagram-4.png", dpi=80)
 
 	fig, ax = plt.subplots(1, 1, figsize=(6.0, 4.5))
 	for index, color in enumerate(["#001D47", "#0C2C03", "#5F1021"]):
@@ -75,7 +75,7 @@ def draw_diagrams():
 	plt.margins(.01)
 	plt.axis("off")
 	plt.tight_layout()
-	plt.savefig("../resources/images/diagram-5.png", dpi=150)
+	plt.savefig("../resources/images/diagram-5.png", dpi=80)
 
 	plt.show()
 

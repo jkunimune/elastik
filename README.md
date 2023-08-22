@@ -57,7 +57,8 @@
  ![A complete map made of three sections fit together](resources/images/diagram-3.png)
 
  The astute viewer may note that there is significant overlap between them.
- In addition, some geographic features, such as Cape Horn, are present on multiple sections in different places.
+ In addition, some geographic features are present on multiple sections in different places,
+ such as Cape Horn which appears on both the far left and far right ends of the map.
  Some maps may intentionally use this redundancy.
  For example, it's somewhat common in conventional maps to show the Chukchi peninsula on both
  the left side of the map (where it falls within the international dateline) and
@@ -77,7 +78,7 @@
  and interpolate its x and y using only that section.
  Figure 5 below shows the result of clipping the sections in this way.
 
- ![A complete map made of three sections clipped by their boundaries](resources/images/diagram-2.png)
+ ![A complete map made of three sections clipped by their boundaries](resources/images/diagram-5.png)
 
  Inverting the map projections is possible but computationally challenging.
  This is a fundamental limitation of mesh-based projection.
