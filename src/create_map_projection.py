@@ -700,12 +700,6 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 				group[lang["boundary"]][lang["latitude"]] = mesh.section_boundaries[h][:, 0]
 				group[lang["boundary"]][lang["longitude"]] = mesh.section_boundaries[h][:, 1]
 				group[lang["boundary"]].attrs[lang["units"]] = "°"
-				((section_left, section_bottom), (section_right, section_top)) = \
-					get_bounding_box(mesh.nodes[h, :, :, :])
-				group.create_dataset(lang["bounding box"], shape=(2,), dtype=h5_xy_tuple)
-				group[lang["bounding box"]][lang["x"]] = [max(map_left, section_left), min(map_right, section_right)]
-				group[lang["bounding box"]][lang["y"]] = [max(map_bottom, section_bottom), min(map_top, section_top)]
-				group[lang["bounding box"]].attrs[lang["units"]] = "km"
 
 				group[lang["latitude"]] = mesh.ф
 				group[lang["latitude"]].attrs[lang["units"]] = "°"
