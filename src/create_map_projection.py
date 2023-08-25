@@ -677,6 +677,21 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 			file[lang["bounding box"]].attrs[lang["units"]] = "km"
 			file[lang["sections"]] = [lang["section #"].format(h) for h in range(mesh.num_sections)]
 
+			group = file.create_group(lang["inverse"])
+			group[lang["x"]] = x_raster
+			group[lang["x"]].attrs[lang["units"]] = "km"
+			group[lang["x"]].make_scale()
+			group[lang["y"]] = y_raster
+			group[lang["y"]].attrs[lang["units"]] = "km"
+			group[lang["y"]].make_scale()
+			group.create_dataset(lang["inverse points"],
+			                    shape=inverse_raster.shape[:2], dtype=h5_фλ_tuple)
+			group[lang["inverse points"]][lang["latitude"]] = inverse_raster[:, :, 0]
+			group[lang["inverse points"]][lang["longitude"]] = inverse_raster[:, :, 1]
+			group[lang["inverse points"]].attrs[lang["units"]] = "°"
+			group[lang["inverse points"]].dims[0].attach_scale(group[lang["x"]])
+			group[lang["inverse points"]].dims[1].attach_scale(group[lang["y"]])
+
 			for h in range(mesh.num_sections):
 				group = file.create_group(lang["section #"].format(h))
 				group.attrs[lang["name"]] = lang[section_names[h]]
@@ -692,35 +707,19 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 				group[lang["bounding box"]][lang["y"]] = [max(map_bottom, section_bottom), min(map_top, section_top)]
 				group[lang["bounding box"]].attrs[lang["units"]] = "km"
 
-				subgroup = group.create_group(lang["projected points"])
-				subgroup[lang["latitude"]] = mesh.ф
-				subgroup[lang["latitude"]].attrs[lang["units"]] = "°"
-				subgroup[lang["latitude"]].make_scale()
-				subgroup[lang["longitude"]] = mesh.λ
-				subgroup[lang["longitude"]].make_scale()
-				subgroup[lang["longitude"]].attrs[lang["units"]] = "°"
-				subgroup.create_dataset(lang["points"],
+				group[lang["latitude"]] = mesh.ф
+				group[lang["latitude"]].attrs[lang["units"]] = "°"
+				group[lang["latitude"]].make_scale()
+				group[lang["longitude"]] = mesh.λ
+				group[lang["longitude"]].make_scale()
+				group[lang["longitude"]].attrs[lang["units"]] = "°"
+				group.create_dataset(lang["projected points"],
 				                        shape=(mesh.ф.size, mesh.λ.size), dtype=h5_xy_tuple)
-				subgroup[lang["points"]][lang["x"]] = mesh.nodes[h, :, :, 0]
-				subgroup[lang["points"]][lang["y"]] = mesh.nodes[h, :, :, 1]
-				subgroup[lang["points"]].attrs[lang["units"]] = "km"
-				subgroup[lang["points"]].dims[0].attach_scale(subgroup[lang["latitude"]])
-				subgroup[lang["points"]].dims[1].attach_scale(subgroup[lang["longitude"]])
-
-				subgroup = group.create_group(lang["inverse points"])
-				subgroup[lang["x"]] = x_raster
-				subgroup[lang["x"]].attrs[lang["units"]] = "km"
-				subgroup[lang["x"]].make_scale()
-				subgroup[lang["y"]] = y_raster
-				subgroup[lang["y"]].attrs[lang["units"]] = "km"
-				subgroup[lang["y"]].make_scale()
-				subgroup.create_dataset(lang["points"],
-				                        shape=inverse_raster.shape[1:3], dtype=h5_фλ_tuple)
-				subgroup[lang["points"]][lang["latitude"]] = inverse_raster[h, :, :, 0]
-				subgroup[lang["points"]][lang["longitude"]] = inverse_raster[h, :, :, 1]
-				subgroup[lang["points"]].attrs[lang["units"]] = "°"
-				subgroup[lang["points"]].dims[0].attach_scale(subgroup[lang["x"]])
-				subgroup[lang["points"]].dims[1].attach_scale(subgroup[lang["y"]])
+				group[lang["projected points"]][lang["x"]] = mesh.nodes[h, :, :, 0]
+				group[lang["projected points"]][lang["y"]] = mesh.nodes[h, :, :, 1]
+				group[lang["projected points"]].attrs[lang["units"]] = "km"
+				group[lang["projected points"]].dims[0].attach_scale(group[lang["latitude"]])
+				group[lang["projected points"]].dims[1].attach_scale(group[lang["longitude"]])
 
 		# then save a simpler but larger and less explanatory txt file
 		text = ""
@@ -737,17 +736,17 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 					if j != mesh.nodes.shape[2] - 1:
 						text += ","
 				text += "\n"
-			text += lang["section inverse header"].format(*inverse_raster[h].shape) # the shape of the sample raster
-			text += f"{mesh_left:9.2f},{mesh_bottom:9.2f},{mesh_right:9.2f},{mesh_top:9.2f}\n" # the bounding box of the sample raster
-			for j in range(inverse_raster.shape[2]):
-				for i in range(inverse_raster.shape[1]):
-					text += f"{inverse_raster[h, i, j, 0]:6.1f},{inverse_raster[h, i, j, 1]:6.1f}" # the sample raster (°)
-					if i != inverse_raster.shape[1] - 1:
-						text += ","
-				text += "\n"
 		text += lang["boundary header"].format(projected_boundary.shape[0]) # the number of map edge vertices
 		for i in range(projected_boundary.shape[0]):
 			text += f"{projected_boundary[i, 0]:9.2f},{projected_boundary[i, 1]:9.2f}\n" # the map edge vertices (km)
+		text += lang["inverse header"].format(*inverse_raster.shape) # the shape of the sample raster
+		text += f"{mesh_left:9.2f},{mesh_bottom:9.2f},{mesh_right:9.2f},{mesh_top:9.2f}\n" # the bounding box of the sample raster
+		for j in range(inverse_raster.shape[1]):
+			for i in range(inverse_raster.shape[0]):
+				text += f"{inverse_raster[i, j, 0]:6.1f},{inverse_raster[i, j, 1]:6.1f}" # the sample raster (°)
+				if i != inverse_raster.shape[0] - 1:
+					text += ","
+			text += "\n"
 
 		with open(f"../projection/{subdirectory}{lang['elastic-earth']}-{numeral}.txt",
 		          "w", encoding="utf-8") as file:
@@ -872,10 +871,12 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 	hs = range(mesh.num_sections)
 
 	# do each point one at a time, since this doesn't need to be super fast
-	result = np.empty((mesh.num_sections,) + points.shape)
+	result = np.full(points.shape, nan)
 	for point_index, point in enumerate(points.reshape((-1, 2))):
 		point_index = np.unravel_index(point_index, points.shape[:-1])
 		logging.info(f"{point_index}/{points.shape[:-1]} (<{point[0]:.1f} km, {point[1]:.1f} km>)")
+		possible_results = np.empty((mesh.num_sections, 2), dtype=float)
+		closenesses = np.empty(mesh.num_sections, dtype=float)
 		for h in hs:
 			# start by vectorizedly scanning every node position
 			residuals = np.sum((mesh.nodes[h, :, :, :] - np.array([point]))**2, axis=-1)
@@ -895,7 +896,8 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 					isnan(mesh.nodes[h, i_closest, j_closest + 1, 0]):
 				λ_closest -= 1.1e-2
 			# this scan minimization will serve as the backup result if we find noting better
-			result[(h,) + point_index] = [ф_closest, λ_closest]
+			possible_results[h, :] = [ф_closest, λ_closest]
+			closenesses[h] = residuals[i_closest, j_closest]
 			# but more importantly, this will serve as the initial guess for the more detailed search
 			# look at each _cell_ in the vicinity and see if any contain the point
 			for i, j in search_out_from(
@@ -910,10 +912,22 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 					# if you find one, take it!  that's an exact inverse.
 					if inside_polygon(*point, cell, convex=True):
 						# do inverse 2d linear interpolation (it's harder than one mite expect!)
-						result[(h,) + point_index] = inverse_in_tetragon(
+						possible_results[h, :] = inverse_in_tetragon(
 							point, node_sw, node_se, node_nw, node_ne,
 							mesh.ф[i], mesh.ф[i + 1], mesh.λ[j], mesh.λ[j + 1])
+						closenesses[h] = 0
 						break
+
+		# crudely deal with multiple possible projections for each point
+		# first prioritize having an inverse projection near the correct anser
+		best_h = np.argmin(closenesses)
+		result[point_index] = possible_results[best_h]
+		# but mainly prioritize being inside the section boundaries
+		for h in hs:
+			if closenesses[h] == 0 and \
+					inside_region(possible_results[h, 0], possible_results[h, 1],
+					              mesh.section_boundaries[h], period=2*pi):
+				result[point_index] = possible_results[h]
 
 	return result
 
