@@ -29,8 +29,8 @@ STRAITS = [(66.5, -168.5), # Bering
            (-10, 116), # Lombok (offset to make it aline with adjacent ones)
            (-10, 129), # Timor sea
            (-60, -65), # Drake
-           (53, -168.5),  # Aleutian islands
-           (-4, -168.5), # Phoenix islands
+           (53.2, -168.5),  # Aleutian islands
+           (-3.7, -168.5), # Phoenix islands
            ]
 # the distance around a strait that should be duplicated for clarity
 STRAIT_RADIUS = degrees(1200/EARTH.R)
@@ -211,12 +211,12 @@ def cells_approached_by(x_edges: NDArray[float], y_edges: NDArray[float],
 	approached = np.full((x_edges.size - 1, y_edges.size - 1), False)
 	for end_point, penultimate_point in [(path[0], path[1]), (path[-1], path[-2])]:
 		for offset in [-radius, radius]:
-			if end_point[0] in x_edges:
+			if end_point[0] in x_edges and penultimate_point[0] != end_point[0]:
 				i = bin_index(end_point[0], x_edges,
 				              right=penultimate_point[0] < end_point[0])
 				j = bin_index(end_point[1] + offset, y_edges)
 				approached[i, j] = True
-			if end_point[1] in y_edges:
+			if end_point[1] in y_edges and penultimate_point[1] != end_point[1]:
 				j = bin_index(end_point[1], y_edges,
 				              right=penultimate_point[1] < end_point[1])
 				i = bin_index(end_point[0] + offset, x_edges)
@@ -335,7 +335,7 @@ def line_square_intersection(x_out: float, y_out: float, x_in: float, y_in: floa
 	return x_intersect, y_intersect
 
 
-def expand_bool_array(arr: NDArray[bool]) -> NDArray[bool]:
+def expand_bool_array(arr: NDArray[bool], account_for_periodicity: bool) -> NDArray[bool]:
 	""" create an array one bigger in both dimensions representing the anser to the
 	    question: are any of the surrounding pixels True?
 	"""
@@ -344,8 +344,9 @@ def expand_bool_array(arr: NDArray[bool]) -> NDArray[bool]:
 	out[:-1, 1:] |= arr
 	out[1:, :-1] |= arr
 	out[1:, 1:] |= arr
-	out[:, 0] |= out[:, -1] # don't forget to account for periodicity on axis 1
-	out[:, -1] = out[:, 0]
+	if account_for_periodicity:
+		out[:, 0] |= out[:, -1]
+		out[:, -1] = out[:, 0]
 	return out
 
 
@@ -525,7 +526,7 @@ def build_mesh(name: str, resolution: int):
 					(abs(wrap_angle(λ_grid - λ_strait)) < STRAIT_RADIUS/cos(radians(ф_strait)))
 				include_cells[cell_near_strait] = True
 
-		include_nodes[h, :, :] = expand_bool_array(include_cells)
+		include_nodes[h, :, :] = expand_bool_array(include_cells, False)
 
 		# and create an oblique stereographic projection just for it
 		nodes[h, include_nodes[h, :, :], :] = oblique_stereographic_project(
@@ -544,7 +545,7 @@ def build_mesh(name: str, resolution: int):
 		for λj in λ:
 			plt.axvline(λj, color="k", linewidth=".6")
 
-	share_nodes = expand_bool_array(share_cells)
+	share_nodes = expand_bool_array(share_cells, True)
 
 	# finally, blend the sections together at their boundaries
 	mean_nodes = np.tile(np.nanmean(nodes, axis=0), (len(sections), 1, 1, 1))
