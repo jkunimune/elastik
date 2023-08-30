@@ -1150,8 +1150,8 @@ class Mesh:
 
 
 if __name__ == "__main__":
-	# create_map_projection("continents")
-	# create_map_projection("oceans")
+	create_map_projection("continents")
+	create_map_projection("oceans")
 	create_map_projection("countries")
 
 	plt.show()
