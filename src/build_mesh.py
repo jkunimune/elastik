@@ -21,7 +21,7 @@ from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, inter
 MARGIN = 1.0
 
 # locations of various straits that should be shown continuously
-STRAITS = [(66.5, -169.0), # Bering
+STRAITS = [(66.5, -168.5), # Bering
            (9.1, -79.7), # Panama canal
            (30.7, 32.3), # Suez Canal
            (1.8, 102.4), # Malacca
@@ -29,6 +29,8 @@ STRAITS = [(66.5, -169.0), # Bering
            (-10, 116), # Lombok (offset to make it aline with adjacent ones)
            (-10, 129), # Timor sea
            (-60, -65), # Drake
+           (53, -168.5),  # Aleutian islands
+           (-4, -168.5), # Phoenix islands
            ]
 # the distance around a strait that should be duplicated for clarity
 STRAIT_RADIUS = degrees(1200/EARTH.R)
@@ -508,7 +510,7 @@ def build_mesh(name: str, resolution: int):
 				if np.any(share_cells[i_pole, :]):
 					share_cells[i_pole, :] = True
 
-		# add in any straits that happen to be split across it's edge
+		# add in any straits that happen to be split across its edge
 		ф_border, λ_border = resolve_path(section.cut_border[:, 0], section.cut_border[:, 1],
 		                                  STRAIT_RADIUS)
 		for ф_strait, λ_strait in STRAITS:
