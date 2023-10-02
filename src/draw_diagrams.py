@@ -191,15 +191,15 @@ def set_ticks(ax: Axes, spacing: float, fmt: str, y_ticks_on_right=False) -> Non
 def load_mesh(filename: str) -> Mesh:
 	""" load an Elastic Earth mesh from disk """
 	with h5py.File(f"../projection/{filename}.h5", "r") as file:
-		ф = file["section 0/projected points/latitude"][:]
-		λ = file["section 0/projected points/longitude"][:]
+		ф = file["section 0/latitude"][:]
+		λ = file["section 0/longitude"][:]
 		num_sections = file["sections"].size
 		nodes = np.empty((num_sections, ф.size, λ.size, 2))
 		section_boundaries = []
 		for h, section in enumerate(file["sections"]):
 			section = section.decode()
-			nodes[h, :, :, 0] = file[f"{section}/projected points/points"][:, :]["x"]
-			nodes[h, :, :, 1] = file[f"{section}/projected points/points"][:, :]["y"]
+			nodes[h, :, :, 0] = file[f"{section}/projected points"][:, :]["x"]
+			nodes[h, :, :, 1] = file[f"{section}/projected points"][:, :]["y"]
 			boundary = file[f"{section}/boundary"][:]
 			boundary = np.stack([boundary["latitude"], boundary["longitude"]], axis=-1)
 			section_boundaries.append(boundary)
