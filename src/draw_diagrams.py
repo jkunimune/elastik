@@ -11,7 +11,7 @@ import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
-from matplotlib.patches import Polygon
+from matplotlib.patches import Polygon, ConnectionPatch
 from matplotlib.ticker import MultipleLocator
 from scipy.interpolate import RegularGridInterpolator
 
@@ -89,22 +89,29 @@ def draw_diagrams():
 def plot_projection_domains(ax_left: Axes, ax_right: Axes,
                             elastic_earth_mesh: Mesh, section_index: int, color: str,
                             nodes: bool, boundary: bool, shading: bool,
-                            graticule: bool, coastlines: bool) -> None:
+                            graticule: bool, coastlines: bool, arrows: bool) -> None:
 	""" plot some features of a section in both spherical (i.e. equirectangular) and planar
 	    (i.e. Elastic Earth) coordinate systems
 	"""
+	# plot the globe coordinates (technicly an equirectangular projection)
 	equirectangular_mesh = equirectangular_like(elastic_earth_mesh)
 	draw_section(ax_left, equirectangular_mesh, section_index, color,
 	             nodes, boundary, shading, graticule, coastlines)
 	ax_left.set_xlabel("Longitude")
 	ax_left.set_ylabel("Latitude", labelpad=-1)
 	set_ticks(ax_left, spacing=30, fmt="{x:.0f}°")
+
+	# plot the plane coordinates (using the provided mesh)
 	draw_section(ax_right, elastic_earth_mesh, section_index, color,
 	             nodes, boundary, shading, graticule, coastlines)
 	ax_right.set_xlabel("x (at 1:100M scale)")
 	ax_right.set_ylabel("y (at 1:100M scale)", labelpad=11, rotation=-90)
 	set_ticks(ax_right, spacing=5, fmt="{x:.0f} cm", y_ticks_on_right=True)
 	plt.tight_layout()
+
+	if arrows:
+		arrow = ConnectionPatch(xyA=(0., 0.), coordsA=ax_left.transData,
+		                        xyB=(0., 0.), coordsB=ax_left.transData)
 
 
 def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
