@@ -137,7 +137,7 @@ def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
 		else:
 			boundary_polygon.set_edgecolor("none")
 		if shading:
-			boundary_polygon.set_facecolor(color + "17")
+			boundary_polygon.set_facecolor(color + "0f")
 		else:
 			boundary_polygon.set_facecolor("none")
 		boundary_polygon.set_zorder(40)
