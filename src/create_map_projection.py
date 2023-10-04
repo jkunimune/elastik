@@ -657,13 +657,13 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 
 	# do the self-explanatory HDF5 file
 	for language_code, lang in languages.items():
-		subdirectory = f"{language_code}/" if language_code != "en" else ""
+		subdirectory = lang['language'] if language_code != "en" else "."
 		numeral = lang["numerals"][number]
 		h5_xy_tuple = [(lang["x"], float), (lang["y"], float)]
 		h5_фλ_tuple = [(lang["latitude"], float), (lang["longitude"], float)]
 
 		os.makedirs(f"../projection/{subdirectory}", exist_ok=True)
-		with h5py.File(f"../projection/{subdirectory}{lang['elastic-earth']}-{numeral}.h5", "w") as file:
+		with h5py.File(f"../projection/{subdirectory}/{lang['elastic-earth']}-{numeral}.h5", "w") as file:
 			file.attrs[lang["name"]] = lang["elastic earth #"].format(numeral)
 			file.attrs[lang["descript"]] = lang[f"descript{number}"]
 			file.attrs[lang["num sections"]] = mesh.num_sections
@@ -742,7 +742,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 					text += ","
 			text += "\n"
 
-		with open(f"../projection/{subdirectory}{lang['elastic-earth']}-{numeral}.txt",
+		with open(f"../projection/{subdirectory}/{lang['elastic-earth']}-{numeral}.txt",
 		          "w", encoding="utf-8") as file:
 			file.write(re.sub(fr"\bnan\b", "NaN", text))  # change spelling of "nan" for Java compatibility
 

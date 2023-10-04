@@ -1,5 +1,6 @@
 {
   "en": {
+    "language": "English",
     "name": "name",
     "descript": "description",
     "num sections": "number of sections",
@@ -40,6 +41,7 @@
     "numerals": ["", "I", "II", "III", "IV"]
   },
   "es": {
+    "language": "español",
     "name": "nombre",
     "descript": "descripción",
     "num sections": "número de secciones",
@@ -80,6 +82,7 @@
     "numerals": ["", "I", "II", "III", "IV"]
   },
   "ja": {
+    "language": "日本語",
     "name": "名前",
     "descript": "説明",
     "num sections": "部分数",
@@ -120,6 +123,7 @@
     "numerals": ["", "1", "2", "3", "4"]
   },
   "pd": {
+    "language": "Pandunia",
     "name": "nam",
     "descript": "sifa loge",
     "num sections": "fen nume",
