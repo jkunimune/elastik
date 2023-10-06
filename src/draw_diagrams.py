@@ -11,7 +11,8 @@ import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
-from matplotlib.patches import Polygon, ConnectionPatch
+from matplotlib.figure import Figure
+from matplotlib.patches import Polygon, ConnectionPatch, ArrowStyle
 from matplotlib.ticker import MultipleLocator
 from scipy.interpolate import RegularGridInterpolator
 
@@ -39,15 +40,17 @@ def draw_diagrams():
 	# figure 1: nodes in two domains
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7.0, 3.8))
 	plot_projection_domains(
-		ax_left, ax_right, mesh, section_index, color="#000000",
-		nodes=True, boundary=False, shading=False, graticule=False, coastlines=False)
+		fig, ax_left, ax_right, mesh, section_index, color="#000000",
+		nodes=True, boundary=False, shading=False,
+		graticule=False, coastlines=False, arrows=True)
 	plt.savefig("../resources/images/diagram-1.png", dpi=80)
 
 	# figure 2: interpolation in two domains
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7.0, 3.8))
 	plot_projection_domains(
-		ax_left, ax_right, mesh, section_index, color="#000000",
-		nodes=True, boundary=False, shading=True, graticule=True, coastlines=True)
+		fig, ax_left, ax_right, mesh, section_index, color="#000000",
+		nodes=True, boundary=False, shading=True,
+		graticule=True, coastlines=True, arrows=False)
 	plt.savefig("../resources/images/diagram-2.png", dpi=80)
 
 	# figure 3: complete map
@@ -66,8 +69,9 @@ def draw_diagrams():
 	# figure 4: boundaries in two domains
 	fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(7.0, 3.8))
 	plot_projection_domains(
-		ax_left, ax_right, mesh, section_index, color="#000000",
-		nodes=True, boundary=True, shading=True, graticule=False, coastlines=True)
+		fig, ax_left, ax_right, mesh, section_index, color="#000000",
+		nodes=True, boundary=True, shading=True,
+		graticule=False, coastlines=True, arrows=False)
 	plt.savefig("../resources/images/diagram-4.png", dpi=80)
 
 	# figure 5: complete map with boundaries
@@ -86,7 +90,7 @@ def draw_diagrams():
 	plt.show()
 
 
-def plot_projection_domains(ax_left: Axes, ax_right: Axes,
+def plot_projection_domains(fig: Figure, ax_left: Axes, ax_right: Axes,
                             elastic_earth_mesh: Mesh, section_index: int, color: str,
                             nodes: bool, boundary: bool, shading: bool,
                             graticule: bool, coastlines: bool, arrows: bool) -> None:
@@ -110,14 +114,21 @@ def plot_projection_domains(ax_left: Axes, ax_right: Axes,
 	plt.tight_layout()
 
 	if arrows:
-		arrow = ConnectionPatch(xyA=(0., 0.), coordsA=ax_left.transData,
-		                        xyB=(0., 0.), coordsB=ax_left.transData)
+		indices = [(1, 7), (3, 9), (4, 12), (5, 7), (7, 9)]
+		for i, j in indices:
+			arrow = ConnectionPatch(
+				xyA=equirectangular_mesh.nodes[section_index, i, j, :], coordsA=ax_left.transData,
+				xyB=elastic_earth_mesh.nodes[section_index, i, j, :], coordsB=ax_right.transData,
+				arrowstyle=ArrowStyle("->", head_length=.90, head_width=.30),
+				linewidth=1.5, color="#5575bc", zorder=0)
+			fig.add_artist(arrow)
 
 
 def draw_section(ax: Axes, mesh: Mesh, section_index: int, color: str,
                  nodes: bool, boundary: bool, shading: bool,
                  graticule: bool, coastlines: bool) -> None:
 	""" plot some features of a section on a given coordinate system (i.e. mesh) """
+	ax.set_facecolor("none")
 	# project the boundary if desired
 	if boundary:
 		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[section_index, :, :, :],
