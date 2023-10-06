@@ -21,6 +21,8 @@ import numpy as np
 import shapefile
 import tifffile
 from matplotlib import pyplot as plt
+from matplotlib.colors import LogNorm
+from numpy import newaxis
 from numpy.typing import NDArray
 from scipy.interpolate import RegularGridInterpolator
 
@@ -29,7 +31,7 @@ from optimize import minimize_with_bounds
 from sparse import SparseNDArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, interp, \
 	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor, inside_polygon, \
-	search_out_from, make_path_go_around_pole
+	search_out_from, make_path_go_around_pole, polygon_area
 
 os.makedirs("../projection/", exist_ok=True)
 logging.basicConfig(
@@ -236,7 +238,7 @@ def create_map_projection(configuration_file: str):
 			                cell_definitions, cell_scale_weights,
 			                coastlines, boundary_matrix, width, height,
 			                map_axes, hist_axes, valu_axes, diff_axes,
-			                final=False)
+			                show_axes=True, show_distortion=False)
 			thread_lock = False
 			main_fig.canvas.draw()
 			small_fig.canvas.draw()
@@ -253,7 +255,7 @@ def create_map_projection(configuration_file: str):
 	small_fig.canvas.manager.set_window_title("Saving...")
 
 	# apply the optimized vector back to the mesh
-	nodes = np.where(index_mesh.nodes[:, :, :, np.newaxis] != -1,
+	nodes = np.where(index_mesh.nodes[:, :, :, newaxis] != -1,
 	                 node_positions[index_mesh.nodes, :], nan)
 	mesh = Mesh(mesh.section_boundaries, mesh.ф, mesh.λ, nodes)
 
@@ -274,16 +276,18 @@ def create_map_projection(configuration_file: str):
 			boundary[:, k] *= map_size[k]/np.ptp(boundary[:, k])
 
 	# plot and save the final version of the mesh
-	show_projection(None, node_positions, None, values, grads,
-	                mesh, dΦ, dΛ,
-	                cell_definitions, cell_scale_weights,
-	                coastlines, boundary, width, height,
-	                map_axes, hist_axes, valu_axes, diff_axes,
-	                final=True)
-	main_fig.savefig(f"../examples/mesh-{configure['number']}.svg",
-	                 bbox_inches="tight", pad_inches=0)
-	main_fig.savefig(f"../examples/mesh-{configure['number']}.png", dpi=300,
-	                 bbox_inches="tight", pad_inches=0)
+	for show_distortion in [False, True]:  # both with and without shading for scale
+		show_projection(None, node_positions, None, values, grads,
+		                mesh, dΦ, dΛ,
+		                cell_definitions, cell_scale_weights,
+		                coastlines, boundary, width, height,
+		                map_axes, hist_axes, valu_axes, diff_axes,
+		                show_axes=False, show_distortion=show_distortion)
+		filename = "distortion-map" if show_distortion else "mesh"
+		main_fig.savefig(f"../examples/{filename}-{configure['number']}.svg",
+		                 bbox_inches="tight", pad_inches=0)
+		main_fig.savefig(f"../examples/{filename}-{configure['number']}.png", dpi=300,
+		                 bbox_inches="tight", pad_inches=0)
 
 	# apply some simplification to the unprojected boundary now that we're done projecting them
 	for h in range(mesh.num_sections):
@@ -534,12 +538,12 @@ def compute_principal_strains(positions: NDArray[float],
 
 	west = positions[cell_definitions[:, 3], :]
 	east = positions[cell_definitions[:, 4], :]
-	F_λ = ((east - west)/dΛ[i, np.newaxis])
+	F_λ = ((east - west)/dΛ[i, newaxis])
 	dxdΛ, dydΛ = F_λ[:, 0], F_λ[:, 1]
 
 	south = positions[cell_definitions[:, 5], :]
 	north = positions[cell_definitions[:, 6], :]
-	F_ф = ((north - south)/dΦ[i, np.newaxis])
+	F_ф = ((north - south)/dΦ[i, newaxis])
 	dxdΦ, dydΦ = F_ф[:, 0], F_ф[:, 1]
 
 	trace = np.sqrt((dxdΛ + dydΦ)**2 + (dxdΦ - dydΛ)**2)/2
@@ -556,41 +560,55 @@ def show_projection(free_positions: Optional[NDArray[float]], all_positions: Opt
                     map_width: float, map_hite: float,
                     map_axes: plt.Axes, hist_axes: plt.Axes,
                     valu_axes: plt.Axes, diff_axes: plt.Axes,
-                    final: bool) -> None:
+                    show_axes: bool, show_distortion: bool) -> None:
 	""" display the current state of the optimization process, including a preliminary map, a
 	    distortion histogram, and a convergence as a function of time plot
 	"""
 	# convert the state vector into real space if needed
 	if mesh.nodes.ndim == 3:
 		mesh = Mesh(mesh.section_boundaries, mesh.ф, mesh.λ,
-		            np.where(mesh.nodes[:, :, :, np.newaxis] != -1,
+		            np.where(mesh.nodes[:, :, :, newaxis] != -1,
 		                     all_positions[mesh.nodes, :], nan))
 	if boundary.shape[1] > 2:
 		boundary = boundary@all_positions
 
 	map_axes.clear()
 	for h in range(mesh.num_sections):
-		# plot the underlying mesh_indices for each section
-		map_axes.plot(mesh.nodes[h, :, :, 0], mesh.nodes[h, :, :, 1], "#bbb", linewidth=.3, zorder=1)
-		map_axes.plot(mesh.nodes[h, :, :, 0].T, mesh.nodes[h, :, :, 1].T, "#bbb", linewidth=.3, zorder=1)
+		if show_distortion:
+			# shade in cells by their areal distortion
+			areas = polygon_area(
+				mesh.nodes[h, 0:-1, 0:-1, :], mesh.nodes[h, 0:-1, 1:, :],
+				mesh.nodes[h, 1:, 1:, :], mesh.nodes[h, 1:, 0:-1, :])
+			intended_areas = EARTH.R**2*(np.diff(np.sin(np.radians(mesh.ф)))[:, newaxis]*
+			                             np.diff(np.radians(mesh.λ))[newaxis, :])
+			scale = areas/intended_areas
+			masked_nodes = np.where(np.isfinite(mesh.nodes), mesh.nodes, 0)  # remove nonfinite values for pcolormesh
+			map_axes.pcolormesh(masked_nodes[h, :, :, 0], masked_nodes[h, :, :, 1], scale,
+			                    cmap="RdBu", norm=LogNorm(vmin=1/10, vmax=10),
+			                    zorder=1)
+		else:
+			# plot the underlying mesh for each section
+			map_axes.plot(mesh.nodes[h, :, :, 0], mesh.nodes[h, :, :, 1], "#bbb", linewidth=.3, zorder=1)
+			map_axes.plot(mesh.nodes[h, :, :, 0].T, mesh.nodes[h, :, :, 1].T, "#bbb", linewidth=.3, zorder=1)
+
 		# crudely project and plot the coastlines onto each section
-		project = RegularGridInterpolator([mesh.ф, mesh.λ], mesh.nodes[h, :, :, :],
-		                                  bounds_error=False, fill_value=nan)
+		project = RegularGridInterpolator(
+			[mesh.ф, mesh.λ], mesh.nodes[h, :, :, :], bounds_error=False, fill_value=nan)
 		for line in coastlines:
 			projected_line = project(line)
 			map_axes.plot(projected_line[:, 0], projected_line[:, 1], "#000", linewidth=.8, zorder=2)
 
-	# plot the outline of the mesh_indices
+	# plot the outline of the mesh
 	map_axes.fill(boundary[:, 0], boundary[:, 1],
 	              facecolor="none", edgecolor="#000", linewidth=1.3, zorder=2)
 	# plot the bounding rectangle if there is one
-	if final:
-		map_axes.axis("off")
-	else:
+	if show_axes:
 		map_axes.plot(np.multiply([-1, 1, 1, -1, -1], map_width/2),
 		              np.multiply([-1, -1, 1, 1, -1], map_hite/2), "#000", linewidth=.3, zorder=2)
+	else:
+		map_axes.axis("off")
 
-	if not final and velocity is not None:
+	if velocity is not None:
 		# indicate the speed of each node
 		map_axes.scatter(free_positions[:, 0], free_positions[:, 1], s=5,
 		                 c=-np.linalg.norm(velocity, axis=1),
@@ -723,10 +741,10 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 			text += lang["section boundary header"].format(mesh.section_boundaries[h].shape[0]) # the number of section boundary vertices
 			for i in range(mesh.section_boundaries[h].shape[0]):
 				text += f"{mesh.section_boundaries[h][i, 0]:6.1f},{mesh.section_boundaries[h][i, 1]:6.1f}\n" # the section boundary vertices (°)
-			text += lang["section points header"].format(*mesh.nodes[h].shape) # the shape of the section mesh_indices
+			text += lang["section points header"].format(*mesh.nodes[h].shape) # the shape of the section mesh
 			for i in range(mesh.nodes.shape[1]):
 				for j in range(mesh.nodes.shape[2]):
-					text += f"{mesh.nodes[h, i, j, 0]:9.2f},{mesh.nodes[h, i, j, 1]:9.2f}" # the section mesh_indices points (km)
+					text += f"{mesh.nodes[h, i, j, 0]:9.2f},{mesh.nodes[h, i, j, 1]:9.2f}" # the section mesh points (km)
 					if j != mesh.nodes.shape[2] - 1:
 						text += ","
 				text += "\n"
@@ -1007,7 +1025,7 @@ def smooth_interpolate(xs: Sequence[float | NDArray[float]], x_grids: Sequence[N
 
 	# get the indexing all set up correctly
 	index = tuple(np.meshgrid(*([i, i + 1] for i in key), indexing="ij", sparse=True))
-	full = (slice(None),)*ndim + (np.newaxis,)*item_ndim
+	full = (slice(None),)*ndim + (newaxis,)*item_ndim
 
 	# then multiply and combine all the things
 	weits = product(value_weights)[full]

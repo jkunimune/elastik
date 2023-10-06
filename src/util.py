@@ -4,7 +4,7 @@ util.py
 
 some handy utility functions that are used in multiple places
 """
-from math import hypot, pi, cos, sin, inf, copysign, nan
+from math import hypot, pi, cos, sin, inf, copysign
 from typing import Sequence, TYPE_CHECKING, Union, Iterable
 
 import numpy as np
@@ -56,15 +56,18 @@ def bin_centers(bin_edges: NDArray[float]) -> NDArray[float]:
 	""" calculate the center of each bin """
 	return (bin_edges[1:] + bin_edges[:-1])/2
 
+
 def bin_index(x: float | NDArray[float], bin_edges: NDArray[float], right=False) -> int | NDArray[int]:
 	""" I dislike the way numpy defines this function
 	"""  # TODO: right side makes no sense
 	return np.where(x < bin_edges[-1], np.digitize(x, bin_edges, right=right) - 1, bin_edges.size - 2)
 
+
 def index_grid(shape: Sequence[int]) -> Sequence[NDArray[int]]:
 	""" create a set of int matrices that together cover every index in an array of the given shape """
 	indices = [np.arange(length) for length in shape]
 	return np.meshgrid(*indices, indexing="ij")
+
 
 def normalize(vector: NDArray[float]) -> NDArray[float]:
 	""" normalize a vector such that it can be compared to other vectors on the basis of direction alone """
@@ -73,6 +76,7 @@ def normalize(vector: NDArray[float]) -> NDArray[float]:
 	else:
 		return np.divide(vector, np.max(np.abs(vector)))
 
+
 def vector_normalize(vector: NDArray[float]) -> NDArray[float]:
 	""" normalize a vector such that its magnitude is one """
 	if np.all(np.equal(vector, 0)):
@@ -80,9 +84,10 @@ def vector_normalize(vector: NDArray[float]) -> NDArray[float]:
 	else:
 		return np.divide(vector, np.linalg.norm(vector))
 
+
 def offset_from_angle(a: NDArray[float], b: NDArray[float], c: NDArray[float],
                       offset: float) -> NDArray[float]:
-	""" find a point that is diagonally offset from an angle, in the direction it points """
+	""" find a point that is diagonally offset from a bend in a path, in the direction it points """
 	bend_direction = vector_normalize(c - b) - \
 	                 vector_normalize(b - a)
 	if hypot(*bend_direction) > 1e-4:
@@ -92,9 +97,11 @@ def offset_from_angle(a: NDArray[float], b: NDArray[float], c: NDArray[float],
 		bend_direction = np.array([-travel_direction[1], travel_direction[0]])
 	return b - offset*bend_direction
 
+
 def wrap_angle(x: Numeric, period=360) -> Numeric:
 	""" wrap an angular value into the range [-period/2, period/2) """
 	return x - np.floor((x + period/2)/period)*period
+
 
 def to_cartesian(ф: Numeric, λ: Numeric) -> tuple[Numeric, Numeric, Numeric]:
 	""" convert spherical coordinates in degrees to unit-sphere cartesian coordinates """
@@ -102,14 +109,35 @@ def to_cartesian(ф: Numeric, λ: Numeric) -> tuple[Numeric, Numeric, Numeric]:
 	        np.cos(np.radians(ф))*np.sin(np.radians(λ)),
 	        np.sin(np.radians(ф)))
 
+
 def rotation_matrix(angle: float) -> NDArray[float]:
 	""" calculate a simple 2d rotation matrix """
 	return np.array([[cos(angle), -sin(angle)],
 	                 [sin(angle),  cos(angle)]])
 
+
+def polygon_area(*points: NDArray[float]) -> NDArray[float]:
+	""" a vectorized function that takes a set of vertices and calculates all the areas.
+	    the last axis of each point will be taken as the coordinate axis.
+	"""
+	if any(point.shape[-1] != 2 for point in points):
+		raise ValueError("each point must be 2D")
+	area = np.zeros(points[0].shape[:-1])
+	# take the polygon one triangle at a time
+	point_a = points[0]
+	for i in range(2, len(points)):
+		point_b = points[i - 1]
+		point_c = points[i]
+		line_ab = point_b - point_a
+		line_ac = point_c - point_a
+		area += 1/2*(line_ab[..., 0]*line_ac[..., 1] - line_ab[..., 1]*line_ac[..., 0])
+	return area
+
+
 def interp(x: Numeric, x0: float, x1: float, y0: Numeric, y1: Numeric):
 	""" do linear interpolation given two points, and *not* assuming x1 >= x0 """
 	return (x - x0)/(x1 - x0)*(y1 - y0) + y0
+
 
 def dilate(x: NDArray[bool], distance: int) -> NDArray[bool]:
 	""" take a 1D boolean array and make it so that any Falses near Trues become True.
@@ -205,6 +233,7 @@ def intersects(a: tuple[float, float], b: tuple[float, float], c: tuple[float, f
 			return False
 	return True
 
+
 def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float]]:
 	""" find the smallest rectangle that contains the given polygon, and parameterize it with the
 	    rotation and translation needed to make it landscape and centered on the origin.
@@ -238,6 +267,7 @@ def fit_in_rectangle(polygon: NDArray[float]) -> tuple[float, tuple[float, float
 			best_transform = -angle, (-x_center, -y_center)
 	return best_transform
 
+
 def rotate_and_shift(points: NDArray[float], rotation: float, shift: NDArray[float]) -> NDArray[float]:
 	""" rotate some points about the origin and then translate them """
 	if points.shape[-1] != 2:
@@ -246,6 +276,7 @@ def rotate_and_shift(points: NDArray[float], rotation: float, shift: NDArray[flo
 	rotated = rotation_matrix(rotation)@points
 	rotated = np.moveaxis(rotated, -2, -1)
 	return rotated + shift
+
 
 def convex_hull(points: NDArray[float]) -> NDArray[float]:
 	""" take a set of points and return a copy that is missing all of the points that are inside the
@@ -269,6 +300,7 @@ def convex_hull(points: NDArray[float]) -> NDArray[float]:
 		while len(hull) >= 3 and not convex(*hull[-3:]):
 			hull.pop(-2)
 	return np.array(hull)
+
 
 def decimate_path(path: list[tuple[float, float]] | NDArray[float], resolution: float,
                   watch_for_longitude_wrapping=False) -> list[tuple[float, float]] | NDArray[float]:
