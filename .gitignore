@@ -1,3 +1,18 @@
+# the fourth projection (used only in diagrams)
+projection/**/*-4.*
+projection/**/*-IV.*
+examples/*-4.*
+
+# input data files (see README for where to get them)
+resources/elevation/*
+resources/shapefiles/*
+
+# IntelliJ files
+.idea/*
+
+# log files
+*.log
+
 # compiled Python
 *.pyc
 
@@ -6,13 +21,3 @@ cmake-build-debug/*
 *.exp
 *.lib
 *.obj
-
-# IntelliJ files
-.idea/*
-
-# input data files (see README for where to get them)
-resources/elevation/*
-resources/shapefiles/*
-
-# log files
-*.log
