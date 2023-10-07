@@ -896,16 +896,16 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 			# adjust the best position so it doesn't fall on the very edge of the mesh (to make finite differences easier later)
 			if i_closest - 1 < 0 or \
 					isnan(mesh.nodes[h, i_closest - 1, j_closest, 0]):
-				ф_closest += 1.1e-2
+				ф_closest += 0.1
 			elif i_closest + 1 >= mesh.nodes.shape[1] or \
 					isnan(mesh.nodes[h, i_closest + 1, j_closest, 0]):
-				ф_closest -= 1.1e-2
+				ф_closest -= 0.1
 			if j_closest - 1 < 0 or \
 					isnan(mesh.nodes[h, i_closest, j_closest - 1, 0]):
-				λ_closest += 1.1e-2
+				λ_closest += 0.1
 			elif j_closest + 1 >= mesh.nodes.shape[2] or \
 					isnan(mesh.nodes[h, i_closest, j_closest + 1, 0]):
-				λ_closest -= 1.1e-2
+				λ_closest -= 0.1
 			# this scan minimization will serve as the backup result if we find noting better
 			possible_results[h, :] = [ф_closest, λ_closest]
 			closenesses[h] = residuals[i_closest, j_closest]
