@@ -886,7 +886,6 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 	result = np.full(points.shape, nan)
 	for point_index, point in enumerate(points.reshape((-1, 2))):
 		point_index = np.unravel_index(point_index, points.shape[:-1])
-		logging.info(f"{point_index}/{points.shape[:-1]} (<{point[0]:.1f} km, {point[1]:.1f} km>)")
 		possible_results = np.empty((mesh.num_sections, 2), dtype=float)
 		closenesses = np.empty(mesh.num_sections, dtype=float)
 		for h in hs:
