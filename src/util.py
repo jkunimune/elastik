@@ -204,15 +204,19 @@ def find_boundaries(in_region: NDArray[bool]) -> list[tuple[NDArray[int], NDArra
 
 def search_out_from(i0: int, j0: int, shape: tuple[int, int], max_distance: int) -> Iterable[tuple[int, int]]:
 	""" yield a list of index pairs in the given shape orderd such that iterating thru the list spirals
-	    outward from i0,j0.  it will be treated periodically on axis 1 (so j=0 is next to j=n-1) """
-	option_grid = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]))
-	option_list = np.reshape(np.stack(option_grid, axis=-1), (-1, 2))
-	i_distance = abs(option_list[:, 0] - i0)
-	j_distance = abs(option_list[:, 1] - j0)
+	    outward from i0,j0.  it will be treated periodically on axis 1 (so j=0 is next to j=n-1) and
+	    distances computed quasispherically (at i=0 it will go to further js) """
+	i, j = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]))
+	i = i.ravel()
+	j = j.ravel()
+	i_distance = abs(i - i0)
+	j_distance = abs(j - j0)
 	j_distance = np.minimum(j_distance, shape[1] - j_distance)  # account for periodicity
+	j_distance = j_distance*np.sin(i/(shape[0] - 1)*pi)  # account for quasi-spherical distances
 	distance = i_distance + j_distance
 	order = np.argsort(distance)
-	return option_list[order[distance[order] <= max_distance], :]
+	order = order[distance[order] <= max_distance]
+	return zip(i[order], j[order])
 
 
 def intersects(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float], d: tuple[float, float]) -> bool:
@@ -436,7 +440,7 @@ def inside_polygon(x: NDArray[float], y: NDArray[float], polygon: NDArray[float]
 	for i in range(polygon.shape[0]):
 		x0, y0 = polygon[i - 1, :]
 		x1, y1 = polygon[i, :]
-		inside &= (x - x0)*(y - y1) - (x - x1)*(y - y0) > 0
+		inside &= (x - x0)*(y - y1) - (x - x1)*(y - y0) >= 0
 	return inside
 
 

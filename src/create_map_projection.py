@@ -289,7 +289,7 @@ def create_map_projection(configuration_file: str):
 		main_fig.savefig(f"../examples/{filename}-{configure['number']}.png", dpi=300,
 		                 bbox_inches="tight", pad_inches=0)
 
-	# apply some simplification to the unprojected boundary now that we're done projecting them
+	# apply some simplification to the unprojected boundary now that we're done projecting it
 	for h in range(mesh.num_sections):
 		mesh.section_boundaries[h] = simplify_path(
 			make_path_go_around_pole(mesh.section_boundaries[h]), cyclic=True)
@@ -965,25 +965,33 @@ def inverse_in_tetragon(point: NDArray[float],
 	def cross(u: NDArray[float], v: NDArray[float]) -> float:
 		return u[0]*v[1] - u[1]*v[0]
 
-	# first solve this quadratic equation for λ
-	A = cross(node_sw - point, node_sw - node_nw)
-	B = 1/2*(cross(node_sw - point, node_se - node_ne) + cross(node_se - point, node_sw - node_nw))
-	C = cross(node_se - point, node_se - node_ne)
-	for s in [-1, 1]:
-		l = ((A - B) + s*sqrt(B**2 - A*C))/(A - 2*B + C)
-		if 0 <= l <= 1:
-			λ = λ_min + (λ_max - λ_min)*l
+	# first solve this quadratic equation for ф
+	A = cross(node_sw - point, node_sw - node_se)
+	B = 1/2*(cross(node_sw - point, node_nw - node_ne) + cross(node_nw - point, node_sw - node_se))
+	C = cross(node_nw - point, node_nw - node_ne)
+	roots = [((A - B) + sqrt(B**2 - A*C))/(A - 2*B + C),
+	         ((A - B) - sqrt(B**2 - A*C))/(A - 2*B + C)]
+	if 0 < roots[0] < 1:  # be careful to choose the most plausible of the two solutions
+		l = roots[0]
+	elif 0 < roots[1] < 1:
+		l = roots[1]
+	elif 0 <= roots[0] <= 1:
+		l = roots[0]
+	elif 0 <= roots[1] <= 1:
+		l = roots[1]
+	else:
+		raise ValueError("this point is not inside the tetragon")
+	ф = interp(l, 0, 1, ф_min, ф_max)
 
-			# then linearly interpolate along a meridian to get ф
-			node_s = interp(λ, λ_min, λ_max, node_sw, node_se)
-			node_n = interp(λ, λ_min, λ_max, node_nw, node_ne)
-			for g in [0, 1]:
-				if node_s[g] != node_n[g]:
-					ф = interp(point[g], node_s[g], node_n[g], ф_min, ф_max)
-					return ф, λ
+	# then linearly interpolate along a parallel to get λ
+	node_w = interp(ф, ф_min, ф_max, node_sw, node_nw)
+	node_e = interp(ф, ф_min, ф_max, node_se, node_ne)
+	for g in [0, 1]:
+		if node_w[g] != node_e[g]:
+			λ = interp(point[g], node_w[g], node_e[g], λ_min, λ_max)
+			return ф, λ
 
-			raise ValueError(f"this tetragon is degenerate ({node_sw}--{node_se}")
-	raise ValueError("this point is not inside the tetragon")
+	raise ValueError(f"this tetragon is degenerate ({node_w}--{node_e}")
 
 
 def smooth_interpolate(xs: Sequence[float | NDArray[float]], x_grids: Sequence[NDArray[float]],
