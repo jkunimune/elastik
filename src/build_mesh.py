@@ -497,13 +497,13 @@ def build_mesh(name: str, resolution: int):
 
 		# as long as resolution is high enuff to add border cells freely
 		if resolution > 6:
+			# force it to include the whole antimeridian if it touches the antimeridian
+			if np.any(include_cells[1:-1, 0]) or np.any(include_cells[1:-1, -1]):
+				# unless it touches both poles, in which case that's not necessary
+				if not np.any(include_cells[0, :]) or not np.any(include_cells[-1, :]):
+					include_cells[:, 0] = True
+					include_cells[:, -1] = True
 			for i_pole in [0, -1]:
-				# force it to include the whole antimeridian if it touches the antimeridian
-				if np.any(include_cells[1:-1, 0]) or np.any(include_cells[1:-1, -1]):
-					# unless it touches both poles, in which case that's not necessary
-					if not np.any(include_cells[0, :]) or not np.any(include_cells[-1, :]):
-						include_cells[:, 0] = True
-						include_cells[:, -1] = True
 				# force it to include the whole polar region when it touches the polar region
 				if np.any(include_cells[i_pole, :]):
 					include_cells[i_pole, :] = True
