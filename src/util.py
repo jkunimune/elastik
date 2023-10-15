@@ -4,7 +4,7 @@ util.py
 
 some handy utility functions that are used in multiple places
 """
-from math import hypot, pi, cos, sin, inf, copysign
+from math import hypot, pi, cos, sin, inf, copysign, isfinite
 from typing import Sequence, TYPE_CHECKING, Union, Iterable
 
 import numpy as np
@@ -139,6 +139,40 @@ def interp(x: Numeric, x0: float, x1: float, y0: Numeric, y1: Numeric):
 	return (x - x0)/(x1 - x0)*(y1 - y0) + y0
 
 
+def interpolate_grid_point(values: NDArray[float], i0: int, j0: int) -> float:
+	""" fit a 2nd order 2d parabola to the set of values in the given map in the vicinity of the
+	    given indices, in order to guess what value should go at the given indices.
+	"""
+	# collect the nearby pixels
+	x, y, z = [], [], []
+	for di in [-3, -2, -1, 0, 1, 2, 3]:
+		for dj in [-3, -2, -1, 0, 1, 2, 3]:
+			if abs(di) + abs(dj) <= 3 and \
+					0 <= i0 + di < values.shape[0] and \
+					0 <= j0 + dj < values.shape[1] and \
+					isfinite(values[i0 + di, j0 + dj]):
+				x.append(di)
+				y.append(dj)
+				z.append(values[i0 + di, j0 + dj])
+
+	# if there is sufficient data
+	if len(z) >= 5:
+		# do a simple fit to infer the value that would make the most sense here
+		x = np.array(x)
+		y = np.array(y)
+		weights = np.concatenate([
+			np.stack([np.ones(len(z)), x, y, x**2, x*y, y**2], axis=1),
+			[[0, 0, 0, 1, 0, 0],
+			 [0, 0, 0, 0, 1, 0],
+			 [0, 0, 0, 0, 0, 1]],
+		])
+		targets = np.concatenate([z, [0, 0, 0]])
+		coefficients, _, _, _ = np.linalg.lstsq(weights, targets, rcond=None)
+		return coefficients[0]
+	else:
+		return values[i0, j0]
+
+
 def dilate(x: NDArray[bool], distance: int) -> NDArray[bool]:
 	""" take a 1D boolean array and make it so that any Falses near Trues become True.
 	    then return the modified array.
@@ -205,7 +239,7 @@ def find_boundaries(in_region: NDArray[bool]) -> list[tuple[NDArray[int], NDArra
 def search_out_from(i0: int, j0: int, shape: tuple[int, int], max_distance: int) -> Iterable[tuple[int, int]]:
 	""" yield a list of index pairs in the given shape orderd such that iterating thru the list spirals
 	    outward from i0,j0.  it will be treated periodically on axis 1 (so j=0 is next to j=n-1) and
-	    distances computed quasispherically (at i=0 it will go to further js) """
+	    distances computed quasispherically (at i=0 it will go to further js). """
 	i, j = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]))
 	i = i.ravel()
 	j = j.ravel()

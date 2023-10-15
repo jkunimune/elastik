@@ -31,7 +31,7 @@ from optimize import minimize_with_bounds
 from sparse import SparseNDArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, interp, \
 	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor, inside_polygon, \
-	search_out_from, make_path_go_around_pole, polygon_area
+	search_out_from, make_path_go_around_pole, polygon_area, interpolate_grid_point
 
 os.makedirs("../projection/", exist_ok=True)
 logging.basicConfig(
@@ -289,7 +289,11 @@ def create_map_projection(configuration_file: str):
 		main_fig.savefig(f"../examples/{filename}-{configure['number']}.png", dpi=300,
 		                 bbox_inches="tight", pad_inches=0)
 
-	# apply some simplification to the unprojected boundary now that we're done projecting it
+	# fill in some of the nan values to help with interpolation (don't include them in the plots because they look ugly)
+	if mesh.nodes.shape[1] > 10:
+		mesh = dilate_mesh(mesh)
+
+	# apply some simplification to the unprojected boundary now that we're done using it for projection
 	for h in range(mesh.num_sections):
 		mesh.section_boundaries[h] = simplify_path(
 			make_path_go_around_pole(mesh.section_boundaries[h]), cyclic=True)
@@ -549,6 +553,22 @@ def compute_principal_strains(positions: NDArray[float],
 	trace = np.sqrt((dxdΛ + dydΦ)**2 + (dxdΦ - dydΛ)**2)/2
 	antitrace = np.sqrt((dxdΛ - dydΦ)**2 + (dxdΦ + dydΛ)**2)/2
 	return trace + antitrace, trace - antitrace
+
+
+def dilate_mesh(mesh: Mesh) -> Mesh:
+	""" take a mesh and fill in some nans by extrapolating nearby finite values
+	    :param mesh: the input mesh, with some nan values
+	    :return: the expanded mesh
+	"""
+	new_nodes = np.copy(mesh.nodes)
+	for h in range(mesh.nodes.shape[0]):
+		for i in range(mesh.nodes.shape[1]):
+			for j in range(mesh.nodes.shape[2]):
+				for l in range(2):
+					if isnan(mesh.nodes[h, i, j, l]):
+						new_nodes[h, i, j, l] = interpolate_grid_point(mesh.nodes[h, :, :, l], i, j)
+
+	return Mesh(mesh.section_boundaries, mesh.ф, mesh.λ, new_nodes)
 
 
 def show_projection(free_positions: Optional[NDArray[float]], all_positions: Optional[NDArray[float]],
