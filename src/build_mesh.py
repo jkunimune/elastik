@@ -352,7 +352,7 @@ def expand_bool_array(arr: NDArray[bool], account_for_periodicity: bool) -> NDAr
 
 def oblique_stereographic_project(ф: NDArray[float], λ: NDArray[float],
                                   section: Section) -> NDArray[float]:
-	""" apply a simple map projection meant to approximate the Elastic Earth projection
+	""" apply a simple map projection meant to approximate the Elastic projection
 	    of this Section.  the projection should be conformal, reasonably undistorted
 	    within the section's borders, and project the section's glue_tripoint to the
 	    origin with true scale and orientation (so it's continuus with other sections).

@@ -26,14 +26,14 @@ def draw_diagrams():
 	plt.rcParams.update({'font.size': 12})
 	os.makedirs("../resources/images", exist_ok=True)
 
-	# first compute the Elastic Earth I projection with lower resolution
-	if not os.path.isfile("../projection/elastic-earth-IV.h5"):
+	# first compute the low-resolution Elastic projection to use as the example
+	if not os.path.isfile("../projection/elastic-IV.h5"):
 		build_mesh("example", resolution=4)
 		create_map_projection("example")
 		plt.close("all")
 
 	# then draw the diagrams using that new coarse projection
-	mesh = load_mesh("elastic-earth-IV")
+	mesh = load_mesh("elastic-IV")
 	mesh.nodes /= 1e3  # scale down to a realistic map size and change km to cm
 	section_index = 0
 
@@ -95,7 +95,7 @@ def plot_projection_domains(fig: Figure, ax_left: Axes, ax_right: Axes,
                             nodes: bool, boundary: bool, shading: bool,
                             graticule: bool, coastlines: bool, arrows: bool) -> None:
 	""" plot some features of a section in both spherical (i.e. equirectangular) and planar
-	    (i.e. Elastic Earth) coordinate systems
+	    (i.e. Elastic) coordinate systems
 	"""
 	# plot the globe coordinates (technicly an equirectangular projection)
 	equirectangular_mesh = equirectangular_like(elastic_earth_mesh)
@@ -207,7 +207,7 @@ def set_ticks(ax: Axes, spacing: float, fmt: str, y_ticks_on_right=False) -> Non
 
 
 def load_mesh(filename: str) -> Mesh:
-	""" load an Elastic Earth mesh from disk """
+	""" load an Elastic mesh from disk """
 	with h5py.File(f"../projection/{filename}.h5", "r") as file:
 		ф = file["section 0/latitude"][:]
 		λ = file["section 0/longitude"][:]
@@ -225,7 +225,7 @@ def load_mesh(filename: str) -> Mesh:
 
 
 def equirectangular_like(mesh: Mesh) -> Mesh:
-	""" generate something that looks like an Elastic Earth mesh but corresponds to an
+	""" generate something that looks like an Elastic mesh but corresponds to an
 	    equirectangular projection
 	"""
 	Φ, Λ = np.meshgrid(mesh.ф, mesh.λ, indexing="ij")

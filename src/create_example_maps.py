@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-elastik.py
+create_example_maps.py
 
 this script is an example of how to use the Elastic projections. enclosed in this file is
 everything you need to load the mesh files and project data onto them.
@@ -38,9 +38,9 @@ SNIPPING_LENGTH = 1000
 
 # FUNCTIONS RELATING TO GRAPHICS AND DATA
 
-def create_example_elastik_maps():
+def create_example_maps():
 	create_map(name="political",
-	           projection="elastic-earth-III",
+	           projection="elastic-III",
 	           background_style=dict(
 		           facecolor="#ebf8ff",
 	           ),
@@ -63,7 +63,7 @@ def create_example_elastik_maps():
 		           )),
 	           ])
 	create_map(name="biomes",
-	           projection="elastic-earth-I",
+	           projection="elastic-I",
 	           background_style=dict(
 		           facecolor="#0f1d8e",
 	           ),
@@ -98,7 +98,7 @@ def create_example_elastik_maps():
 		           ))
 	           ])
 	create_map(name="water",
-	           projection="elastic-earth-II",
+	           projection="elastic-II",
 	           background_style=dict(
 		           facecolor="#fff",
 	           ),
@@ -173,15 +173,15 @@ def create_example_elastik_maps():
 def create_map(name: str, projection: str,
                background_style: Style, border_style: Style,
                data: list[tuple[str, Style]]):
-	""" draw a world map in a MatPlotLib figure using an elastik projection and some datasets.
+	""" draw a world map in a MatPlotLib figure using an elastic projection and some datasets.
 	    :param name: the name with which to save the figure
-	    :param projection: the name of the elastik projection to use
+	    :param projection: the name of the elastic projection to use
 	    :param background_style: the Style for the otherwise unfilled regions of the map area
 	    :param border_style: the Style for the line drawn around the complete map area
 	    :param data: a list of elements to include in the map
 	"""
 	print(f"creating the {name} map.")
-	sections, boundary, aspect_ratio = load_elastik_projection(projection)
+	sections, boundary, aspect_ratio = load_elastic_projection(projection)
 
 	fig = plt.figure(name, figsize=(6*sqrt(aspect_ratio), 6/sqrt(aspect_ratio)))
 	ax = fig.subplots()
@@ -341,10 +341,10 @@ def load_geographic_data(filename: str) -> tuple[list[ΦΛFeature], bool]:
 	return features, closed
 
 
-# FUNCTIONS RELATED TO THE ELASTIC EARTH PROJECTIONS
+# FUNCTIONS RELATED TO THE ELASTIC PROJECTIONS
 
 def project(features: list[ΦΛFeature], projection: list[Section]) -> list[XYFeature]:
-	""" apply the given Elastik projection, defined by a list of sections, to the given series of
+	""" apply the given Elastic projection, defined by a list of sections, to the given series of
 	    latitudes and longitudes.
 	"""
 	projected_features: list[XYFeature] = []
@@ -366,9 +366,9 @@ def project(features: list[ΦΛFeature], projection: list[Section]) -> list[XYFe
 	return projected_features
 
 
-def load_elastik_projection(name: str) -> tuple[list[Section], XYLine, float]:
-	""" load the hdf5 file that defines an elastik projection
-	    :param name: one of "elastic-earth-I", "elastic-earth-II", or "elastic-earth-III"
+def load_elastic_projection(name: str) -> tuple[list[Section], XYLine, float]:
+	""" load the hdf5 file that defines an elastic projection
+	    :param name: one of "elastic-I", "elastic-II", or "elastic-III"
 	    :return: the list of sections that comprise this projection, and the map’s full projected outer shape
 	"""
 	with h5py.File(f"../projection/{name}.h5", "r") as file:
@@ -388,7 +388,7 @@ def load_elastik_projection(name: str) -> tuple[list[Section], XYLine, float]:
 class Section:
 	def __init__(self, ф_nodes: NDArray[float], λ_nodes: NDArray[float],
 	             xy_nodes: NDArray[XYPoint], border: ΦΛLine):
-		""" one lobe of an Elastik projection, containing a grid of latitudes and
+		""" one lobe of an Elastic projection, containing a grid of latitudes and
 		    longitudes as well as the corresponding x and y coordinates
 		    :param ф_nodes: the node latitudes (deg)
 		    :param λ_nodes: the node longitudes (deg)
@@ -433,5 +433,5 @@ def is_counterclockwise(path: path.Path) -> bool:
 
 
 if __name__ == "__main__":
-	create_example_elastik_maps()
+	create_example_maps()
 	plt.show()

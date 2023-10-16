@@ -701,8 +701,8 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 		h5_фλ_tuple = [(lang["latitude"], float), (lang["longitude"], float)]
 
 		os.makedirs(f"../projection/{subdirectory}", exist_ok=True)
-		with h5py.File(f"../projection/{subdirectory}/{lang['elastic-earth']}-{numeral}.h5", "w") as file:
-			file.attrs[lang["name"]] = lang["elastic earth #"].format(numeral)
+		with h5py.File(f"../projection/{subdirectory}/{lang['elastic']}-{numeral}.h5", "w") as file:
+			file.attrs[lang["name"]] = lang["elastic #"].format(numeral)
 			file.attrs[lang["descript"]] = lang[f"descript{number}"]
 			file.attrs[lang["num sections"]] = mesh.num_sections
 			file.create_dataset(lang["projected boundary"],
@@ -780,7 +780,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 					text += ","
 			text += "\n"
 
-		with open(f"../projection/{subdirectory}/{lang['elastic-earth']}-{numeral}.txt",
+		with open(f"../projection/{subdirectory}/{lang['elastic']}-{numeral}.txt",
 		          "w", encoding="utf-8") as file:
 			file.write(re.sub(fr"\bnan\b", "NaN", text))  # change spelling of "nan" for Java compatibility
 

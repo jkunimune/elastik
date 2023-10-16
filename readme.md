@@ -1,19 +1,19 @@
-# Elastic Earth projections
+# Elastic projections
 
-The Elastic Earth projections are map projections of a new breed that uses
+The Elastic projections are map projections of a new breed that uses
 interpolation on a mesh to minimize and control the distortion in maps of the
 whole Earth like never before.
 
-This repository contains both [the data files](projection) that define the Elastic Earth projections
+This repository contains both [the data files](projection) that define the Elastic projections
 and [the source code](src) used to create them.
-If you're interested in making maps using the Elastic Earth projections,
+If you're interested in making maps using the Elastic projections,
 see [§ Using the projections](#Using the projections) below.
-If you're interested in using the code to create new map projections like Elastic Earth,
+If you're interested in using the code to create new map projections like Elastic,
 see [§ Using the code](#Using the code) below that.
 
-![Elastic Earth I projection with mesh](examples/mesh-1.svg "Elastic Earth I projection with mesh")
-![Elastic Earth II projection with mesh](examples/mesh-2.svg "Elastic Earth II projection with mesh")
-![Elastic Earth III projection with mesh](examples/mesh-3.svg "Elastic Earth III projection with mesh")
+![Elastic I projection with mesh](examples/mesh-1.svg "Elastic I projection with mesh")
+![Elastic II projection with mesh](examples/mesh-2.svg "Elastic II projection with mesh")
+![Elastic III projection with mesh](examples/mesh-3.svg "Elastic III projection with mesh")
 
 ## Using the projections
 
@@ -22,15 +22,15 @@ but with tables of coordinates that must be interpolated.
 This section explains how to do that.
 The tables are given in two file formats, which can both be found in [`projection/`](projection).
 I've coded up two demonstrations for those who learn best by example:
-[a Python implementation](src/elastik.py)
+[a Python implementation](src/create_example_maps.py)
 that uses the HDF files and bilinear interpolation, and
-[a Java implementation](https://github.com/jkunimune/Map-Projections/blob/master/src/maps/Elastik.java)
+[a Java implementation](https://github.com/jkunimune/Map-Projections/blob/master/src/maps/Elastic.java)
 that uses the plain text files and Hermite spline interpolation.
 The Java implementation also implements the inverse-projection using Levenberg-Marquardt iteration.
 
 ### Map projection structure
 
-Each Elastic Earth projection can be divided into two to three *sections*.
+Each Elastic projection can be divided into two to three *sections*.
 Each section covers some portion of the globe and defines the projection for points in that portion.
 Specifically, each section has a table that, at certain latitudes and longitudes,
 defines the corresponding x and y values.
@@ -81,7 +81,7 @@ Figure 5 below shows the result of clipping the sections in this way.
 
 ![A complete map made of three sections clipped by their boundaries](resources/images/diagram-5.png)
 
-And there you have it, a world map on an Elastic Earth projection!
+And there you have it, a world map on an Elastic projection!
 
 Inverting the map projections is possible but computationally challenging.
 This is a fundamental limitation of mesh-based projection.
@@ -115,10 +115,10 @@ HDF files can be opened with the program [HDFView](https://www.hdfgroup.org/down
 and are supported by libraries in a variety of programming languages
 including Python, C, Java, and MATLAB.
 Because metadata and hierarchy information is encoded, the contents of a HDF file are fairly intuitive,
-and in principle one can figure out how to use the Elastic Earth HDF files
+and in principle one can figure out how to use the Elastic projection HDF files
 without any auxiliary explanation.
 
-Each Elastic Earth HDF file contains the following information:
+Each Elastic projection HDF file contains the following information:
 - The projected boundary of the map projection.
 - The minimum and maximum x and y coordinates of the map projection.
 - The list of section names.
@@ -140,7 +140,7 @@ and because installing HDF can be kind of tricky.
 However, implementing the projections using text files will be more work,
 as you'll need to write code to separate and parse the various numbers and tables.
 
-Each Elastic Earth plain text file contains the following components, in this order:
+Each Elastic projection plain text file contains the following components, in this order:
 - A header for the map projection, stating the number of sections.
 - A header for each section followed by
   - A header for the section's boundary on the globe, stating the number of vertices in the boundary, followed by
@@ -171,12 +171,12 @@ Each Elastic Earth plain text file contains the following components, in this or
 Most of the code is Python scripts that you can just run.
 All can be found in `src/`.
 Here are the important ones:
-- `elastik.py` generates a bunch of [nice maps](examples) based on pregenerated map projections.
+- `create_example_maps.py` generates a bunch of [nice maps](examples) based on pregenerated map projections.
 - `create_map_projection.py` generates a map projection based on pregenerated weights and meshes.
 - `calculate_weights.py` generates grayscale images that can be used as weights for new map projections (requires coastline data; see below).
 - `build_mesh.py` generates an unoptimized mesh specifying the rough configuration of a new map projection based on a manually specified or pregenerated cut file.
 - `find_drainage_divides.py` generates a cut file based on the boundaries between watersheds (requires elevation data; see below).
-- `run_all_scripts.py` executes `build_mesh.py`, `calculate_weights.py`, `create_map_projections.py`, and `elastik.py` in that order on all of their possible inputs.
+- `run_all_scripts.py` executes `build_mesh.py`, `calculate_weights.py`, `create_map_projections.py`, and `create_example_maps.py` in that order on all of their possible inputs.
 
 Some of these have PyPI dependencies, which are enumerated in `requirements.txt`.
 You'll also likely need to pay attention to the C library, `sparse.c`.
