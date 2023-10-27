@@ -126,7 +126,7 @@ Each Elastic projection HDF file contains the following information:
   - The latitudes at which the projection is defined.
   - The longitudes at which the projection is defined.
   - The table of x and y coordinates corresponding to the given latitudes and longitudes (with undefined values set to *NaN*).
-  - The boundary on the globe.
+  - The boundary polygon* on the globe.
 - A group for the inverse table including
   - The x values at which the inverse-projection is defined.
   - The y values at which the inverse-projection is defined.
@@ -143,7 +143,7 @@ as you'll need to write code to separate and parse the various numbers and table
 Each Elastic projection plain text file contains the following components, in this order:
 - A header for the map projection, stating the number of sections.
 - A header for each section followed by
-  - A header for the section's boundary on the globe, stating the number of vertices in the boundary, followed by
+  - A header for the section's boundary polygon* on the globe, stating the number of vertices in the boundary, followed by
     - The list of vertices in the boundary.
       Each row is a latitude and the corresponding longitude, in degrees.
   - A header for the table of x and y values, stating the number of rows and columns in the table, followed by
@@ -165,6 +165,12 @@ Each Elastic projection plain text file contains the following components, in th
     Each pair of adjacent values is a latitude followed by the corresponding longitude, in degrees.
     The x and y values are not explicitly given;
     they are evenly spaced between the given minimums and maximums.
+
+* In both file formats, the boundary polygons are directional.
+This means that, while most of them have vertices that go counterclockwise,
+some of them have vertices that go clockwise, and for these ones the section covers everything *outside* of the polygon.
+In other words, if you imagine travelling along the boundary polygon's edge,
+the region included in the section is always on the left, and the region excluded from the region is always on the right.
 
 ## Using the code
 
