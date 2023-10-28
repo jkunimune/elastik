@@ -702,18 +702,22 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 
 		os.makedirs(f"../projection/{subdirectory}", exist_ok=True)
 		with h5py.File(f"../projection/{subdirectory}/{lang['elastic']}-{numeral}.h5", "w") as file:
-			file.attrs[lang["name"]] = lang["elastic #"].format(numeral)
-			file.attrs[lang["descript"]] = lang[f"descript{number}"]
+			file.attrs[lang["name"]] = lang["Elastic #"].format(numeral)
+			file.attrs[lang["descript"]] = lang[f"Elastic {number} descript"]
 			file.attrs[lang["num sections"]] = mesh.num_sections
 			file.create_dataset(lang["projected boundary"],
 			                    shape=(projected_boundary.shape[0],), dtype=h5_xy_tuple)
 			file[lang["projected boundary"]][lang["x"]] = projected_boundary[:, 0]
 			file[lang["projected boundary"]][lang["y"]] = projected_boundary[:, 1]
+			file[lang["projected boundary"]].attrs[lang["units"]] = "km"
+			file[lang["projected boundary"]].attrs[lang["descript"]] = lang["projected boundary descript"]
 			file.create_dataset(lang["bounding box"], shape=(2,), dtype=h5_xy_tuple)
 			file[lang["bounding box"]][lang["x"]] = [map_left, map_right]
 			file[lang["bounding box"]][lang["y"]] = [map_bottom, map_top]
 			file[lang["bounding box"]].attrs[lang["units"]] = "km"
+			file[lang["bounding box"]].attrs[lang["descript"]] = lang["bounding box descript"]
 			file[lang["sections"]] = [lang["section #"].format(h) for h in range(mesh.num_sections)]
+			file[lang["sections"]].attrs[lang["descript"]] = lang["sections descript"]
 
 			group = file.create_group(lang["inverse"])
 			group[lang["x"]] = x_raster
@@ -727,6 +731,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 			group[lang["inverse points"]][lang["latitude"]] = inverse_raster[:, :, 0]
 			group[lang["inverse points"]][lang["longitude"]] = inverse_raster[:, :, 1]
 			group[lang["inverse points"]].attrs[lang["units"]] = "°"
+			group[lang["inverse points"]].attrs[lang["descript"]] = lang["inverse points descript"]
 			group[lang["inverse points"]].dims[0].attach_scale(group[lang["x"]])
 			group[lang["inverse points"]].dims[1].attach_scale(group[lang["y"]])
 
@@ -738,6 +743,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 				group[lang["boundary"]][lang["latitude"]] = mesh.section_boundaries[h][:, 0]
 				group[lang["boundary"]][lang["longitude"]] = mesh.section_boundaries[h][:, 1]
 				group[lang["boundary"]].attrs[lang["units"]] = "°"
+				group[lang["boundary"]].attrs[lang["descript"]] = lang["boundary descript"]
 
 				group[lang["latitude"]] = mesh.ф
 				group[lang["latitude"]].attrs[lang["units"]] = "°"
@@ -750,6 +756,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 				group[lang["projected points"]][lang["x"]] = mesh.nodes[h, :, :, 0]
 				group[lang["projected points"]][lang["y"]] = mesh.nodes[h, :, :, 1]
 				group[lang["projected points"]].attrs[lang["units"]] = "km"
+				group[lang["projected points"]].attrs[lang["descript"]] = lang["projected points descript"]
 				group[lang["projected points"]].dims[0].attach_scale(group[lang["latitude"]])
 				group[lang["projected points"]].dims[1].attach_scale(group[lang["longitude"]])
 
