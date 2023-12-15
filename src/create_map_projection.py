@@ -180,7 +180,7 @@ def create_map_projection(configuration_file: str):
 			barrier_tolerance = 1e-3*EARTH.R
 			reduce, restore = Scalar(1), Scalar(1)
 
-		# progress from coarser to finer domain polytopes
+		# progress from coarser to finer feasible set polytopes
 		if bounds_coarseness == 0:
 			bounds_matrix, bounds_limits = None, inf
 		else:
@@ -190,19 +190,19 @@ def create_map_projection(configuration_file: str):
 				coarse_boundary_matrix, -coarse_boundary_matrix])
 			bounds_matrix = double_boundary_matrix@restore
 			bounds_limits = np.array([map_size/2])
-			# fit the initial conditions into the bounds each time you impose them
+			# center the initial guess inside the bounds each time you impose them
 			node_positions = rotate_and_shift(
 				node_positions, *fit_in_rectangle(boundary_matrix@node_positions))
-			boundary = boundary_matrix@node_positions
-			for k in range(bounds_limits.shape[1]):
-				if isfinite(map_size[k]):
-					excess = np.ptp(boundary[:, k])/(2*bounds_limits[0, k])
-					set_size = 2*bounds_limits[0, k]*min(1 - .1/mesh.λ.size, 1/excess)
-					node_positions[:, k] = interp(node_positions[:, k],
-					                              np.min(boundary[:, k]), np.max(boundary[:, k]),
-					                              -set_size/2, set_size/2)
 
+		# at this point you may switch over to the mesh skeleton
 		node_positions = reduce @ node_positions
+
+		# make absolutely sure the initial guess is in bounds
+		if bounds_matrix is not None:
+			for k in range(bounds_limits.shape[1]):
+				bounds_excess = np.max(bounds_matrix@node_positions[:, k]/bounds_limits[:, k])
+				if bounds_excess >= 1:
+					node_positions[:, k] *= (1 - .1/mesh.λ.size)/bounds_excess
 
 		# progress from the quickly-converging approximation to the true cost function
 		if not final:
