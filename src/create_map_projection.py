@@ -45,7 +45,7 @@ logging.basicConfig(
 )
 
 
-MIN_WEIGHT = .03 # the ratio of the whitespace weight to the subject weight
+MIN_WEIGHT = .01 # the ratio of the whitespace weight to the subject weight
 CONSTRAINT_RESOLUTION = 1.0 # the fineness of the boundary polygons used for applying constraints (°)
 BORDER_PROJECTION_RESOLUTION = 0.3 # the fineness of the boundaries before they get projected and saved (°)
 BORDER_OUTPUT_RESOLUTION = 5 # the fineness of the projected boundaries as saved (km)
