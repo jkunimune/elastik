@@ -45,8 +45,9 @@ and determining the appropriate x and y values based on nearby points that *are*
 This problem is generally known as 2D interpolation.
 It is a common technique in the computational sciences (as well as in the definition of the Robinson projection),
 and as such you will find many interpolation routines written in every major programming language.
-There are multiple applicable interpolation methods depending on how fancy you want to make it;
-the simplest one is [bilinear interpolation](), but [spline interpolation]() will yield a smoother result.
+There are multiple applicable interpolation methods depending on how fancy you want to make it.
+The simplest one is [bilinear interpolation](), but [spline interpolation]() will yield a smoother result
+(though splines will also make inversion harder, if you care about that).
 Figure 2 below shows the same section as before with geographic data interpolated onto it.
 The shaded region represents the area where interpolation is possible.
 
