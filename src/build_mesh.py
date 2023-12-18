@@ -15,7 +15,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
-from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, interp, offset_from_angle
+from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, interp, offset_from_angle, expand
 
 # the amount of space around each Section's valid region where the mesh should be defined
 MARGIN = 1.0
@@ -335,21 +335,6 @@ def line_square_intersection(x_out: float, y_out: float, x_in: float, y_in: floa
 	return x_intersect, y_intersect
 
 
-def expand_bool_array(arr: NDArray[bool], account_for_periodicity: bool) -> NDArray[bool]:
-	""" create an array one bigger in both dimensions representing the anser to the
-	    question: are any of the surrounding pixels True?
-	"""
-	out = np.full((arr.shape[0] + 1, arr.shape[1] + 1), False)
-	out[:-1, :-1] |= arr
-	out[:-1, 1:] |= arr
-	out[1:, :-1] |= arr
-	out[1:, 1:] |= arr
-	if account_for_periodicity:
-		out[:, 0] |= out[:, -1]
-		out[:, -1] = out[:, 0]
-	return out
-
-
 def oblique_stereographic_project(ф: NDArray[float], λ: NDArray[float],
                                   section: Section) -> NDArray[float]:
 	""" apply a simple map projection meant to approximate the Elastic projection
@@ -526,7 +511,7 @@ def build_mesh(name: str, resolution: int):
 					(abs(wrap_angle(λ_grid - λ_strait)) < STRAIT_RADIUS/cos(radians(ф_strait)))
 				include_cells[cell_near_strait] = True
 
-		include_nodes[h, :, :] = expand_bool_array(include_cells, False)
+		include_nodes[h, :, :] = expand(include_cells, 1, account_for_periodicity=False)
 
 		# and create an oblique stereographic projection just for it
 		nodes[h, include_nodes[h, :, :], :] = oblique_stereographic_project(
@@ -545,7 +530,7 @@ def build_mesh(name: str, resolution: int):
 		for λj in λ:
 			plt.axvline(λj, color="k", linewidth=".6")
 
-	share_nodes = expand_bool_array(share_cells, True)
+	share_nodes = expand(share_cells, 1, account_for_periodicity=True)
 
 	# finally, blend the sections together at their boundaries
 	mean_nodes = np.tile(np.nanmean(nodes, axis=0), (len(sections), 1, 1, 1))

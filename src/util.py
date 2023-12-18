@@ -183,6 +183,23 @@ def dilate(x: NDArray[bool], distance: int) -> NDArray[bool]:
 	return x
 
 
+def expand(arr: NDArray[bool], distance: int, account_for_periodicity=False) -> NDArray[bool]:
+	""" create an array distance bigger in both dimensions representing the anser to the
+	    question: are any of the surrounding pixels True?
+	"""
+	if distance != 1:
+		raise NotImplementedError()
+	out = np.full((arr.shape[0] + 1, arr.shape[1] + 1), False)
+	out[:-1, :-1] |= arr
+	out[:-1, 1:] |= arr
+	out[1:, :-1] |= arr
+	out[1:, 1:] |= arr
+	if account_for_periodicity:
+		out[:, 0] |= out[:, -1]
+		out[:, -1] = out[:, 0]
+	return out
+
+
 def find_boundaries(in_region: NDArray[bool]) -> list[tuple[NDArray[int], NDArray[int]]]:
 	""" given a boolean array representing a region in 2D space, find the paths that separate
 	    that region from the rest of the domain.

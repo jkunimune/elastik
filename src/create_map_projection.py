@@ -13,7 +13,7 @@ import os
 import re
 import sys
 import threading
-from math import inf, pi, log2, nan, floor, isfinite, isnan, sqrt, radians, cos
+from math import inf, pi, log, nan, floor, isfinite, isnan, sqrt, radians, cos
 from typing import Iterable, Sequence, Union, Optional
 
 import h5py
@@ -31,7 +31,7 @@ from optimize import minimize_with_bounds
 from sparse import SparseNDArray
 from util import dilate, EARTH, index_grid, Scalar, inside_region, interp, \
 	simplify_path, refine_path, decimate_path, rotate_and_shift, fit_in_rectangle, Tensor, inside_polygon, \
-	search_out_from, make_path_go_around_pole, polygon_area, interpolate_grid_point
+	search_out_from, make_path_go_around_pole, polygon_area, interpolate_grid_point, expand
 
 os.makedirs("../projection/", exist_ok=True)
 logging.basicConfig(
@@ -96,8 +96,8 @@ def create_map_projection(configuration_file: str):
 	coastlines = load_coastline_data()
 
 	# now we can bild up the progression schedule
-	skeleton_factors = np.ceil(np.geomspace(
-		mesh.ф.size/10, 1., int(log2(mesh.ф.size/10)) + 1)).astype(int)
+	skeleton_factors = np.round(np.geomspace(
+		mesh.ф.size/10, 1., int(log(mesh.ф.size/10)) + 1)).astype(int)
 	schedule = [(skeleton_factors[0], 0, False),  # start with the roughest fit, with no bounds
 	            (skeleton_factors[0], 0, True)]  # switch to the strict cost function before imposing bounds
 	schedule += [(factor, factor, True) for factor in skeleton_factors]  # impose the bounds and then make the mesh finer
@@ -689,8 +689,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 	((mesh_left, mesh_bottom), (mesh_right, mesh_top)) = get_bounding_box(mesh.nodes)
 	x_raster = np.linspace(mesh_left, mesh_right, RASTER_RESOLUTION + 1)
 	y_raster = np.linspace(mesh_bottom, mesh_top, RASTER_RESOLUTION + 1)
-	inverse_raster = inverse_project(
-		np.transpose(np.meshgrid(x_raster, y_raster, indexing="ij"), (1, 2, 0)), mesh)
+	inverse_raster = inverse_project(x_raster, y_raster, mesh)
 	((map_left, map_bottom), (map_right, map_top)) = get_bounding_box(projected_boundary)
 
 	# do the self-explanatory HDF5 file
@@ -900,13 +899,15 @@ def project(points: list[tuple[float, float]] | NDArray[float], mesh: Mesh,
 		return SparseNDArray.concatenate(result)
 
 
-def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArray[float]:
+def inverse_project(x_points: NDArray[float], y_points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArray[float]:
 	""" take some points, specifying a section of the map projection, and project them from the plane back to the globe,
 	    representing the result as the resulting latitudes and longitudes
-	    :param points: the m×...×n×2 array of planar coordinates of the points to project (km)
+	    :param x_points: the 1D array of length m of x coordinates to project to (km)
+	    :param y_points: the 1D array of length n of y coordinates to project to (km)
 	    :param mesh: the mesh on which to find the given points
-	    :return: the m×...×n×2 array of spherical coordinates corresponding to the input points (degrees)
+	    :return: the m×n×2 array of spherical coordinates corresponding to the input points (degrees)
 	"""
+	points = np.transpose(np.meshgrid(x_points, y_points, indexing="ij"), (1, 2, 0))
 	hs = range(mesh.num_sections)
 
 	# do each point one at a time, since this doesn't need to be super fast
@@ -966,6 +967,12 @@ def inverse_project(points: NDArray[float], mesh: Mesh) -> SparseNDArray | NDArr
 					inside_region(possible_results[h, 0], possible_results[h, 1],
 					              mesh.section_boundaries[h], period=2*pi):
 				result[point_index] = possible_results[h]
+
+	# finally, take any points that are nowhere near the mesh and mark them as nan to indicate that they should not be used
+	vertices_in_each_bin, _, _ = np.histogram2d(
+		mesh.nodes[:, :, :, 0].ravel(), mesh.nodes[:, :, :, 1].ravel(), (x_points, y_points))
+	used = expand(vertices_in_each_bin > 0, 1)  # we need to be careful to keep any that would be used to interpolate a point in-bounds even if it's far from the mesh
+	result[~used, :] = [[[nan, nan]]]
 
 	return result
 
