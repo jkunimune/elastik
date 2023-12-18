@@ -19,7 +19,7 @@ from util import bin_centers, to_cartesian, inside_region
 # minimum scale at which to resolve coasts (°)
 PRECISION = 0.5
 # radius around important regions that should be weighted (°)
-COAST_WIDTH = 10.
+COAST_WIDTH = 6.0
 # latitude of southernmost settlement (°)
 ANTARCTIC_CUTOFF = -56.
 # latitude of northernmost settlement (°)

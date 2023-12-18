@@ -576,7 +576,7 @@ def build_mesh(name: str, resolution: int):
 
 
 if __name__ == "__main__":
-	build_mesh("basic", resolution=24)
+	build_mesh("basic", resolution=30)
 	build_mesh("oceans", resolution=10)
 	build_mesh("mountains", resolution=18)
 	plt.show()

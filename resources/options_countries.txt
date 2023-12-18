@@ -2,5 +2,5 @@ number: 3
 cuts: basic
 shape_weights: land
 scale_weights: land_sinATA
-size: 25_000,15_000
+size: 24_000,14_000
 section_names: west,east
