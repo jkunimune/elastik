@@ -4,8 +4,9 @@ The Elastic projections are map projections of a new breed that uses
 interpolation on a mesh to minimize and control the distortion in maps of the
 whole Earth like never before.
 
-This repository contains both [the data files](projection) that define the Elastic projections
-and [the source code](src) used to create them.
+This repository contains both [the data files](projection) that define the Elastic projections and
+[the source code](src) used to create them,
+as well as [several example maps](examples) that use them.
 If you're interested in making maps using the Elastic projections,
 see [§ Using the projections](#Using the projections) below.
 If you're interested in using the code to create new map projections like Elastic,
@@ -46,7 +47,7 @@ This problem is generally known as 2D interpolation.
 It is a common technique in the computational sciences (as well as in the definition of the Robinson projection),
 and as such you will find many interpolation routines written in every major programming language.
 There are multiple applicable interpolation methods depending on how fancy you want to make it.
-The simplest one is [bilinear interpolation](), but [spline interpolation]() will yield a smoother result
+The simplest one is bilinear interpolation, but spline interpolation will yield a smoother result
 (though splines will also make inversion harder, if you care about that).
 Figure 2 below shows the same section as before with geographic data interpolated onto it.
 The shaded region represents the area where interpolation is possible.
@@ -176,9 +177,9 @@ the region included in the section is always on the left, and the region exclude
 ## Using the code
 
 Most of the code is Python scripts that you can just run.
-All can be found in `src/`.
+All can be found in [`src/`](src/).
 Here are the important ones:
-- `create_example_maps.py` generates a bunch of [nice maps](examples) based on pregenerated map projections.
+- `create_example_maps.py` generates a bunch of nice maps (see [`examples/`](examples)) based on pregenerated map projections.
 - `create_map_projection.py` generates a map projection based on pregenerated weights and meshes.
 - `calculate_weights.py` generates grayscale images that can be used as weights for new map projections (requires coastline data; see below).
 - `build_mesh.py` generates an unoptimized mesh specifying the rough configuration of a new map projection based on a manually specified or pregenerated cut file.
@@ -234,3 +235,16 @@ Download them as zip files and put them in `resources/shapefiles/`.
 - Natural Earth 50m ocean dataset
 - Natural Earth 110m admin 0 countries dataset
 - Natural Earth 110m lakes dataset
+
+## References
+
+These projections are closely based on the Danseiji map projections I previously published: J. Kunimune, "Minimum-error world map projections defined by polydimensional meshes", _International Journal of Cartography_ **6**.1 (2021), p. 78–99, DOI: [10.1080/23729333.2020.1824174](https://doi.org/10.1080/23729333.2020.1824174).
+
+The coastlines used for the mesh and distortion maps, as well as the rivers and borders used for [water.png](examples/water.png), [political.png](examples/political.png), and [human migration.svg](examples/human migration.svg) are taken from [Natural Earth](https://www.naturalearthdata.com/).
+
+The ecoregion boundaries used for [biomes.png](examples/biomes.png) are taken from the [World Wildlife Fund's](https://www.worldwildlife.org/) TEOW dataset: D. M. Olson, E. Dinerstein, E. D. Wikramanayake, and al., "Terrestrial ecoregions of the world: a new map of life on Earth", _Bioscience_ **51**.11 (2001), p. 933–938, DOI: [10.1641/0006-3568(2001)051\[0933:TEOTWA\]2.0.CO;2](https://doi.org/10.1641/0006-3568\(2001\)051[0933:TEOTWA]2.0.CO;2).
+
+The chlorophyll concentration data used for [chlorophyll.png](examples/chlorophyll.png) is taken from [NOAA CoastWatch's](https://coastwatch.noaa.gov/cwn/index.html) Chlorophyll-a Gap-filled DINEOF 9km dataset.  The Northern Hemisphere uses the data for 2023 Jun 21, the Southern Hemisphere uses the data for 2023 Dec 21, and the band between 15°S and 15°N is a blend between the two.  I downloaded their NC (HDF?) files using their [Data Portal](https://coastwatch.noaa.gov/cw_html/cwViewer.html).
+The driving direction data used for [driving direction.svg](examples/driving direction.svg) is copied off of the 2020 May version of [Countries driving on the left or right.svg](https://commons.wikimedia.org/wiki/File:Countries_driving_on_the_left_or_right.svg), published by Benjamin D. Esham on the Wikimedia Commons.
+
+The human migration routes used for [human migration.svg](examples/human migration.svg) is copied off of the 2023 October version of [Early migrations mercator.svg](https://commons.wikimedia.org/wiki/File:Early_migrations_mercator.svg), published by D. Bachmann on the Wikimedia Commons. That map is based on collated information from the Wikipedia article [Early human migrations](https://en.wikipedia.org/wiki/Early_human_migrations), and from the article M. Metspalu, T. Kivisild, E. Metspalu, and al., "Most of the extant mtDNA boundaries in south and southwest Asia were likely shaped during the initial settlement of Eurasia by anatomically modern humans", _BioMed Central Genomics_ **5** (2004), article 26, DOI: [10.1186/1471-2156-5-26](https://doi.org/10.1186/1471-2156-5-26).  The grey regions around the continents represent the coastlines assuming a sea level 125 m below what it is today (during the last glacial maximum), calculated using [General Bathymetric Chart of the Oceans's](https://www.gebco.net/) 2023 gridded bathymetry data.
