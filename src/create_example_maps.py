@@ -183,7 +183,7 @@ def create_map(name: str, projection: str,
 	print(f"creating the {name} map.")
 	sections, boundary, aspect_ratio = load_elastic_projection(projection)
 
-	fig = plt.figure(name, figsize=(6*sqrt(aspect_ratio), 6/sqrt(aspect_ratio)))
+	fig = plt.figure(name, figsize=(6*sqrt(aspect_ratio), 6/sqrt(aspect_ratio)), facecolor="none")
 	ax = fig.subplots()
 
 	ax.fill(boundary["x"], boundary["y"], edgecolor="none", **background_style)
