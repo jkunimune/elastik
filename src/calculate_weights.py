@@ -216,11 +216,15 @@ def calculate_weights():
 
 				# save and plot
 				tifffile.imwrite(filename, importance)
-				plt.figure(f"Weightmap {cut_file}-{h}-{2*crop_antarctica + value_land}")
+				plt.figure(f"Weightmap {cut_file}-{h}-{2*crop_antarctica + value_land}",
+				           figsize=(7, 4), facecolor="none")
 				plt.pcolormesh(λ_edges, ф_edges, importance)
 				plt.plot(section[:, 1], section[:, 0], f"k", linewidth=1)
 				plt.plot(section[:, 1], section[:, 0], f"w--", linewidth=1)
 				plt.axis([λ_edges[0], λ_edges[-1], ф_edges[0], ф_edges[-1]])
+				plt.xticks([])
+				plt.yticks([])
+				plt.tight_layout()
 
 
 if __name__ == "__main__":
