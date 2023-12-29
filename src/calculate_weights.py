@@ -27,22 +27,24 @@ ARCTIC_CUTOFF = 78.
 # coordinates of sahara, australian, and canadian desert ellipses (°)
 DESERT_ELLIPSES = [(23, 8, 7, 20), (-24, 132, 7, 15), (90, -90, 35, 50)]
 # coordinates of small, remote, uninhabited islands (°)
-EXCLUDED_ISLANDS = [(-6, 72), # chagos islands
-                    (-54, 3), # bouvet island
-                    (-40, -9), # gough island
-                    (-46, 38), # prince edward island
-                    (-53, 73), # heard island
-                    # (-49, 69), # kerguelen islands
-                    (-46, 52), # crozet islands
-                    (15, 169), # bokak atoll
-                    (10, -109), # clipperton island
-                    (24, 154), # marcus island
-                    (19, 167), # wake island
-                    (1, -29), # sao pedro and sao paul
-                    (-21, -29), # trindade and martim vaz
-                    (-55, 159), # macquarie island
-                    (-38, 78), # st. paul and amsterdam islands
-                    (-49, 179)] # antipode and bounty islands
+EXCLUDED_ISLANDS = [
+	(-6, 72), # chagos islands
+	(-54, 3), # bouvet island
+	(-40, -9), # gough island
+	(-46, 38), # prince edward island
+	(-53, 73), # heard island
+	# (-49, 69), # kerguelen islands
+	(-46, 52), # crozet islands
+	(15, 169), # bokak atoll
+	(10, -109), # clipperton island
+	(24, 154), # marcus island
+	(19, 167), # wake island
+	(1, -29), # sao pedro and sao paul
+	(-21, -29), # trindade and martim vaz
+	(-55, 159), # macquarie island
+	(-38, 78), # st. paul and amsterdam islands
+	(-49, 179) # antipode and bounty islands
+]
 
 
 def load_coast_vertices(precision: float) -> list[tuple[float, float]]:

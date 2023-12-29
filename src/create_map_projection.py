@@ -364,7 +364,7 @@ def enumerate_cells(node_indices: NDArray[int], values: list[NDArray[float] | li
 			cell_definitions = np.concatenate([
 				cell_definitions,
 				np.stack([i + di, i + 1 - di, # these first two will get chopd off once I'm done with them
-					      h, i + di, j + dj, # these middle three are for generic spacially dependent stuff
+				          h, i + di, j + dj, # these middle three are for generic spacially dependent stuff
 				          west_node, east_node, # these bottom four are the really important indices
 				          south_node, north_node], axis=-1)])
 			for k in range(len(values)):
@@ -726,7 +726,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 			group[lang["y"]].attrs[lang["units"]] = "km"
 			group[lang["y"]].make_scale()
 			group.create_dataset(lang["inverse points"],
-			                    shape=inverse_raster.shape[:2], dtype=h5_фλ_tuple)
+			                     shape=inverse_raster.shape[:2], dtype=h5_фλ_tuple)
 			group[lang["inverse points"]][lang["latitude"]] = inverse_raster[:, :, 0]
 			group[lang["inverse points"]][lang["longitude"]] = inverse_raster[:, :, 1]
 			group[lang["inverse points"]].attrs[lang["units"]] = "°"
@@ -751,7 +751,7 @@ def save_projection(number: int, mesh: Mesh, section_names: list[str],
 				group[lang["longitude"]].make_scale()
 				group[lang["longitude"]].attrs[lang["units"]] = "°"
 				group.create_dataset(lang["projected points"],
-				                        shape=(mesh.ф.size, mesh.λ.size), dtype=h5_xy_tuple)
+				                     shape=(mesh.ф.size, mesh.λ.size), dtype=h5_xy_tuple)
 				group[lang["projected points"]][lang["x"]] = mesh.nodes[h, :, :, 0]
 				group[lang["projected points"]][lang["y"]] = mesh.nodes[h, :, :, 1]
 				group[lang["projected points"]].attrs[lang["units"]] = "km"
@@ -1142,7 +1142,7 @@ def project_section_boundaries(mesh: Mesh, resolution: float) -> Union[NDArray[f
 		boundary = boundary[dilate(abs(boundary[:, 0]) != 90, 1)]
 		# finally, refine it before projecting
 		boundaries.append(project(refine_path(boundary, resolution, period=360),
-		                       mesh, section_index=h))
+		                          mesh, section_index=h))
 	# combine the section boundaries into one path
 	if type(boundaries[0]) is np.ndarray:
 		complete_boundary = np.concatenate(boundaries)

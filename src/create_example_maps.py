@@ -403,7 +403,6 @@ class Section:
 			np.stack([border["latitude"], border["longitude"]], axis=-1)) # type: ignore
 		self.border_is_counterclockwise = is_counterclockwise(self.border)
 
-
 	def get_planar_coordinates(self, points: NDArray[ΦΛPoint]
 	                           ) -> NDArray[XYPoint]:
 		""" take a point on the sphere and smoothly interpolate it to x and y """
@@ -411,7 +410,6 @@ class Section:
 		result["x"] = self.x_projector((points["latitude"], points["longitude"]))
 		result["y"] = self.y_projector((points["latitude"], points["longitude"]))
 		return result
-
 
 	def contains(self, points: NDArray[ΦΛPoint]) -> NDArray[bool]:
 		""" whether the given point is within this Section’s boundary """

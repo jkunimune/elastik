@@ -348,7 +348,7 @@ def convex_hull(points: NDArray[float]) -> NDArray[float]:
 	def convex(a, b, c):
 		return (c[0] - b[0])*(b[1] - a[1]) - (c[1] - b[1])*(b[0] - a[0]) < 0
 	# go thru the polygon one thing at a time
-	hull =  []
+	hull = []
 	for i in range(0, points.shape[0]):
 		hull.append(points[i, :])
 		# then, if the end is no longer convex, backtrace

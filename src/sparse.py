@@ -365,7 +365,6 @@ class SparseNDArray:
 		sign *= correction
 		return sign > 0
 
-
 	def inverse_matmul(self, other: NDArray[float]) -> NDArray[float]:
 		""" compute self**-1 @ b for a symmetric positive definite matrix, iteratively.  this won't
 			work if self is not symmetric, but it may work if it's positive definite
