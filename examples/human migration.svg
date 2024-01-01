@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Generator: Adobe Illustrator 26.5.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<!-- Generator: Adobe Illustrator 28.1.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
 <svg version="1.1" id="レイヤー_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px"
-	 y="0px" width="1621.9px" height="925px" viewBox="0 0 1621.9 925" style="enable-background:new 0 0 1621.9 925;"
-	 xml:space="preserve">
+	 y="0px" viewBox="0 0 1632 925" style="enable-background:new 0 0 1632 925;" xml:space="preserve">
 <style type="text/css">
 	.st0{fill:#FFFFFF;}
 	.st1{fill:#E9E9E9;}
@@ -25,7 +24,7 @@
 	.st18{fill:none;stroke:#7E3701;stroke-width:9.6;stroke-linecap:round;stroke-linejoin:round;}
 	.st19{font-family:'NotoSans-Regular';}
 	.st20{font-size:14px;}
-	.st21{enable-background:new    ;}
+	.st21{fill:none;}
 	.st22{fill:none;stroke:#715A02;stroke-width:7.7;stroke-linecap:round;stroke-miterlimit:10;}
 	.st23{fill:none;stroke:#367C30;stroke-width:6.1;stroke-linecap:round;stroke-miterlimit:10;}
 	.st24{fill:none;stroke:#028A87;stroke-width:6.1;stroke-linecap:round;stroke-miterlimit:10;}
@@ -35,7 +34,7 @@
 	<a>
 	</a>
 	<g>
-		<rect id="background" y="0" class="st0" width="1621.9" height="925"/>
+		<rect id="background" class="st0" width="1632" height="925"/>
 		<g>
 			<path class="st1" d="M-185.9,228.3l-12.8,6.9l-1.6-0.2l1,1.9l1.2,0.1l0.6,0.9l-3.1,1.8l-0.6-1l-2.5-1.1l-0.8,0.6l-0.3-1.3
 				l-1.1-0.4l-0.2-0.8l-1.2-0.3l0.1-0.5l-0.6,0.3l-1.7-2.4h-0.8l2.4-2.7l-3.3,2.1l-0.4-1.4l0.7,0.6l0.2-0.6l-1.3-2.9l1.3-0.6
@@ -1001,17 +1000,9 @@
 <g id="レイヤー_2_00000092455454729157562100000012401002723713979547_">
 	<g>
 		<g>
-			<path class="st3" d="M882.6,407.9c-26.6-18.6-47.8-33.3-78.8-30.7"/>
+			<path class="st3" d="M882.6,407.9c-26.6-18.6-43.9-32.3-59.8-45.2"/>
 			<g>
-				<polygon class="st4" points="792.9,378.7 807.5,370.4 804.7,377.2 809.2,383 				"/>
-			</g>
-		</g>
-	</g>
-	<g>
-		<g>
-			<path class="st3" d="M882.4,407.9c-26.7-18.6-54.4-40.7-59.7-72.6"/>
-			<g>
-				<polygon class="st4" points="821.8,324.4 829.5,339.3 822.9,336.2 816.9,340.4 				"/>
+				<polygon class="st4" points="815.6,357.8 831.8,362.1 825.1,365 824.2,372.3 				"/>
 			</g>
 		</g>
 	</g>
@@ -1057,9 +1048,9 @@
 	</g>
 	<g>
 		<g>
-			<path class="st9" d="M889.9,593.9c-4.7-34.3,26.6-88.2,44.8-116"/>
+			<path class="st9" d="M1007,542.5c0-30.5-26-38.1-36.6-60.8"/>
 			<g>
-				<polygon class="st10" points="946.9,459 940.1,491.4 933.8,478.4 919.4,477.4 				"/>
+				<polygon class="st10" points="959.7,460.9 984.8,482.4 970.4,481.7 962.6,493.9 				"/>
 			</g>
 		</g>
 	</g>
@@ -1203,9 +1194,9 @@
 	</g>
 	<g>
 		<g>
-			<path class="st3" d="M771.8,435c-5.8-11.2-4.9-22.6-3-30.5"/>
+			<path class="st3" d="M772.6,436c-9.5-18.7-1-40.7,8.2-68"/>
 			<g>
-				<polygon class="st4" points="772.5,394.1 773.5,410.8 768.7,405.3 761.5,406.7 				"/>
+				<polygon class="st4" points="784.6,356.8 785.6,373.5 780.8,368 773.6,369.4 				"/>
 			</g>
 		</g>
 	</g>
@@ -1294,7 +1285,7 @@
 	<text transform="matrix(1 0 0 1 839.3992 505.2763)" class="st19 st20"> </text>
 	<text transform="matrix(1 0 0 1 842.1992 505.2763)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 855.8874 610.0733)" class="st19 st20">–65</text>
-	<text transform="matrix(1 0 0 1 878.8874 610.0733)" class="st19 st20"> </text>
+	<text transform="matrix(1 0 0 1 878.8875 610.0733)" class="st19 st20"> </text>
 	<text transform="matrix(1 0 0 1 881.6874 610.0733)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 707.2916 629.6408)" class="st19 st20">–70</text>
 	<text transform="matrix(1 0 0 1 730.2916 629.6408)" class="st19 st20"> </text>
@@ -1337,12 +1328,10 @@
 	<text transform="matrix(1 0 0 1 781.7889 207.9348)" class="st19 st20">–25</text>
 	<text transform="matrix(1 0 0 1 804.7889 207.9348)" class="st19 st20"> </text>
 	<text transform="matrix(1 0 0 1 807.5889 207.9348)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 793.1655 321.939)" class="st19 st20">–10</text>
+	<text transform="matrix(1 0 0 1 768.9999 353.5)" class="st19 st20">–10</text>
 	<text transform="matrix(1 0 0 1 816.1655 321.939)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 818.9655 321.939)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 743.663 390.8416)" class="st19 st20">–10</text>
+	<text transform="matrix(1 0 0 1 794.7999 353.5)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 766.663 390.8416)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 769.463 390.8416)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 664.6006 387.1132)" class="st19 st20">Komsa</text>
 	<text transform="matrix(1 0 0 1 662.1006 403.9132)" class="st19 st20">–10</text>
 	<text transform="matrix(1 0 0 1 685.1006 403.9132)" class="st19 st20"> </text>
@@ -1350,7 +1339,7 @@
 	<text transform="matrix(1 0 0 1 577.5692 342.366)" class="st19 st20">Iceland</text>
 	<text transform="matrix(1 0 0 1 581.5692 359.166)" class="st19 st20">+1000</text>
 	<text transform="matrix(1 0 0 1 861.3864 294.695)" class="st19 st20">–30</text>
-	<text transform="matrix(1 0 0 1 884.3864 294.695)" class="st19 st20"> </text>
+	<text transform="matrix(1 0 0 1 884.3865 294.695)" class="st19 st20"> </text>
 	<text transform="matrix(1 0 0 1 887.1864 294.695)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 996.6396 363.1333)" class="st19 st20">–35</text>
 	<text transform="matrix(1 0 0 1 1019.6396 363.1333)" class="st19 st20"> </text>
@@ -1358,14 +1347,14 @@
 	<text transform="matrix(1 0 0 1 1030.3682 460.4571)" class="st19 st20">–30</text>
 	<text transform="matrix(1 0 0 1 1053.3682 460.4571)" class="st19 st20"> </text>
 	<text transform="matrix(1 0 0 1 1056.1682 460.4571)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 981.4162 558.2563)" class="st19 st20">–65</text>
-	<text transform="matrix(1 0 0 1 1004.4162 558.2563)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 1007.2162 558.2563)" class="st19 st20">000</text>
+	<text transform="matrix(1 0 0 1 981.4163 559.2563)" class="st19 st20">–65</text>
+	<text transform="matrix(1 0 0 1 1004.4163 558.2563)" class="st19 st20"> </text>
+	<text transform="matrix(1 0 0 1 1007.2162 559.2563)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 921.569 455.9169)" class="st19 st20">–45</text>
 	<text transform="matrix(1 0 0 1 944.569 455.9169)" class="st19 st20"> </text>
 	<text transform="matrix(1 0 0 1 947.369 455.9169)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 1211.9706 406.33)" class="st19 st20">–1500</text>
-	<text transform="matrix(1 0 0 1 1415.6095 400.2021)" class="st19 st20">Māori</text>
+	<text transform="matrix(1 0 0 1 1425.6095 400.2021)" class="st19 st20">Māori</text>
 	<text transform="matrix(1 0 0 1 1425.7095 417.0021)" class="st19 st20">+1000</text>
 	<text transform="matrix(1 0 0 1 1177.1779 88.8321)" class="st19 st20">Hawaiʻi</text>
 	<text transform="matrix(1 0 0 1 1180.5779 105.6321)" class="st19 st20">+1000</text>
@@ -1394,13 +1383,13 @@
 	<text transform="matrix(1 0 0 1 72.8946 249.8105)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 657.5943 234.2801)" class="st19 st20">–3000</text>
 	<text transform="matrix(1 0 0 1 634.1763 715.17)" class="st19 st20">Speciation</text>
-	<text transform="matrix(1 0 0 1 639.3763 731.97)" class="st19 st20">–200</text>
+	<text transform="matrix(1 0 0 1 639.3763 731.97)" class="st19 st20">–300</text>
 	<text transform="matrix(1 0 0 1 670.3763 731.97)" class="st19 st20"> </text>
 	<text transform="matrix(1 0 0 1 673.1763 731.97)" class="st19 st20">000</text>
 </g>
 <g>
 	<g>
-		<line class="st0" x1="69.4" y1="650.9" x2="123.1" y2="650.9"/>
+		<line class="st21" x1="69.4" y1="650.9" x2="123.1" y2="650.9"/>
 		<g>
 			<line class="st5" x1="69.4" y1="650.9" x2="89.2" y2="650.9"/>
 			<g>
@@ -1408,10 +1397,12 @@
 			</g>
 		</g>
 	</g>
-	<text transform="matrix(1 0 0 1 130.7656 656.2336)" class="st21"><tspan x="0" y="0" class="st19 st20">Before –100</tspan><tspan x="78.6" y="0" class="st19 st20"> </tspan><tspan x="81.4" y="0" class="st19 st20">000</tspan></text>
+	<text transform="matrix(1 0 0 1 130.7656 656.2336)" class="st19 st20">Before –100</text>
+	<text transform="matrix(1 0 0 1 209.3656 656.2336)" class="st19 st20"> </text>
+	<text transform="matrix(1 0 0 1 212.1656 656.2336)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 173.6508 658.1028)" class="st19 st20"> </text>
 	<g>
-		<line class="st0" x1="69.4" y1="684.9" x2="123.1" y2="684.9"/>
+		<line class="st21" x1="69.4" y1="684.9" x2="123.1" y2="684.9"/>
 		<g>
 			<line class="st15" x1="69.4" y1="684.9" x2="96" y2="684.9"/>
 			<g>
@@ -1420,7 +1411,7 @@
 		</g>
 	</g>
 	<g>
-		<line class="st0" x1="69.4" y1="719" x2="123.1" y2="719"/>
+		<line class="st21" x1="69.4" y1="719" x2="123.1" y2="719"/>
 		<g>
 			<line class="st22" x1="69.4" y1="719" x2="101.4" y2="719"/>
 			<g>
@@ -1429,7 +1420,7 @@
 		</g>
 	</g>
 	<g>
-		<line class="st0" x1="69.4" y1="753" x2="123.1" y2="753"/>
+		<line class="st21" x1="69.4" y1="753" x2="123.1" y2="753"/>
 		<g>
 			<line class="st23" x1="69.4" y1="753" x2="105.9" y2="753"/>
 			<g>
@@ -1438,7 +1429,7 @@
 		</g>
 	</g>
 	<g>
-		<line class="st0" x1="69.4" y1="787" x2="123.1" y2="787"/>
+		<line class="st21" x1="69.4" y1="787" x2="123.1" y2="787"/>
 		<g>
 			<line class="st24" x1="69.4" y1="787" x2="105.9" y2="787"/>
 			<g>
@@ -1447,7 +1438,7 @@
 		</g>
 	</g>
 	<g>
-		<line class="st0" x1="69.4" y1="821" x2="123.1" y2="821"/>
+		<line class="st21" x1="69.4" y1="821" x2="123.1" y2="821"/>
 		<g>
 			<line class="st25" x1="69.4" y1="821" x2="112.1" y2="821"/>
 			<g>
@@ -1456,7 +1447,7 @@
 		</g>
 	</g>
 	<g>
-		<line class="st0" x1="69.4" y1="855" x2="123.1" y2="855"/>
+		<line class="st21" x1="69.4" y1="855" x2="123.1" y2="855"/>
 		<g>
 			<line class="st17" x1="69.4" y1="855" x2="114.4" y2="855"/>
 			<g>
@@ -1464,17 +1455,27 @@
 			</g>
 		</g>
 	</g>
-	<text transform="matrix(1 0 0 1 131.1151 690.2496)" class="st21"><tspan x="0" y="0" class="st19 st20">Before –60</tspan><tspan x="70.6" y="0" class="st19 st20"> </tspan><tspan x="73.4" y="0" class="st19 st20">000</tspan></text>
+	<text transform="matrix(1 0 0 1 131.1151 690.2496)" class="st19 st20">Before –60</text>
+	<text transform="matrix(1 0 0 1 201.7151 690.2496)" class="st19 st20"> </text>
+	<text transform="matrix(1 0 0 1 204.5151 690.2496)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 174.0003 692.1188)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 130.4839 724.2654)" class="st21"><tspan x="0" y="0" class="st19 st20">Before –45</tspan><tspan x="70.6" y="0" class="st19 st20"> </tspan><tspan x="73.4" y="0" class="st19 st20">000</tspan></text>
+	<text transform="matrix(1 0 0 1 130.4839 724.2654)" class="st19 st20">Before –45</text>
+	<text transform="matrix(1 0 0 1 201.0839 724.2654)" class="st19 st20"> </text>
+	<text transform="matrix(1 0 0 1 203.8839 724.2654)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 173.3692 726.1346)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 130.8334 758.2806)" class="st21"><tspan x="0" y="0" class="st19 st20">Before –30</tspan><tspan x="70.6" y="0" class="st19 st20"> </tspan><tspan x="73.4" y="0" class="st19 st20">000</tspan></text>
+	<text transform="matrix(1 0 0 1 130.8334 758.2806)" class="st19 st20">Before –30</text>
+	<text transform="matrix(1 0 0 1 201.4334 758.2806)" class="st19 st20"> </text>
+	<text transform="matrix(1 0 0 1 204.2334 758.2806)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 173.7187 760.1497)" class="st19 st20"> </text>
 	<text transform="matrix(1 0 0 1 130.7688 860.3281)" class="st19 st20">Before +1500</text>
 	<text transform="matrix(1 0 0 1 173.654 862.1973)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 130.1377 792.2966)" class="st21"><tspan x="0" y="0" class="st19 st20">Before –20</tspan><tspan x="70.6" y="0" class="st19 st20"> </tspan><tspan x="73.4" y="0" class="st19 st20">000</tspan></text>
+	<text transform="matrix(1 0 0 1 130.1377 792.2966)" class="st19 st20">Before –20</text>
+	<text transform="matrix(1 0 0 1 200.7377 792.2966)" class="st19 st20"> </text>
+	<text transform="matrix(1 0 0 1 203.5377 792.2966)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 173.0229 794.1657)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 130.4872 826.3118)" class="st21"><tspan x="0" y="0" class="st19 st20">Before –10</tspan><tspan x="70.6" y="0" class="st19 st20"> </tspan><tspan x="73.4" y="0" class="st19 st20">000</tspan></text>
+	<text transform="matrix(1 0 0 1 130.4872 826.3118)" class="st19 st20">Before –10</text>
+	<text transform="matrix(1 0 0 1 201.0872 826.3118)" class="st19 st20"> </text>
+	<text transform="matrix(1 0 0 1 203.8872 826.3118)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 173.3723 828.1809)" class="st19 st20"> </text>
 </g>
 </svg>
