@@ -1,16 +1,18 @@
 # Elastic projections
 
-The Elastic projections are map projections of a new breed that uses
-interpolation on a mesh to minimize and control the distortion in maps of the
-whole Earth like never before.
+The Elastic projections are map projections of a new breed that use
+interpolation on a mesh to minimize and control the distortion in world
+maps like never before.
 
 This repository contains both [the data files](projection) that define the Elastic projections and
 [the source code](src) used to create them,
 as well as [several example maps](examples) that use them.
 If you're interested in making maps using the Elastic projections,
 see [§ Using the projections](#using-the-projections) below.
-If you're interested in using the code to create new map projections like Elastic,
+If you're interested in using the code to create new map projections like the Elastic projections,
 see [§ Using the code](#using-the-code) below that.
+For a broader overview of the projections,
+see my blog post [Introducing the Elastic projections](https://kunimune.home.blog/2023/12/29/introducing-the-elastic-projections/).
 
 ![Elastic I projection with mesh](examples/mesh-1.svg "Elastic I projection with mesh")
 ![Elastic II projection with mesh](examples/mesh-2.svg "Elastic II projection with mesh")
