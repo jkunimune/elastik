@@ -20,10 +20,14 @@ see my blog post [Introducing the Elastic projections](https://kunimune.home.blo
 
 ## Using the projections
 
-The map projections are defined, not with equations like most maps are,
+The easiest way to use these projections is to edit the pre-made templates in [this Google Drive folder](https://drive.google.com/drive/folders/1qWHpbwziBEmf-T6nhSIfEGQOinh8dDQR).
+To project your own data, you can use my [Map Designer program](https://github.com/jkunimune/Map-Projections).
+If you want to implement the projections yourself, read on!
+
+The map projections are defined not with equations like most maps are,
 but with tables of coordinates that must be interpolated.
-This section explains how to do that.
 The tables are given in two file formats, which can both be found in [`projection/`](projection).
+This section provides a detailed explanation of how they're structured and how to use them.
 I've coded up two demonstrations for those who learn best by example:
 [a Python implementation](src/create_example_maps.py)
 that uses the HDF files and bilinear interpolation, and
