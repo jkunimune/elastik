@@ -102,7 +102,7 @@ and then removing all points that fall outside of the map area.
 
 There are two main caveats.
 One is that the inverse table cannot completely account for places where two sections of the mesh overlap.
-A single set of x and y coordinates in one of those regions
+A single set of x and y coordinates in one of those places
 can be projected from multiple sets of latitude and longitude,
 but the table only provides one of those sets.
 In practice those overlap regions are small enough that it doesn't really matter.
@@ -178,7 +178,7 @@ Each Elastic projection plain text file contains the following components, in th
 This means that, while most of them have vertices that go counterclockwise,
 some of them have vertices that go clockwise, and for these ones the section covers everything *outside* of the polygon.
 In other words, if you imagine travelling along the boundary polygon's edge,
-the region included in the section is always on the left, and the region excluded from the region is always on the right.
+the region included in the section is always on the left, and the region excluded from the section is always on the right.
 
 ## Using the code
 
