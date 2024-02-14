@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Generator: Adobe Illustrator 28.1.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
 <svg version="1.1" id="レイヤー_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px"
-	 y="0px" viewBox="0 0 1632 925" style="enable-background:new 0 0 1632 925;" xml:space="preserve">
+	 y="0px" viewBox="0 0 1632 925" width="1632" height="925" style="enable-background:new 0 0 1632 925;" xml:space="preserve">
+<title>Prehistoric human migration, Elastic I projection</title>
+<desc>
+	This map shows the migration routes took by humans during the peopling of the world, between their speciation in eastern Africa and their arrival in Polynesia and Iceland this millenium. The color and thickness of each arrow indicates when that route was taken. Numbers indicate the year when humans arrived at each location, sometimes accompanied by the modern name of the culture that existed there at that time. The migration data is primarily taken from <a href="https://commons.wikimedia.org/wiki/File:Early_migrations_mercator.svg">Early migrations mercator.svg</a> by D. Bachmann, though I modified the arctic to have fewer arrows (since it's not as big here as it is on a Mercator projection) and made the peopling of china come from Southeast Asia instead of India (because that's what it says on the Wikipedia article <a href="https://en.wikipedia.org/wiki/Early_human_migrations">Early human migrations</a>. The coastlines are from <a href="https://naturalearthdata.com">Natural Earth</a>. The projection is the <a href="https://kunimune.home.blog/2023/12/29/introducing-the-elastic-projections/">Elastic I projection</a>.
+</desc>
 <style type="text/css">
 	.st0{fill:#FFFFFF;}
 	.st1{fill:#E9E9E9;}
@@ -22,7 +25,7 @@
 	.st16{fill:#7E3701;}
 	.st17{fill:none;stroke:#A07DDD;stroke-width:3.1;stroke-linecap:round;stroke-miterlimit:10;}
 	.st18{fill:none;stroke:#7E3701;stroke-width:9.6;stroke-linecap:round;stroke-linejoin:round;}
-	.st19{font-family:'NotoSans-Regular';}
+	.st19{font-family:'NotoSans-Regular','NotoSans Regular','NotoSans','Noto Sans',sans-serif;}
 	.st20{font-size:14px;}
 	.st21{fill:none;}
 	.st22{fill:none;stroke:#715A02;stroke-width:7.7;stroke-linecap:round;stroke-miterlimit:10;}
@@ -1278,81 +1281,38 @@
 <g id="tekisuto">
 	<text transform="matrix(1 0 0 1 670.0159 832.0994)" class="st19 st20">Malagasy</text>
 	<text transform="matrix(1 0 0 1 685.1159 848.8994)" class="st19 st20">+500</text>
-	<text transform="matrix(1 0 0 1 750.8058 450.1834)" class="st19 st20">–30</text>
-	<text transform="matrix(1 0 0 1 773.8058 450.1834)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 776.6058 450.1834)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 816.3992 505.2763)" class="st19 st20">–38</text>
-	<text transform="matrix(1 0 0 1 839.3992 505.2763)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 842.1992 505.2763)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 855.8874 610.0733)" class="st19 st20">–65</text>
-	<text transform="matrix(1 0 0 1 878.8875 610.0733)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 881.6874 610.0733)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 707.2916 629.6408)" class="st19 st20">–70</text>
-	<text transform="matrix(1 0 0 1 730.2916 629.6408)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 733.0916 629.6408)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 624.5928 589.5853)" class="st19 st20">–100</text>
-	<text transform="matrix(1 0 0 1 655.5928 587.5853)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 658.3928 589.5853)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 460.4131 624.7359)" class="st19 st20">–130</text>
-	<text transform="matrix(1 0 0 1 491.4131 624.7359)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 494.2131 624.7359)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 495.683 728.2521)" class="st19 st20">–130</text>
-	<text transform="matrix(1 0 0 1 526.683 728.2521)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 529.483 728.2521)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 551.6699 864.5771)" class="st19 st20">–150</text>
-	<text transform="matrix(1 0 0 1 582.6699 864.5771)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 585.4699 864.5771)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 460.3026 533.5657)" class="st19 st20">–10</text>
-	<text transform="matrix(1 0 0 1 483.3026 533.5657)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 486.1026 533.5657)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 493.2908 507.6501)" class="st19 st20">–30</text>
-	<text transform="matrix(1 0 0 1 516.2908 507.6501)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 519.0908 507.6501)" class="st19 st20">000</text>
+	<text transform="matrix(1 0 0 1 750.8058 450.1834)" class="st19 st20">–30 000</text>
+	<text transform="matrix(1 0 0 1 816.3992 505.2763)" class="st19 st20">–38 000</text>
+	<text transform="matrix(1 0 0 1 855.8874 610.0733)" class="st19 st20">–65 000</text>
+	<text transform="matrix(1 0 0 1 707.2916 629.6408)" class="st19 st20">–70 000</text>
+	<text transform="matrix(1 0 0 1 624.5928 589.5853)" class="st19 st20">–100 000</text>
+	<text transform="matrix(1 0 0 1 460.4131 624.7359)" class="st19 st20">–130 000</text>
+	<text transform="matrix(1 0 0 1 495.683 728.2521)" class="st19 st20">–130 000</text>
+	<text transform="matrix(1 0 0 1 551.6699 864.5771)" class="st19 st20">–150 000</text>
+	<text transform="matrix(1 0 0 1 460.3026 533.5657)" class="st19 st20">–10 000</text>
+	<text transform="matrix(1 0 0 1 493.2908 507.6501)" class="st19 st20">–30 000</text>
 	<text transform="matrix(1 0 0 1 669.8773 545.8694)" class="st19 st20">Emiran</text>
-	<text transform="matrix(1 0 0 1 668.3773 562.6694)" class="st19 st20">–50</text>
-	<text transform="matrix(1 0 0 1 691.3773 562.6694)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 694.1773 562.6694)" class="st19 st20">000</text>
+	<text transform="matrix(1 0 0 1 668.3773 562.6694)" class="st19 st20">–50 000</text>
 	<text transform="matrix(1 0 0 1 545.1177 468.5771)" class="st19 st20">Aurignacian</text>
-	<text transform="matrix(1 0 0 1 559.7177 485.3771)" class="st19 st20">–45</text>
-	<text transform="matrix(1 0 0 1 582.7177 485.3771)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 585.5177 485.3771)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 686.3364 452.0569)" class="st19 st20">–30</text>
-	<text transform="matrix(1 0 0 1 709.3364 452.0569)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 712.1364 452.0569)" class="st19 st20">000</text>
+	<text transform="matrix(1 0 0 1 559.7177 485.3771)" class="st19 st20">–45 000</text>
+	<text transform="matrix(1 0 0 1 686.3364 452.0569)" class="st19 st20">–30 000</text>
 	<text transform="matrix(1 0 0 1 662.7993 494.8397)" class="st19 st20">Kostenki</text>
 	<text transform="matrix(1 0 0 1 862.8814 423.2764)" class="st19 st20">Mal’ta</text>
 	<text transform="matrix(1 0 0 1 857.6814 440.0764)" class="st19 st20">–20</text>
 	<text transform="matrix(1 0 0 1 880.7814 440.0764)" class="st19 st20"> </text>
 	<text transform="matrix(1 0 0 1 883.5814 440.0764)" class="st19 st20">000</text>
 	<text transform="matrix(1 0 0 1 591.4241 445.0094)" class="st19 st20">Ahrensburg</text>
-	<text transform="matrix(1 0 0 1 781.7889 207.9348)" class="st19 st20">–25</text>
-	<text transform="matrix(1 0 0 1 804.7889 207.9348)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 807.5889 207.9348)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 768.9999 353.5)" class="st19 st20">–10</text>
-	<text transform="matrix(1 0 0 1 816.1655 321.939)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 794.7999 353.5)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 766.663 390.8416)" class="st19 st20"> </text>
+	<text transform="matrix(1 0 0 1 781.7889 207.9348)" class="st19 st20">–25 000</text>
+	<text transform="matrix(1 0 0 1 768.9999 353.5)" class="st19 st20">–10 000</text>
 	<text transform="matrix(1 0 0 1 664.6006 387.1132)" class="st19 st20">Komsa</text>
-	<text transform="matrix(1 0 0 1 662.1006 403.9132)" class="st19 st20">–10</text>
-	<text transform="matrix(1 0 0 1 685.1006 403.9132)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 687.9006 403.9132)" class="st19 st20">000</text>
+	<text transform="matrix(1 0 0 1 662.1006 403.9132)" class="st19 st20">–10 000</text>
 	<text transform="matrix(1 0 0 1 577.5692 342.366)" class="st19 st20">Iceland</text>
 	<text transform="matrix(1 0 0 1 581.5692 359.166)" class="st19 st20">+1000</text>
-	<text transform="matrix(1 0 0 1 861.3864 294.695)" class="st19 st20">–30</text>
-	<text transform="matrix(1 0 0 1 884.3865 294.695)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 887.1864 294.695)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 996.6396 363.1333)" class="st19 st20">–35</text>
-	<text transform="matrix(1 0 0 1 1019.6396 363.1333)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 1022.4396 363.1333)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 1030.3682 460.4571)" class="st19 st20">–30</text>
-	<text transform="matrix(1 0 0 1 1053.3682 460.4571)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 1056.1682 460.4571)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 981.4163 559.2563)" class="st19 st20">–65</text>
-	<text transform="matrix(1 0 0 1 1004.4163 558.2563)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 1007.2162 559.2563)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 921.569 455.9169)" class="st19 st20">–45</text>
-	<text transform="matrix(1 0 0 1 944.569 455.9169)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 947.369 455.9169)" class="st19 st20">000</text>
+	<text transform="matrix(1 0 0 1 861.3864 294.695)" class="st19 st20">–30 000</text>
+	<text transform="matrix(1 0 0 1 996.6396 363.1333)" class="st19 st20">–35 000</text>
+	<text transform="matrix(1 0 0 1 1030.3682 460.4571)" class="st19 st20">–30 000</text>
+	<text transform="matrix(1 0 0 1 981.4163 559.2563)" class="st19 st20">–65 000</text>
+	<text transform="matrix(1 0 0 1 921.569 455.9169)" class="st19 st20">–45 000</text>
 	<text transform="matrix(1 0 0 1 1211.9706 406.33)" class="st19 st20">–1500</text>
 	<text transform="matrix(1 0 0 1 1425.6095 400.2021)" class="st19 st20">Māori</text>
 	<text transform="matrix(1 0 0 1 1425.7095 417.0021)" class="st19 st20">+1000</text>
@@ -1360,32 +1320,18 @@
 	<text transform="matrix(1 0 0 1 1180.5779 105.6321)" class="st19 st20">+1000</text>
 	<text transform="matrix(1 0 0 1 1558.4327 27.4458)" class="st19 st20">Rapa Nui</text>
 	<text transform="matrix(1 0 0 1 1568.2328 44.2458)" class="st19 st20">+1000</text>
-	<text transform="matrix(1 0 0 1 1239.4526 524.0066)" class="st19 st20">–65</text>
-	<text transform="matrix(1 0 0 1 1262.4526 524.0066)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 1265.2527 524.0066)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 1390.9259 510.4019)" class="st19 st20">–40</text>
-	<text transform="matrix(1 0 0 1 1413.9259 510.4019)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 1416.726 510.4019)" class="st19 st20">000</text>
+	<text transform="matrix(1 0 0 1 1239.4526 524.0066)" class="st19 st20">–65 000</text>
+	<text transform="matrix(1 0 0 1 1390.9259 510.4019)" class="st19 st20">–40 000</text>
 	<text transform="matrix(1 0 0 1 586.6259 286.1003)" class="st19 st20">Saqqaq</text>
 	<text transform="matrix(1 0 0 1 591.7259 302.9003)" class="st19 st20">–2500</text>
-	<text transform="matrix(1 0 0 1 488.9351 197.7848)" class="st19 st20">–14</text>
-	<text transform="matrix(1 0 0 1 511.9351 197.7848)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 514.7351 197.7848)" class="st19 st20">000</text>
+	<text transform="matrix(1 0 0 1 488.9351 197.7848)" class="st19 st20">–14 000</text>
 	<text transform="matrix(1 0 0 1 515.8391 92.7573)" class="st19 st20">Clovis</text>
-	<text transform="matrix(1 0 0 1 510.1391 109.5573)" class="st19 st20">–11</text>
-	<text transform="matrix(1 0 0 1 533.1391 109.5573)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 535.9391 109.5573)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 277.9287 343.7456)" class="st19 st20">–12</text>
-	<text transform="matrix(1 0 0 1 300.9287 343.7456)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 303.7287 343.7456)" class="st19 st20">000</text>
-	<text transform="matrix(1 0 0 1 47.0946 249.8105)" class="st19 st20">–12</text>
-	<text transform="matrix(1 0 0 1 70.0946 249.8105)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 72.8946 249.8105)" class="st19 st20">000</text>
+	<text transform="matrix(1 0 0 1 510.1391 109.5573)" class="st19 st20">–11 000</text>
+	<text transform="matrix(1 0 0 1 277.9287 343.7456)" class="st19 st20">–12 000</text>
+	<text transform="matrix(1 0 0 1 47.0946 249.8105)" class="st19 st20">–12 000</text>
 	<text transform="matrix(1 0 0 1 657.5943 234.2801)" class="st19 st20">–3000</text>
 	<text transform="matrix(1 0 0 1 634.1763 715.17)" class="st19 st20">Speciation</text>
-	<text transform="matrix(1 0 0 1 639.3763 731.97)" class="st19 st20">–300</text>
-	<text transform="matrix(1 0 0 1 670.3763 731.97)" class="st19 st20"> </text>
-	<text transform="matrix(1 0 0 1 673.1763 731.97)" class="st19 st20">000</text>
+	<text transform="matrix(1 0 0 1 639.3763 731.97)" class="st19 st20">–300 000</text>
 </g>
 <g>
 	<g>
