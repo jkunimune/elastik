@@ -252,7 +252,7 @@ Download them as zip files and put them in `resources/shapefiles/`.
 
 These projections are closely based on the Danseiji map projections I previously published: J. Kunimune, "Minimum-error world map projections defined by polydimensional meshes", _International Journal of Cartography_ **6**.1 (2021), p. 78–99, DOI: [10.1080/23729333.2020.1824174](https://doi.org/10.1080/23729333.2020.1824174).
 
-The coastlines used for the mesh and distortion maps, as well as the rivers and borders used for [water.png](examples/water.png), [political.png](examples/political.png), and [human migration.svg](<examples/human migration.svg>) are taken from [Natural Earth](https://www.naturalearthdata.com/).
+The coastlines used for the mesh and distortion maps, as well as the rivers and borders used for [water.png](examples/water.png), [political.png](examples/political.png), and [human migration.svg](<examples/human migration.svg>), are taken from [Natural Earth](https://www.naturalearthdata.com/).
 
 The ecoregion boundaries used for [biomes.png](examples/biomes.png) are taken from the [World Wildlife Fund's](https://www.worldwildlife.org/) TEOW dataset: D. M. Olson, E. Dinerstein, E. D. Wikramanayake, and al., "Terrestrial ecoregions of the world: a new map of life on Earth", _Bioscience_ **51**.11 (2001), p. 933–938, DOI: [10.1641/0006-3568(2001)051\[0933:TEOTWA\]2.0.CO;2](https://doi.org/10.1641/0006-3568\(2001\)051[0933:TEOTWA]2.0.CO;2).
 
