@@ -12,7 +12,7 @@ see [§ Using the projections](#using-the-projections) below.
 If you're interested in using the code to create new map projections like the Elastic projections,
 see [§ Using the code](#using-the-code) below that.
 For a broader overview of the projections,
-see my blog post [Introducing the Elastic projections](https://kunimune.home.blog/2023/12/29/introducing-the-elastic-projections/).
+see my blog post [Introducing the Elastic projections](https://kunimune.blog/2023/12/29/introducing-the-elastic-projections/).
 
 ![Elastic I projection with mesh](examples/mesh-1.svg "Elastic I projection with mesh")
 ![Elastic II projection with mesh](examples/mesh-2.svg "Elastic II projection with mesh")
