@@ -1,0 +1,6 @@
+number: 5
+cuts: nz
+shape_weights: land
+scale_weights: land
+size: inf,inf
+section_names: New Zealand,ʻAotearoa,Zealandia,New New Zealand,The Zea

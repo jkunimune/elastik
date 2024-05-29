@@ -6,7 +6,7 @@ generate simple maps of importance as a function of location, to use when optimi
 projections
 """
 import os
-from math import nan, isnan, hypot, radians, copysign
+from math import copysign
 
 import numpy as np
 import shapefile
@@ -14,12 +14,12 @@ import tifffile
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
-from util import bin_centers, to_cartesian, inside_region
+from util import bin_centers, to_cartesian
 
 # minimum scale at which to resolve coasts (°)
 PRECISION = 0.5
 # radius around important regions that should be weighted (°)
-COAST_WIDTH = 6.0
+COAST_WIDTH = 45.0
 # latitude of southernmost settlement (°)
 ANTARCTIC_CUTOFF = -56.
 # latitude of northernmost settlement (°)
@@ -47,27 +47,6 @@ EXCLUDED_ISLANDS = [
 ]
 
 
-def load_coast_vertices(precision: float) -> list[tuple[float, float]]:
-	""" load the coastline shapefiles, including as many islands as we can, but not being
-	    too precise about the coastlines' exact shapes.
-	"""
-	excluded_ф, excluded_λ = np.transpose(EXCLUDED_ISLANDS)
-	points = []
-	λ_last, ф_last = nan, nan
-	for data in ["coastline", "minor_islands_coastline"]:
-		with shapefile.Reader(f"../resources/shapefiles/ne_10m_{data}.zip") as shape_f:
-			for shape in shape_f.shapes():
-				for λ, ф in shape.points:
-					edge_length = hypot(
-						ф - ф_last, (λ - λ_last)*np.cos(radians((ф + ф_last)/2)))
-					if isnan(λ_last) or edge_length > precision:
-						λ_last, ф_last = λ, ф
-						if not np.any((abs(ф - excluded_ф) < 2) & (abs(λ - excluded_λ) < 2)):
-							points.append((ф, λ)) # exclude the chagos, prince edward, and bouvet islands because they're awkwardly situated
-
-	return points
-
-
 def uninhabited(ф: NDArray[float], λ: NDArray[float], desert_counts_as_uninhabited: bool) -> NDArray[bool]:
 	""" return a bool array indicating which points are uninhabited by humans """
 	uninhabited = np.full(np.broadcast(ф, λ).shape, False)
@@ -80,25 +59,17 @@ def uninhabited(ф: NDArray[float], λ: NDArray[float], desert_counts_as_uninhab
 	return uninhabited
 
 
-def calculate_coast_distance(ф: NDArray[float], λ: NDArray[float], coast: list[tuple[float, float]],
-                             section: NDArray[float], exclude_antarctica: bool) -> NDArray[float]:
+def calculate_coast_distance(ф: NDArray[float], λ: NDArray[float]) -> NDArray[float]:
 	""" take a set of latitudes and longitudes and calculate the angular distance from
 	    each point to the nearest shoreline (in degrees)
 	"""
 	фф, λλ = np.meshgrid(ф, λ, indexing="ij")
 	xx, yy, zz = to_cartesian(фф, λλ)
 
-	# first crop the coasts inside this section
-	points = np.array(coast)
-	points = points[inside_region(points[:, 0], points[:, 1], section), :]
-	points = points[~uninhabited(points[:, 0], points[:, 1], exclude_antarctica), :]
-	minimum_distance = np.full((ф.size, λ.size), np.inf)
-
 	# then calculate the distances
-	for ф_0, λ_0 in points:
-		x_0, y_0, z_0 = to_cartesian(ф_0, λ_0)
-		minimum_distance = np.minimum(minimum_distance,
-		                              np.degrees(np.arccos(x_0*xx + y_0*yy + z_0*zz)))
+	ф_0, λ_0 = -42, 174
+	x_0, y_0, z_0 = to_cartesian(ф_0, λ_0)
+	minimum_distance = np.degrees(np.arccos(x_0*xx + y_0*yy + z_0*zz))
 	return minimum_distance
 
 
@@ -182,49 +153,31 @@ def calculate_weights():
 	λ_edges = bin_centers(np.linspace(-180, 180, 375))
 	ф, λ = bin_centers(ф_edges), bin_centers(λ_edges)
 
-	# load the coast data
-	coast_vertices = load_coast_vertices(PRECISION)
+	for cut_file, value_land in [("nz", True)]:
 
-	# iterate thru the four weight files we want to generate
-	for crop_antarctica in [False, True]:
-		# load the land data with or without antarctica
-		land = find_land_mask(ф, λ, crop_antarctica)
+		# load the cut file
+		sections = load_cut_file(f"../resources/cuts_{cut_file}.txt")
 
-		for cut_file, value_land in [("basic", True), ("oceans", True), ("mountains", False), ("example", True)]:
-			if crop_antarctica and not value_land:
-				continue  # but you can skip the one that values oceans *and* antarctica; that doesn't make sense
+		for h, section in enumerate(sections):
+			filename = f"../resources/weights/{cut_file}_{h}{'_land' if value_land else '_sea'}.tif"
+			print(filename)
 
-			# load the cut file
-			sections = load_cut_file(f"../resources/cuts_{cut_file}.txt")
+			# get the distance of each point from the nearest contained coast
+			coast_distance = calculate_coast_distance(ф, λ)
 
-			# get the set of points that are uniformly important
-			global_mask = land if value_land else ~land
+			importance = np.maximum(0, 1 - coast_distance/COAST_WIDTH)**2
 
-			for h, section in enumerate(sections):
-				filename = f"../resources/weights/{cut_file}_{h}{'_land' if value_land else '_sea'}{'_sinATA' if crop_antarctica else ''}.tif"
-				print(filename)
-
-				# get the distance of each point from the nearest contained coast
-				coast_distance = calculate_coast_distance(ф, λ, coast_vertices, section, crop_antarctica)
-
-				# get the points on the mesh inside this section
-				in_section = inside_region(ф, λ, section)
-
-				# combine everything
-				mask = global_mask & in_section
-				importance = np.where(mask, 1, np.maximum(0, 1 - coast_distance/COAST_WIDTH)**2)
-
-				# save and plot
-				tifffile.imwrite(filename, importance)
-				plt.figure(f"Weightmap {cut_file}-{h}-{2*crop_antarctica + value_land}",
-				           figsize=(7, 4), facecolor="none")
-				plt.pcolormesh(λ_edges, ф_edges, importance)
-				plt.plot(section[:, 1], section[:, 0], f"k", linewidth=1)
-				plt.plot(section[:, 1], section[:, 0], f"w--", linewidth=1)
-				plt.axis([λ_edges[0], λ_edges[-1], ф_edges[0], ф_edges[-1]])
-				plt.xticks([])
-				plt.yticks([])
-				plt.tight_layout()
+			# save and plot
+			tifffile.imwrite(filename, importance)
+			plt.figure(f"Weightmap {cut_file}-{h}",
+			           figsize=(7, 4), facecolor="none")
+			plt.pcolormesh(λ_edges, ф_edges, importance)
+			plt.plot(section[:, 1], section[:, 0], f"k", linewidth=1)
+			plt.plot(section[:, 1], section[:, 0], f"w--", linewidth=1)
+			plt.axis([λ_edges[0], λ_edges[-1], ф_edges[0], ф_edges[-1]])
+			plt.xticks([])
+			plt.yticks([])
+			plt.tight_layout()
 
 
 if __name__ == "__main__":

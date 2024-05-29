@@ -21,16 +21,7 @@ from util import bin_index, bin_centers, wrap_angle, EARTH, inside_region, inter
 MARGIN = 1.0
 
 # locations of various straits that should be shown continuously
-STRAITS = [(66.5, -168.5), # Bering
-           (9.1, -79.7), # Panama canal
-           (30.7, 32.3), # Suez Canal
-           (1.8, 102.4), # Malacca
-           (-10, 102.4), # Sunda (offset to make it aline with adjacent ones)
-           (-10, 116), # Lombok (offset to make it aline with adjacent ones)
-           (-10, 129), # Timor sea
-           (-60, -65), # Drake
-           (53.2, -168.5),  # Aleutian islands
-           (-3.7, -168.5), # Phoenix islands
+STRAITS = [(-42, 174), # Cook
            ]
 # the distance around a strait that should be duplicated for clarity
 STRAIT_RADIUS = degrees(1200/EARTH.R)
@@ -126,19 +117,10 @@ def center_of(border: NDArray[float]) -> tuple[float, float]:
 	    :param border: the border of the Section being projected (radians)
 	    :return: the latitude and longitude of the ideal center (radians)
 	"""
-	ф_sample = np.linspace(-pi/2, pi/2, 25)
-	λ_sample = np.linspace(-pi, pi, 48, endpoint=False)
-	opposes_inside = inside_region(
-		-ф_sample, wrap_angle(λ_sample + pi, period=2*pi), border, period=2*pi)
-	max_distance = np.where(opposes_inside, inf, 0)
-	distance, _ = rotated_coordinates(
-		ф_sample[:, np.newaxis, np.newaxis],
-		λ_sample[np.newaxis, :, np.newaxis],
-		border[np.newaxis, np.newaxis, :, 0],
-		border[np.newaxis, np.newaxis, :, 1])
-	max_distance = np.maximum(max_distance, np.max(distance, axis=2))
-	best_i, best_j = np.unravel_index(np.argmin(max_distance), max_distance.shape)
-	return ф_sample[best_i], λ_sample[best_j]
+	ф_center = (np.min(border[:, 0]) + np.max(border[:, 0]))/2
+	on_glue_pole = np.nonzero(border[:, 0] == border[-2, 0])[0]
+	λ_center = (border[on_glue_pole[-1], 1] + border[on_glue_pole[-2], 1])/2
+	return ф_center, λ_center
 
 
 def cells_touched_by(x_edges: NDArray[float], y_edges: NDArray[float],
@@ -482,12 +464,12 @@ def build_mesh(name: str, resolution: int):
 
 		# as long as resolution is high enuff to add border cells freely
 		if resolution > 6:
-			# force it to include the whole antimeridian if it touches the antimeridian
-			if np.any(include_cells[1:-1, 0]) or np.any(include_cells[1:-1, -1]):
-				# unless it touches both poles, in which case that's not necessary
-				if not np.any(include_cells[0, :]) or not np.any(include_cells[-1, :]):
-					include_cells[:, 0] = True
-					include_cells[:, -1] = True
+			# # force it to include the whole antimeridian if it touches the antimeridian
+			# if np.any(include_cells[1:-1, 0]) or np.any(include_cells[1:-1, -1]):
+			# 	# unless it touches both poles, in which case that's not necessary
+			# 	if not np.any(include_cells[0, :]) or not np.any(include_cells[-1, :]):
+			# 		include_cells[:, 0] = True
+			# 		include_cells[:, -1] = True
 			for i_pole in [0, -1]:
 				# force it to include the whole polar region when it touches the polar region
 				if np.any(include_cells[i_pole, :]):
@@ -561,7 +543,5 @@ def build_mesh(name: str, resolution: int):
 
 
 if __name__ == "__main__":
-	build_mesh("basic", resolution=30)
-	build_mesh("oceans", resolution=10)
-	build_mesh("mountains", resolution=18)
+	build_mesh("nz", resolution=10)
 	plt.show()
