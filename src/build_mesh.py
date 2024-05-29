@@ -543,5 +543,5 @@ def build_mesh(name: str, resolution: int):
 
 
 if __name__ == "__main__":
-	build_mesh("nz", resolution=10)
+	build_mesh("nz", resolution=11)
 	plt.show()
