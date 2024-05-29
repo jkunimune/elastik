@@ -136,7 +136,8 @@ def create_map_projection(configuration_file: str):
 		# one that approximates the true cost function without requiring positive strains
 		a, b = compute_principal_strains(restore @ positions,
 		                                 cell_definitions, dΦ, dΛ)
-		scale_term = (a + b - 2)**2
+		desired_scale = 1 + 5000*cell_scale_weights
+		scale_term = ((a + b)/desired_scale - 2)**2
 		shape_term = (a - b)**2
 		return (scale_term*cell_scale_weights + 2*shape_term*cell_shape_weights).sum()
 
@@ -147,7 +148,8 @@ def create_map_projection(configuration_file: str):
 		if np.any(a <= 0) or np.any(b <= 0):
 			return inf
 		else:
-			ab = a*b
+			desired_scale = 1 + 5000*cell_scale_weights
+			ab = a*b/desired_scale**2
 			scale_term = (ab**2 - 1)/2 - np.log(ab)
 			shape_term = (a - b)**2
 			return (scale_term*cell_scale_weights + 2*shape_term*cell_shape_weights).sum()
